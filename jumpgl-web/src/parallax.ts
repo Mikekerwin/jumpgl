@@ -224,14 +224,22 @@ export class ParallaxBackgrounds {
   private state: 'cloud' | 'transition' | 'forest' = 'cloud';
   private viewportWidth: number;
   private viewportHeight: number;
+  private onForestVisible?: () => void;
 
-  constructor(parent: Container, textures: ParallaxTextures, width: number, height: number) {
+  constructor(
+    parent: Container,
+    textures: ParallaxTextures,
+    width: number,
+    height: number,
+    onForestVisible?: () => void
+  ) {
     this.container = new Container();
     parent.addChild(this.container);
     this.textures = textures;
     this.viewportWidth = width;
     this.viewportHeight = height;
     this.cloudSprite = createFittedSprite(textures.cloudSky, width, height);
+    this.onForestVisible = onForestVisible;
     this.container.addChild(this.cloudSprite);
   }
 
@@ -322,6 +330,7 @@ export class ParallaxBackgrounds {
     this.forestLoop.tileScale.set(scale);
     this.forestLoop.tilePosition.set(0, 0);
     this.container.addChild(this.forestLoop);
+    this.onForestVisible?.();
   }
 }
 

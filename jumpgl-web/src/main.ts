@@ -28,12 +28,17 @@ const init = async () => {
 
   scene.addChild(backgroundContainer, starContainer, groundContainer, playfieldContainer);
 
+  let starsActive = true;
   const parallaxTextures = await loadParallaxTextures();
   const backgrounds = new ParallaxBackgrounds(
     backgroundContainer,
     parallaxTextures,
     app.renderer.width,
-    app.renderer.height
+    app.renderer.height,
+    () => {
+      starsActive = false;
+      starContainer.visible = false;
+    }
   );
   const grounds = new ParallaxGrounds(
     groundContainer,
@@ -74,13 +79,15 @@ const init = async () => {
     const deltaSeconds = tickerInstance.deltaMS / 1000;
     backgrounds.update(deltaSeconds);
     grounds.update(deltaSeconds);
-    stars.forEach((star) => {
-      star.view.y += star.speed * tickerInstance.deltaTime;
-      if (star.view.y > app.renderer.height) {
-        star.view.y = -5;
-        star.view.x = Math.random() * app.renderer.width;
-      }
-    });
+    if (starsActive) {
+      stars.forEach((star) => {
+        star.view.y += star.speed * tickerInstance.deltaTime;
+        if (star.view.y > app.renderer.height) {
+          star.view.y = -5;
+          star.view.x = Math.random() * app.renderer.width;
+        }
+      });
+    }
 
     const state = physics.update(deltaSeconds);
     ball.position.y = state.y;
