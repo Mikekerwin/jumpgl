@@ -9,13 +9,13 @@ export interface ShadowOptions {
 export class Shadow {
   private shadow: Graphics;
   private readonly playerWidth: number;
-  private readonly maxBlur: number;
   private readonly minOpacity: number;
   private readonly maxOpacity = 0.7;
 
   constructor(opts: ShadowOptions) {
     this.playerWidth = opts.playerWidth;
-    this.maxBlur = opts.maxBlur ?? 15;
+    // Note: maxBlur is defined in options but not used in PixiJS implementation
+    // PixiJS doesn't support efficient blur on basic Graphics without filters
     this.minOpacity = opts.minOpacity ?? 0.2;
 
     this.shadow = new Graphics();
