@@ -45,6 +45,18 @@ class SegmentScroller {
     this.buildInitialSegments();
   }
 
+  private rebuildWithType(type: SegmentType, startX: number = 0): void {
+    this.segments.forEach(({ sprite }) => sprite.destroy());
+    this.segments = [];
+    this.maxSegmentWidth = 0;
+    let cursor = startX;
+    const coverTarget = startX + this.viewportWidth + Math.abs(startX) + 200;
+    while (cursor < coverTarget) {
+      const next = this.createSegment(type, cursor);
+      cursor += next.width;
+    }
+  }
+
   private buildInitialSegments(): void {
     this.segments.forEach(({ sprite }) => sprite.destroy());
     this.segments = [];
@@ -108,7 +120,10 @@ class SegmentScroller {
     if (this.mode === 'transition' && this.pendingQueue.length === 0) {
       const transitionOnScreen = this.segments.some((segment) => segment.type === 'transition');
       if (!transitionOnScreen) {
+        const firstX = this.segments.length ? this.segments[0].sprite.x : 0;
         this.mode = 'forest';
+        this.pendingQueue = [];
+        this.rebuildWithType('forest', firstX);
       }
     }
   }
