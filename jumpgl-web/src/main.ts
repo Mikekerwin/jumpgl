@@ -55,14 +55,16 @@ const init = async () => {
   });
 
   const groundSurface = () => grounds.getSurfaceY();
+  const groundCollisionOffset = 20;
   const playerRadius = 40;
   const ball = new Graphics().circle(0, 0, playerRadius).fill({ color: 0x4fc3f7 });
-  ball.position.set(app.renderer.width * 0.32, groundSurface() - playerRadius);
+  const initialGround = groundSurface() + groundCollisionOffset;
+  ball.position.set(app.renderer.width * 0.32, initialGround - playerRadius);
   playfieldContainer.addChild(ball);
 
   const physics = new PlayerPhysics({
     radius: playerRadius,
-    groundSurface: groundSurface(),
+    groundSurface: initialGround,
   });
 
   const ticker = new Ticker();
@@ -97,8 +99,10 @@ const init = async () => {
     app.renderer.resize(window.innerWidth, window.innerHeight);
     backgrounds.resize(app.renderer.width, app.renderer.height);
     grounds.resize(app.renderer.width, app.renderer.height);
-    physics.setGroundSurface(groundSurface());
+    const updatedGround = groundSurface() + groundCollisionOffset;
+    physics.setGroundSurface(updatedGround);
     ball.position.x = app.renderer.width * 0.32;
+    ball.position.y = updatedGround - playerRadius;
   };
 
   window.addEventListener('resize', handleResize);

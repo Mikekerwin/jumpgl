@@ -1,47 +1,133 @@
-import { Assets, Container, Sprite, Texture, TilingSprite } from 'pixi.js';
+import { Assets, Container, Sprite, Texture } from 'pixi.js';
+
+export type SegmentType = 'cloud' | 'transition' | 'forest';
 
 const FRAMES_PER_SECOND = 60;
-const BACKGROUND_SCROLL_SPEED = 0.5 * FRAMES_PER_SECOND; // 30 px / second
-const FOREST_SCROLL_MULTIPLIER = 1.1;
-const GROUND_SCROLL_SPEED = 1 * FRAMES_PER_SECOND; // 60 px / second
-const TRANSITION_SCROLL_SPEED = GROUND_SCROLL_SPEED * 1.15;
-const GROUND_SURFACE_RATIO = 0.78;
-const GROUND_HEIGHT_RATIO = 0.32;
+const CLOUD_BACKGROUND_SPEED = 0.5 * FRAMES_PER_SECOND; // ~30 px/sec
+const FOREST_BACKGROUND_MULTIPLIER = 1.05;
+const GROUND_SCROLL_SPEED = 1.0 * FRAMES_PER_SECOND; // 60 px/sec
+const TRANSITION_SPEED_MULTIPLIER = 1.15;
+const GROUND_SURFACE_RATIO = 0.9; // near bottom
+const GROUND_HEIGHT_RATIO = 0.35;
 
-class ScrollLayer {
-  public sprite: TilingSprite;
-  private texture: Texture;
+interface SegmentTextures {
+  cloud: Texture;
+  transition: Texture;
+  forest: Texture;
+}
+
+class SegmentScroller {
+  private container: Container;
+  private textures: SegmentTextures;
   private speed: number;
+  private transitionSpeed: number;
+  private viewportWidth: number;
+  private segmentHeight: number;
+  private offsetY: number;
+  private segments: Array<{ sprite: Sprite; width: number; type: SegmentType }> = [];
+  private pendingQueue: SegmentType[] = [];
+  private mode: 'cloud' | 'transition' | 'forest' = 'cloud';
+  private maxSegmentWidth = 0;
 
-  constructor(texture: Texture, width: number, height: number, y: number, speed: number) {
-    this.texture = texture;
-    this.sprite = new TilingSprite({ texture, width, height });
+  constructor(
+    parent: Container,
+    textures: SegmentTextures,
+    viewportWidth: number,
+    segmentHeight: number,
+    offsetY: number,
+    speed: number,
+    transitionSpeed: number
+  ) {
+    this.container = new Container();
+    parent.addChild(this.container);
+    this.textures = textures;
     this.speed = speed;
-    this.resize(width, height, y);
+    this.transitionSpeed = transitionSpeed;
+    this.viewportWidth = viewportWidth;
+    this.segmentHeight = segmentHeight;
+    this.offsetY = offsetY;
+    this.buildInitialSegments();
   }
 
-  resize(width: number, height: number, y: number): void {
-    const scale = height / (this.texture.height || 1);
-    this.sprite.tileScale.set(scale, scale);
-    this.sprite.width = width;
-    this.sprite.height = height;
-    this.sprite.y = y;
+  private buildInitialSegments(): void {
+    this.segments.forEach(({ sprite }) => sprite.destroy());
+    this.segments = [];
+    this.maxSegmentWidth = 0;
+    let cursor = 0;
+    while (cursor < this.viewportWidth * 2) {
+      const next = this.createSegment(this.getNextType(), cursor);
+      cursor += next.width;
+    }
+  }
+
+  private createSegment(type: SegmentType, x: number): { sprite: Sprite; width: number; type: SegmentType } {
+    const sprite = new Sprite(this.textures[type]);
+    const textureHeight = sprite.texture.height || 1;
+    const scale = this.segmentHeight / textureHeight;
+    sprite.scale.set(scale);
+    sprite.x = x;
+    sprite.y = this.offsetY;
+    this.container.addChild(sprite);
+    const width = (sprite.texture.width || 1) * scale;
+    this.maxSegmentWidth = Math.max(this.maxSegmentWidth, width);
+    const segment = { sprite, width, type };
+    this.segments.push(segment);
+    return segment;
+  }
+
+  private getNextType(): SegmentType {
+    if (this.pendingQueue.length > 0) {
+      return this.pendingQueue.shift()!;
+    }
+    if (this.mode === 'forest') {
+      return 'forest';
+    }
+    return 'cloud';
   }
 
   update(deltaSeconds: number): void {
-    this.sprite.tilePosition.x -= this.speed * deltaSeconds;
+    if (this.segments.length === 0) {
+      this.buildInitialSegments();
+    }
+
+    const scrollSpeed = this.mode === 'transition' ? this.transitionSpeed : this.speed;
+    this.segments.forEach(({ sprite }) => {
+      sprite.x -= scrollSpeed * deltaSeconds;
+    });
+
+    while (this.segments.length && this.segments[0].sprite.x + this.segments[0].width <= 0) {
+      const removed = this.segments.shift();
+      removed?.sprite.destroy();
+    }
+
+    let cursor = this.segments.length
+      ? this.segments[this.segments.length - 1].sprite.x + this.segments[this.segments.length - 1].width
+      : 0;
+    const coverTarget = this.viewportWidth + this.maxSegmentWidth * 1.5;
+    while (cursor < coverTarget) {
+      const next = this.createSegment(this.getNextType(), cursor);
+      cursor += next.width;
+    }
+
+    if (this.mode === 'transition' && this.pendingQueue.length === 0) {
+      const transitionOnScreen = this.segments.some((segment) => segment.type === 'transition');
+      if (!transitionOnScreen) {
+        this.mode = 'forest';
+      }
+    }
   }
 
-  set alpha(value: number) {
-    this.sprite.alpha = value;
+  resize(viewportWidth: number, segmentHeight: number, offsetY: number): void {
+    this.viewportWidth = viewportWidth;
+    this.segmentHeight = segmentHeight;
+    this.offsetY = offsetY;
+    this.buildInitialSegments();
   }
 
-  get alpha(): number {
-    return this.sprite.alpha;
-  }
-
-  set visible(value: boolean) {
-    this.sprite.visible = value;
+  triggerTransition(): void {
+    if (this.mode !== 'cloud' || this.pendingQueue.length > 0) return;
+    this.pendingQueue.push('transition', 'forest');
+    this.mode = 'transition';
   }
 }
 
@@ -72,152 +158,77 @@ export const loadParallaxTextures = async (): Promise<ParallaxTextures> => {
 };
 
 export class ParallaxBackgrounds {
-  private container: Container;
-  private cloudLayer: ScrollLayer;
-  private forestLayer: ScrollLayer;
-  private transitionTexture: Texture;
-  private transitionSprite: Sprite | null = null;
-  private state: 'cloud' | 'transition' | 'forest' = 'cloud';
-  private transitionTimer = 0;
+  private scroller: SegmentScroller;
 
   constructor(parent: Container, textures: ParallaxTextures, width: number, height: number) {
-    this.container = new Container();
-    parent.addChild(this.container);
-
-    this.cloudLayer = new ScrollLayer(textures.cloudSky, width, height, 0, BACKGROUND_SCROLL_SPEED);
-    this.forestLayer = new ScrollLayer(
-      textures.forestTrees,
+    this.scroller = new SegmentScroller(
+      parent,
+      {
+        cloud: textures.cloudSky,
+        transition: textures.forestTransition,
+        forest: textures.forestTrees,
+      },
       width,
       height,
       0,
-      BACKGROUND_SCROLL_SPEED * FOREST_SCROLL_MULTIPLIER
+      CLOUD_BACKGROUND_SPEED,
+      CLOUD_BACKGROUND_SPEED * FOREST_BACKGROUND_MULTIPLIER
     );
-    this.forestLayer.alpha = 0;
-    this.transitionTexture = textures.forestTransition;
-
-    this.container.addChild(this.cloudLayer.sprite, this.forestLayer.sprite);
   }
 
   update(deltaSeconds: number): void {
-    this.cloudLayer.update(deltaSeconds);
-    if (this.state !== 'cloud') {
-      this.forestLayer.update(deltaSeconds);
-    }
-
-    if (this.state === 'transition' && this.transitionSprite) {
-      this.transitionTimer += deltaSeconds;
-      this.transitionSprite.x -= TRANSITION_SCROLL_SPEED * deltaSeconds;
-      const fadeProgress = Math.min(1, this.transitionTimer / 3.2);
-      this.cloudLayer.alpha = 1 - fadeProgress;
-      this.forestLayer.alpha = fadeProgress;
-
-      if (this.transitionSprite.x + this.transitionSprite.width <= 0) {
-        this.container.removeChild(this.transitionSprite);
-        this.transitionSprite.destroy();
-        this.transitionSprite = null;
-        this.state = 'forest';
-        this.cloudLayer.alpha = 0;
-        this.forestLayer.alpha = 1;
-      }
-    }
+    this.scroller.update(deltaSeconds);
   }
 
   resize(width: number, height: number): void {
-    this.cloudLayer.resize(width, height, 0);
-    this.forestLayer.resize(width, height, 0);
-    if (this.transitionSprite) {
-      const scale = height / (this.transitionTexture.height || 1);
-      this.transitionSprite.scale.set(scale);
-      this.transitionSprite.y = 0;
-      this.transitionSprite.x = Math.min(this.transitionSprite.x, width);
-    }
+    this.scroller.resize(width, height, 0);
   }
 
   triggerForestTransition(): void {
-    if (this.state !== 'cloud' || this.transitionSprite) return;
-    this.state = 'transition';
-    this.transitionTimer = 0;
-    const sprite = new Sprite(this.transitionTexture);
-    const scale = this.cloudLayer.sprite.height / (this.transitionTexture.height || 1);
-    sprite.scale.set(scale);
-    sprite.y = 0;
-    sprite.x = this.cloudLayer.sprite.width;
-    this.transitionSprite = sprite;
-    this.container.addChild(sprite);
+    this.scroller.triggerTransition();
   }
 }
 
 export class ParallaxGrounds {
-  private container: Container;
-  private cloudLayer: ScrollLayer;
-  private forestLayer: ScrollLayer;
-  private transitionTexture: Texture;
-  private transitionSprite: Sprite | null = null;
-  private state: 'cloud' | 'transition' | 'forest' = 'cloud';
+  private scroller: SegmentScroller;
   private surfaceY: number;
   private groundHeight: number;
 
   constructor(parent: Container, textures: ParallaxTextures, width: number, height: number) {
-    this.container = new Container();
-    parent.addChild(this.container);
     this.surfaceY = height * GROUND_SURFACE_RATIO;
-    this.groundHeight = Math.max(120, height * GROUND_HEIGHT_RATIO);
-    const groundY = this.surfaceY - this.groundHeight;
-
-    this.cloudLayer = new ScrollLayer(textures.cloudGround, width, this.groundHeight, groundY, GROUND_SCROLL_SPEED);
-    this.forestLayer = new ScrollLayer(textures.forestGround, width, this.groundHeight, groundY, GROUND_SCROLL_SPEED);
-    this.forestLayer.visible = false;
-    this.transitionTexture = textures.transitionGround;
-
-    this.container.addChild(this.cloudLayer.sprite, this.forestLayer.sprite);
+    this.groundHeight = Math.max(140, height * GROUND_HEIGHT_RATIO);
+    const offsetY = this.surfaceY - this.groundHeight;
+    this.scroller = new SegmentScroller(
+      parent,
+      {
+        cloud: textures.cloudGround,
+        transition: textures.transitionGround,
+        forest: textures.forestGround,
+      },
+      width,
+      this.groundHeight,
+      offsetY,
+      GROUND_SCROLL_SPEED,
+      GROUND_SCROLL_SPEED * TRANSITION_SPEED_MULTIPLIER
+    );
   }
 
   update(deltaSeconds: number): void {
-    this.cloudLayer.update(deltaSeconds);
-    if (this.state !== 'cloud') {
-      this.forestLayer.update(deltaSeconds);
-    }
-
-    if (this.transitionSprite) {
-      this.transitionSprite.x -= TRANSITION_SCROLL_SPEED * deltaSeconds;
-      if (this.transitionSprite.x + this.transitionSprite.width <= 0) {
-        this.container.removeChild(this.transitionSprite);
-        this.transitionSprite.destroy();
-        this.transitionSprite = null;
-        this.state = 'forest';
-        this.cloudLayer.visible = false;
-        this.forestLayer.visible = true;
-      }
-    }
+    this.scroller.update(deltaSeconds);
   }
 
   resize(width: number, height: number): void {
     this.surfaceY = height * GROUND_SURFACE_RATIO;
-    this.groundHeight = Math.max(120, height * GROUND_HEIGHT_RATIO);
-    const groundY = this.surfaceY - this.groundHeight;
-    this.cloudLayer.resize(width, this.groundHeight, groundY);
-    this.forestLayer.resize(width, this.groundHeight, groundY);
-    if (this.transitionSprite) {
-      const scale = this.groundHeight / (this.transitionTexture.height || 1);
-      this.transitionSprite.scale.set(scale);
-      this.transitionSprite.y = groundY;
-    }
+    this.groundHeight = Math.max(140, height * GROUND_HEIGHT_RATIO);
+    const offsetY = this.surfaceY - this.groundHeight;
+    this.scroller.resize(width, this.groundHeight, offsetY);
+  }
+
+  triggerForestTransition(): void {
+    this.scroller.triggerTransition();
   }
 
   getSurfaceY(): number {
     return this.surfaceY;
-  }
-
-  triggerForestTransition(): void {
-    if (this.state !== 'cloud' || this.transitionSprite) return;
-    this.state = 'transition';
-    this.forestLayer.visible = true;
-    const sprite = new Sprite(this.transitionTexture);
-    const scale = this.groundHeight / (this.transitionTexture.height || 1);
-    sprite.scale.set(scale);
-    sprite.y = this.surfaceY - this.groundHeight;
-    sprite.x = this.cloudLayer.sprite.width;
-    this.transitionSprite = sprite;
-    this.container.addChild(sprite);
   }
 }
