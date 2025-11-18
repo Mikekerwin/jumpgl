@@ -19,8 +19,7 @@ interface SegmentTextures {
 class SegmentScroller {
   private container: Container;
   private textures: SegmentTextures;
-  private speed: number;
-  private transitionSpeed: number;
+  private speedByMode: Record<SegmentType, number>;
   private viewportWidth: number;
   private segmentHeight: number;
   private offsetY: number;
@@ -35,14 +34,12 @@ class SegmentScroller {
     viewportWidth: number,
     segmentHeight: number,
     offsetY: number,
-    speed: number,
-    transitionSpeed: number
+    speedByMode: Record<SegmentType, number>
   ) {
     this.container = new Container();
     parent.addChild(this.container);
     this.textures = textures;
-    this.speed = speed;
-    this.transitionSpeed = transitionSpeed;
+    this.speedByMode = speedByMode;
     this.viewportWidth = viewportWidth;
     this.segmentHeight = segmentHeight;
     this.offsetY = offsetY;
@@ -90,7 +87,7 @@ class SegmentScroller {
       this.buildInitialSegments();
     }
 
-    const scrollSpeed = this.mode === 'transition' ? this.transitionSpeed : this.speed;
+    const scrollSpeed = this.speedByMode[this.mode];
     this.segments.forEach(({ sprite }) => {
       sprite.x -= scrollSpeed * deltaSeconds;
     });
@@ -171,8 +168,11 @@ export class ParallaxBackgrounds {
       width,
       height,
       0,
-      CLOUD_BACKGROUND_SPEED,
-      CLOUD_BACKGROUND_SPEED * FOREST_BACKGROUND_MULTIPLIER
+      {
+        cloud: 0,
+        transition: CLOUD_BACKGROUND_SPEED,
+        forest: CLOUD_BACKGROUND_SPEED * FOREST_BACKGROUND_MULTIPLIER,
+      }
     );
   }
 
@@ -208,8 +208,11 @@ export class ParallaxGrounds {
       width,
       this.groundHeight,
       offsetY,
-      GROUND_SCROLL_SPEED,
-      GROUND_SCROLL_SPEED * TRANSITION_SPEED_MULTIPLIER
+      {
+        cloud: GROUND_SCROLL_SPEED,
+        transition: GROUND_SCROLL_SPEED * TRANSITION_SPEED_MULTIPLIER,
+        forest: GROUND_SCROLL_SPEED,
+      }
     );
   }
 
