@@ -26,11 +26,12 @@ export class PlayerPhysics {
   private chargeTimer = 0;
   private scaleX = 1;
   private scaleY = 1;
+  private jumpCount = 0; // Track number of jumps (0, 1, or 2 for double jump)
 
   constructor(opts: PlayerPhysicsOptions) {
     this.radius = opts.radius;
-    this.gravity = opts.gravity ?? 2500;
-    this.jumpForce = opts.jumpForce ?? 1500;
+    this.gravity = opts.gravity ?? 3000; // Increased from 2500 (20% faster)
+    this.jumpForce = opts.jumpForce ?? 1800; // Increased from 1500 (20% faster)
     this.groundSurface = opts.groundSurface;
     this.restCenterY = this.groundSurface - this.radius;
     this.y = this.restCenterY;
@@ -41,7 +42,10 @@ export class PlayerPhysics {
       this.chargeTimer += deltaSeconds;
       if (this.chargeTimer >= this.chargeDuration) {
         this.isCharging = false;
-        this.velocity = -this.jumpForce;
+        // Second jump is weaker than first jump (60% power)
+        const jumpPower = this.jumpCount === 0 ? this.jumpForce : this.jumpForce * 0.6;
+        this.velocity = -jumpPower;
+        this.jumpCount++;
       }
     }
 
@@ -50,6 +54,7 @@ export class PlayerPhysics {
 
     if (this.y > this.restCenterY) {
       this.y = this.restCenterY;
+      this.jumpCount = 0; // Reset jump count when touching ground
       if (this.velocity > 0) {
         this.velocity = -this.velocity * this.bounceDamping;
         if (Math.abs(this.velocity) < this.minBounceVelocity) {
@@ -68,9 +73,11 @@ export class PlayerPhysics {
   }
 
   startJumpCharge(): void {
-    if (!this.isGrounded() || this.isCharging) return;
-    this.isCharging = true;
-    this.chargeTimer = 0;
+    // Allow jump if we haven't used both jumps yet
+    if (this.jumpCount < 2 && !this.isCharging) {
+      this.isCharging = true;
+      this.chargeTimer = 0;
+    }
   }
 
   setGroundSurface(surface: number): void {
