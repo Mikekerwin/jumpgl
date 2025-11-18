@@ -4,6 +4,7 @@ import { PlayerPhysics } from './playerPhysics';
 import { loadParallaxTextures, ParallaxBackgrounds, ParallaxGrounds } from './parallax';
 import { ForestDustField } from './forestDustField';
 import { Shadow } from './shadow';
+import { calculateResponsiveSizes, GROUND_PLAYER_DEPTH } from './config';
 
 const createGroundGradientSprite = (width: number, height: number): Sprite => {
   const gradientHeight = Math.max(200, height * 0.45);
@@ -104,14 +105,16 @@ const init = async () => {
     };
   });
 
+  // Calculate initial responsive sizes
+  let sizes = calculateResponsiveSizes(app.renderer.height);
+  let playerRadius = sizes.playerRadius;
+  let playerDiameter = sizes.playerDiameter;
+
   const groundSurface = () => grounds.getSurfaceY();
-  const GROUND_PLAYER_DEPTH = 1.5;
-  const playerRadius = 40;
-  const playerHeight = playerRadius * 2;
-  const computePlayerGround = () => groundSurface() + playerHeight * GROUND_PLAYER_DEPTH;
+  const computePlayerGround = () => groundSurface() + playerDiameter * GROUND_PLAYER_DEPTH;
 
   // Create shadow (added before player so it appears behind)
-  const playerShadow = new Shadow({ playerWidth: playerHeight });
+  const playerShadow = new Shadow({ playerWidth: playerDiameter });
   playfieldContainer.addChild(playerShadow.getView());
 
   const ball = new Graphics().circle(0, 0, playerRadius).fill({ color: 0x4fc3f7 });
@@ -201,6 +204,22 @@ const init = async () => {
     gradientSprite = createGroundGradientSprite(app.renderer.width, app.renderer.height);
     overlayContainer.addChild(dustSprite);
     overlayContainer.addChild(gradientSprite);
+
+    // Recalculate responsive sizes based on new height
+    sizes = calculateResponsiveSizes(app.renderer.height);
+    playerRadius = sizes.playerRadius;
+    playerDiameter = sizes.playerDiameter;
+
+    // Redraw ball with new radius
+    ball.clear();
+    ball.circle(0, 0, playerRadius).fill({ color: 0x4fc3f7 });
+
+    // Update shadow size
+    playerShadow.destroy();
+    const newShadow = new Shadow({ playerWidth: playerDiameter });
+    playfieldContainer.addChildAt(newShadow.getView(), playfieldContainer.getChildIndex(ball) - 1);
+    Object.assign(playerShadow, newShadow);
+
     const updatedGround = computePlayerGround();
     physics.setGroundSurface(updatedGround);
     ball.position.x = app.renderer.width * 0.32;

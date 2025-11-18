@@ -1,13 +1,14 @@
 import { Assets, Container, Sprite, Texture, TilingSprite } from 'pixi.js';
+import { calculateResponsiveSizes } from './config';
 
 export type SegmentType = 'cloud' | 'transition' | 'forest';
 
 const FRAMES_PER_SECOND = 60;
-const CLOUD_BACKGROUND_SPEED = 0.5 * FRAMES_PER_SECOND; // ~30 px/sec
+const SPEED_MULTIPLIER = 1.2; // 20% faster overall
+const CLOUD_BACKGROUND_SPEED = 0.5 * FRAMES_PER_SECOND * SPEED_MULTIPLIER; // ~36 px/sec
 const FOREST_BACKGROUND_MULTIPLIER = 1.05;
-const GROUND_SCROLL_SPEED = 1.0 * FRAMES_PER_SECOND; // 60 px/sec
+const GROUND_SCROLL_SPEED = 1.0 * FRAMES_PER_SECOND * SPEED_MULTIPLIER; // 72 px/sec
 const TRANSITION_SPEED_MULTIPLIER = 1.15;
-const GROUND_HEIGHT_RATIO = 0.35;
 
 interface SegmentTextures {
   cloud: Texture;
@@ -243,6 +244,10 @@ export class ParallaxBackgrounds {
     this.container.addChild(this.cloudSprite);
   }
 
+  getRoot(): Container {
+    return this.container;
+  }
+
   update(deltaSeconds: number): void {
     if (this.state === 'transition' && this.transitionGroup) {
       this.transitionGroup.x -= CLOUD_BACKGROUND_SPEED * deltaSeconds;
@@ -332,6 +337,17 @@ export class ParallaxBackgrounds {
     this.container.addChild(this.forestLoop);
     this.onForestVisible?.();
   }
+
+  getForestRevealProgress(): number {
+    if (this.state === 'forest') return 1;
+    if (this.state !== 'transition' || !this.transitionGroup) return 0;
+    const transitionSprite = this.transitionGroup.children[0] as Sprite | undefined;
+    const forestSprite = this.transitionGroup.children[1] as Sprite | undefined;
+    if (!transitionSprite || !forestSprite) return 0;
+    const totalWidth = transitionSprite.width + forestSprite.width;
+    const traveled = Math.max(0, this.viewportWidth - this.transitionGroup.x);
+    return Math.min(1, traveled / (totalWidth + this.viewportWidth * 0.5));
+  }
 }
 
 export class ParallaxGrounds {
@@ -340,7 +356,8 @@ export class ParallaxGrounds {
   private groundHeight: number;
 
   constructor(parent: Container, textures: ParallaxTextures, width: number, height: number) {
-    this.groundHeight = Math.max(140, height * GROUND_HEIGHT_RATIO);
+    const sizes = calculateResponsiveSizes(height);
+    this.groundHeight = sizes.groundHeight;
     this.groundTop = height - this.groundHeight;
     this.scroller = new SegmentScroller(
       parent,
@@ -365,7 +382,8 @@ export class ParallaxGrounds {
   }
 
   resize(width: number, height: number): void {
-    this.groundHeight = Math.max(140, height * GROUND_HEIGHT_RATIO);
+    const sizes = calculateResponsiveSizes(height);
+    this.groundHeight = sizes.groundHeight;
     this.groundTop = height - this.groundHeight;
     this.scroller.resize(width, this.groundHeight, this.groundTop);
   }
