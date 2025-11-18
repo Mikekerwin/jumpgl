@@ -1,6 +1,7 @@
 import './style.css';
 import { Application, Container, Graphics, Ticker } from 'pixi.js';
 import { PlayerPhysics } from './playerPhysics';
+import { loadParallaxTextures, ParallaxBackgrounds, ParallaxGrounds } from './parallax';
 
 const init = async () => {
   const app = new Application();
@@ -20,39 +21,44 @@ const init = async () => {
   const scene = new Container();
   app.stage.addChild(scene);
 
-  const bg = new Graphics()
-    .rect(0, 0, app.renderer.width, app.renderer.height)
-    .fill({ color: 0x050b1d });
-  scene.addChild(bg);
+  const backgroundContainer = new Container();
+  const starContainer = new Container();
+  const groundContainer = new Container();
+  const playfieldContainer = new Container();
 
-  const gradient = new Graphics()
-    .rect(0, 0, app.renderer.width, app.renderer.height)
-    .fill({ color: 0x0d1d45, alpha: 0.65 });
-  scene.addChild(gradient);
+  scene.addChild(backgroundContainer, starContainer, groundContainer, playfieldContainer);
+
+  const parallaxTextures = await loadParallaxTextures();
+  const backgrounds = new ParallaxBackgrounds(
+    backgroundContainer,
+    parallaxTextures,
+    app.renderer.width,
+    app.renderer.height
+  );
+  const grounds = new ParallaxGrounds(
+    groundContainer,
+    parallaxTextures,
+    app.renderer.width,
+    app.renderer.height
+  );
 
   const stars = Array.from({ length: 80 }).map(() => {
     const dot = new Graphics()
       .circle(0, 0, Math.random() * 1.5 + 0.5)
       .fill({ color: 0xffffff, alpha: Math.random() * 0.7 + 0.3 });
     dot.position.set(Math.random() * app.renderer.width, Math.random() * app.renderer.height);
-    scene.addChild(dot);
+    starContainer.addChild(dot);
     return {
       view: dot,
       speed: Math.random() * 0.4 + 0.1,
     };
   });
 
-  const groundSurface = () => app.renderer.height * 0.78;
-  const ground = new Graphics()
-    .rect(0, 0, app.renderer.width, 6)
-    .fill({ color: 0x10233f, alpha: 0.8 });
-  ground.position.y = groundSurface();
-  scene.addChild(ground);
-
+  const groundSurface = () => grounds.getSurfaceY();
   const playerRadius = 40;
   const ball = new Graphics().circle(0, 0, playerRadius).fill({ color: 0x4fc3f7 });
   ball.position.set(app.renderer.width * 0.32, groundSurface() - playerRadius);
-  scene.addChild(ball);
+  playfieldContainer.addChild(ball);
 
   const physics = new PlayerPhysics({
     radius: playerRadius,
@@ -62,6 +68,8 @@ const init = async () => {
   const ticker = new Ticker();
   ticker.add((tickerInstance) => {
     const deltaSeconds = tickerInstance.deltaMS / 1000;
+    backgrounds.update(deltaSeconds);
+    grounds.update(deltaSeconds);
     stars.forEach((star) => {
       star.view.y += star.speed * tickerInstance.deltaTime;
       if (star.view.y > app.renderer.height) {
@@ -87,18 +95,18 @@ const init = async () => {
 
   const handleResize = () => {
     app.renderer.resize(window.innerWidth, window.innerHeight);
-    bg.width = gradient.width = app.renderer.width;
-    bg.height = gradient.height = app.renderer.height;
-    ground
-      .clear()
-      .rect(0, 0, app.renderer.width, 6)
-      .fill({ color: 0x10233f, alpha: 0.8 });
-    ground.position.y = groundSurface();
+    backgrounds.resize(app.renderer.width, app.renderer.height);
+    grounds.resize(app.renderer.width, app.renderer.height);
     physics.setGroundSurface(groundSurface());
     ball.position.x = app.renderer.width * 0.32;
   };
 
   window.addEventListener('resize', handleResize);
+
+  setTimeout(() => {
+    backgrounds.triggerForestTransition();
+    grounds.triggerForestTransition();
+  }, 8000);
 };
 
 init().catch((err) => {
