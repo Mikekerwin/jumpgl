@@ -132,7 +132,12 @@ class SegmentScroller {
     this.viewportWidth = viewportWidth;
     this.segmentHeight = segmentHeight;
     this.offsetY = offsetY;
-    this.buildInitialSegments();
+    const firstX = this.segments.length ? this.segments[0].sprite.x : 0;
+    if (this.mode === 'forest') {
+      this.rebuildWithType('forest', firstX);
+    } else {
+      this.buildInitialSegments();
+    }
   }
 
   triggerTransition(): void {
