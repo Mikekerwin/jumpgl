@@ -1,4 +1,4 @@
-import { Assets, Container, Sprite, Texture } from 'pixi.js';
+import { Assets, Container, Sprite, Texture, TilingSprite } from 'pixi.js';
 
 export type SegmentType = 'cloud' | 'transition' | 'forest';
 
@@ -7,7 +7,6 @@ const CLOUD_BACKGROUND_SPEED = 0.5 * FRAMES_PER_SECOND; // ~30 px/sec
 const FOREST_BACKGROUND_MULTIPLIER = 1.05;
 const GROUND_SCROLL_SPEED = 1.0 * FRAMES_PER_SECOND; // 60 px/sec
 const TRANSITION_SPEED_MULTIPLIER = 1.15;
-const GROUND_SURFACE_RATIO = 0.9; // near bottom
 const GROUND_HEIGHT_RATIO = 0.35;
 
 interface SegmentTextures {
@@ -25,7 +24,7 @@ class SegmentScroller {
   private offsetY: number;
   private segments: Array<{ sprite: Sprite; width: number; type: SegmentType }> = [];
   private pendingQueue: SegmentType[] = [];
-  private mode: 'cloud' | 'transition' | 'forest' = 'cloud';
+  private mode: SegmentType = 'cloud';
   private maxSegmentWidth = 0;
 
   constructor(
@@ -100,7 +99,7 @@ class SegmentScroller {
     let cursor = this.segments.length
       ? this.segments[this.segments.length - 1].sprite.x + this.segments[this.segments.length - 1].width
       : 0;
-    const coverTarget = this.viewportWidth + this.maxSegmentWidth * 1.5;
+    const coverTarget = this.viewportWidth + this.maxSegmentWidth * 1.2;
     while (cursor < coverTarget) {
       const next = this.createSegment(this.getNextType(), cursor);
       cursor += next.width;
@@ -126,7 +125,21 @@ class SegmentScroller {
     this.pendingQueue.push('transition', 'forest');
     this.mode = 'transition';
   }
+
 }
+
+const createFittedSprite = (texture: Texture, width: number, height: number): Sprite => {
+  const sprite = new Sprite(texture);
+  const texWidth = texture.width || 1;
+  const texHeight = texture.height || 1;
+  const scale = Math.max(width / texWidth, height / texHeight);
+  sprite.scale.set(scale);
+  sprite.x = 0;
+  sprite.y = 0;
+  sprite.width = texWidth * scale;
+  sprite.height = texHeight * scale;
+  return sprite;
+};
 
 export type ParallaxTextures = {
   cloudSky: Texture;
@@ -155,49 +168,123 @@ export const loadParallaxTextures = async (): Promise<ParallaxTextures> => {
 };
 
 export class ParallaxBackgrounds {
-  private scroller: SegmentScroller;
+  private container: Container;
+  private cloudSprite: Sprite;
+  private transitionGroup: Container | null = null;
+  private forestLoop: TilingSprite | null = null;
+  private textures: ParallaxTextures;
+  private state: 'cloud' | 'transition' | 'forest' = 'cloud';
+  private viewportWidth: number;
+  private viewportHeight: number;
 
   constructor(parent: Container, textures: ParallaxTextures, width: number, height: number) {
-    this.scroller = new SegmentScroller(
-      parent,
-      {
-        cloud: textures.cloudSky,
-        transition: textures.forestTransition,
-        forest: textures.forestTrees,
-      },
-      width,
-      height,
-      0,
-      {
-        cloud: 0,
-        transition: CLOUD_BACKGROUND_SPEED,
-        forest: CLOUD_BACKGROUND_SPEED * FOREST_BACKGROUND_MULTIPLIER,
-      }
-    );
+    this.container = new Container();
+    parent.addChild(this.container);
+    this.textures = textures;
+    this.viewportWidth = width;
+    this.viewportHeight = height;
+    this.cloudSprite = createFittedSprite(textures.cloudSky, width, height);
+    this.container.addChild(this.cloudSprite);
   }
 
   update(deltaSeconds: number): void {
-    this.scroller.update(deltaSeconds);
+    if (this.state === 'transition' && this.transitionGroup) {
+      this.transitionGroup.x -= CLOUD_BACKGROUND_SPEED * deltaSeconds;
+      const transitionSprite = this.transitionGroup.children[0] as Sprite;
+      const forestSprite = this.transitionGroup.children[1] as Sprite;
+      const transitionRight = this.transitionGroup.x + (transitionSprite?.width || 0);
+      const forestRight =
+        this.transitionGroup.x + (transitionSprite?.width || 0) + (forestSprite?.width || 0);
+
+      if (transitionRight <= 0 && this.container.children.includes(this.cloudSprite)) {
+        this.container.removeChild(this.cloudSprite);
+      }
+
+      if (forestRight <= this.viewportWidth) {
+        this.startForestLoop();
+      }
+    } else if (this.state === 'forest' && this.forestLoop) {
+      this.forestLoop.tilePosition.x -=
+        CLOUD_BACKGROUND_SPEED * FOREST_BACKGROUND_MULTIPLIER * deltaSeconds;
+    }
   }
 
   resize(width: number, height: number): void {
-    this.scroller.resize(width, height, 0);
+    this.viewportWidth = width;
+    this.viewportHeight = height;
+    this.cloudSprite.texture = this.textures.cloudSky;
+    const newCloud = createFittedSprite(this.textures.cloudSky, width, height);
+    this.container.removeChild(this.cloudSprite);
+    this.cloudSprite.destroy();
+    this.cloudSprite = newCloud;
+    if (this.state === 'cloud') {
+      this.container.addChild(this.cloudSprite);
+    }
+
+    if (this.transitionGroup) {
+      const transitionSprite = createFittedSprite(this.textures.forestTransition, width, height);
+      const forestSprite = createFittedSprite(this.textures.forestTrees, width, height);
+      forestSprite.x = transitionSprite.width;
+      this.transitionGroup.removeChildren();
+      this.transitionGroup.addChild(transitionSprite, forestSprite);
+      this.transitionGroup.x = Math.min(this.transitionGroup.x, width);
+    }
+
+    if (this.forestLoop) {
+      this.forestLoop.destroy();
+      this.forestLoop = null;
+      this.startForestLoop();
+    }
   }
 
   triggerForestTransition(): void {
-    this.scroller.triggerTransition();
+    if (this.state !== 'cloud' || this.transitionGroup) return;
+    this.state = 'transition';
+    const group = new Container();
+    const transitionSprite = createFittedSprite(
+      this.textures.forestTransition,
+      this.viewportWidth,
+      this.viewportHeight
+    );
+    const forestSprite = createFittedSprite(
+      this.textures.forestTrees,
+      this.viewportWidth,
+      this.viewportHeight
+    );
+    forestSprite.x = transitionSprite.width;
+    group.addChild(transitionSprite, forestSprite);
+    group.x = this.viewportWidth;
+    this.transitionGroup = group;
+    this.container.addChild(group);
+  }
+
+  private startForestLoop(): void {
+    if (this.forestLoop) return;
+    this.state = 'forest';
+    if (this.transitionGroup) {
+      this.transitionGroup.destroy({ children: true });
+      this.transitionGroup = null;
+    }
+    this.forestLoop = new TilingSprite({
+      texture: this.textures.forestTrees,
+      width: this.viewportWidth,
+      height: this.viewportHeight,
+    });
+    const scale = this.viewportHeight / (this.textures.forestTrees.height || 1);
+    this.forestLoop.tileScale.set(scale);
+    this.forestLoop.tilePosition.set(0, 0);
+    this.container.addChild(this.forestLoop);
   }
 }
 
 export class ParallaxGrounds {
   private scroller: SegmentScroller;
-  private surfaceY: number;
+  private groundTop: number;
   private groundHeight: number;
 
   constructor(parent: Container, textures: ParallaxTextures, width: number, height: number) {
-    this.surfaceY = height * GROUND_SURFACE_RATIO;
     this.groundHeight = Math.max(140, height * GROUND_HEIGHT_RATIO);
-    const offsetY = this.surfaceY - this.groundHeight;
+    this.groundTop = height - this.groundHeight;
     this.scroller = new SegmentScroller(
       parent,
       {
@@ -207,7 +294,7 @@ export class ParallaxGrounds {
       },
       width,
       this.groundHeight,
-      offsetY,
+      this.groundTop,
       {
         cloud: GROUND_SCROLL_SPEED,
         transition: GROUND_SCROLL_SPEED * TRANSITION_SPEED_MULTIPLIER,
@@ -221,10 +308,9 @@ export class ParallaxGrounds {
   }
 
   resize(width: number, height: number): void {
-    this.surfaceY = height * GROUND_SURFACE_RATIO;
     this.groundHeight = Math.max(140, height * GROUND_HEIGHT_RATIO);
-    const offsetY = this.surfaceY - this.groundHeight;
-    this.scroller.resize(width, this.groundHeight, offsetY);
+    this.groundTop = height - this.groundHeight;
+    this.scroller.resize(width, this.groundHeight, this.groundTop);
   }
 
   triggerForestTransition(): void {
@@ -232,6 +318,6 @@ export class ParallaxGrounds {
   }
 
   getSurfaceY(): number {
-    return this.surfaceY;
+    return this.groundTop;
   }
 }
