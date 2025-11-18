@@ -103,10 +103,19 @@ const init = async () => {
 
   window.addEventListener('resize', handleResize);
 
-  setTimeout(() => {
+  const triggerTransition = () => {
     backgrounds.triggerForestTransition();
     grounds.triggerForestTransition();
-  }, 8000);
+    transitionButton.disabled = true;
+    transitionButton.textContent = 'Forest Active';
+  };
+
+  const transitionButton = document.createElement('button');
+  transitionButton.className = 'transition-btn';
+  transitionButton.textContent = 'Enter Forest';
+  transitionButton.type = 'button';
+  transitionButton.addEventListener('click', triggerTransition);
+  document.body.appendChild(transitionButton);
 };
 
 init().catch((err) => {
