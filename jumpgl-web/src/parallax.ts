@@ -154,7 +154,8 @@ class SegmentScroller {
       }
     });
     if (kept.length === 0) {
-      kept.push(this.createSegment('cloud', 0));
+      const fallbackType = this.mode === 'forest' ? 'forest' : 'cloud';
+      kept.push(this.createSegment(fallbackType, 0));
     }
     this.segments = kept;
   }
