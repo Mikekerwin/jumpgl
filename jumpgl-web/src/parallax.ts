@@ -122,8 +122,35 @@ class SegmentScroller {
 
   triggerTransition(): void {
     if (this.mode !== 'cloud' || this.pendingQueue.length > 0) return;
-    this.pendingQueue.push('transition', 'forest');
     this.mode = 'transition';
+    this.pendingQueue.push('transition', 'forest');
+    this.trimFutureSegments();
+    this.appendPendingSegments();
+  }
+
+  private trimFutureSegments(): void {
+    const futureThreshold = this.viewportWidth;
+    const kept: typeof this.segments = [];
+    this.segments.forEach((segment) => {
+      if (segment.sprite.x < futureThreshold) {
+        kept.push(segment);
+      } else {
+        segment.sprite.destroy();
+      }
+    });
+    if (kept.length === 0) {
+      kept.push(this.createSegment('cloud', 0));
+    }
+    this.segments = kept;
+  }
+
+  private appendPendingSegments(): void {
+    let cursor = this.segments[this.segments.length - 1].sprite.x + this.segments[this.segments.length - 1].width;
+    while (this.pendingQueue.length) {
+      const nextType = this.pendingQueue.shift()!;
+      const seg = this.createSegment(nextType, cursor);
+      cursor += seg.width;
+    }
   }
 
 }
@@ -253,7 +280,7 @@ export class ParallaxBackgrounds {
     );
     forestSprite.x = transitionSprite.width;
     group.addChild(transitionSprite, forestSprite);
-    group.x = this.viewportWidth;
+    group.x = Math.max(0, this.viewportWidth - transitionSprite.width * 0.2);
     this.transitionGroup = group;
     this.container.addChild(group);
   }
