@@ -1,7 +1,8 @@
 import './style.css';
 import { Application, Container, Graphics, Sprite, Texture, Ticker } from 'pixi.js';
 import { PlayerPhysics } from './playerPhysics';
-import { loadParallaxTextures, ParallaxBackgrounds, ParallaxGrounds } from './parallax';
+import { loadParallaxTextures, ParallaxBackgrounds, ParallaxGrounds } from './parallaxNew';
+import { BiomeSequenceManager } from './biomeSystem';
 import { ForestDustField } from './forestDustField';
 import { Shadow } from './shadow';
 import { calculateResponsiveSizes, GROUND_PLAYER_DEPTH } from './config';
@@ -55,9 +56,14 @@ const init = async () => {
 
   let starsActive = true;
   const parallaxTextures = await loadParallaxTextures();
+
+  const biomeManager = new BiomeSequenceManager('cloud');
+  biomeManager.setSequence(['cloud', 'forest']);
+
   const backgrounds = new ParallaxBackgrounds(
     backgroundContainer,
     parallaxTextures,
+    biomeManager,
     app.renderer.width,
     app.renderer.height,
     () => {
@@ -89,6 +95,7 @@ const init = async () => {
   const grounds = new ParallaxGrounds(
     groundContainer,
     parallaxTextures,
+    biomeManager,
     app.renderer.width,
     app.renderer.height
   );
@@ -139,7 +146,7 @@ const init = async () => {
     dustField.update();
 
     // Start dust fade-in when transition background has entered the viewport
-    const forestProgress = backgrounds.getForestRevealProgress();
+    const forestProgress = backgrounds.getTransitionProgress();
 
     if (forestProgress >= TRANSITION_VISIBLE_THRESHOLD && dustRevealStartTime === null) {
       // Transition background is now visible on screen - begin dust fade-in
@@ -229,8 +236,8 @@ const init = async () => {
   window.addEventListener('resize', handleResize);
 
   const triggerTransition = () => {
-    backgrounds.triggerForestTransition();
-    grounds.triggerForestTransition();
+    grounds.triggerTransition();
+    backgrounds.triggerTransition();
     transitionButton.disabled = true;
     transitionButton.textContent = 'Forest Active';
   };

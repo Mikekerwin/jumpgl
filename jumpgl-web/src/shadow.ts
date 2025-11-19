@@ -24,7 +24,7 @@ export class Shadow {
 
     // Create blur filter
     this.blurFilter = new BlurFilter();
-    this.blurFilter.blur = 0; // Start with no blur
+    this.blurFilter.strength = 0; // Start with no blur
     this.shadow.filters = [this.blurFilter];
   }
 
@@ -59,8 +59,8 @@ export class Shadow {
     this.shadow.ellipse(0, 0, shadowWidth / 2, shadowHeight / 2);
     this.shadow.fill({ color: 0x000000, alpha: opacity });
 
-    // Update blur filter
-    this.blurFilter.blur = blur;
+    // Update blur filter (using strength instead of deprecated blur property)
+    this.blurFilter.strength = blur;
 
     // Position shadow at ground level, centered under player
     this.shadow.position.set(playerX, groundY);
