@@ -132,6 +132,8 @@ const init = async () => {
   const physics = new PlayerPhysics({
     radius: playerRadius,
     groundSurface: initialGround,
+    initialX: app.renderer.width * 0.32,
+    screenWidth: app.renderer.width,
   });
 
   let dustRevealStartTime: number | null = null;
@@ -141,8 +143,12 @@ const init = async () => {
   const ticker = new Ticker();
   ticker.add((tickerInstance) => {
     const deltaSeconds = tickerInstance.deltaMS / 1000;
-    backgrounds.update(deltaSeconds);
-    grounds.update(deltaSeconds);
+
+    // Get scroll speed multiplier from player position (0 = stopped, 1 = normal, 2 = double)
+    const speedMultiplier = physics.getScrollSpeedMultiplier();
+
+    backgrounds.update(deltaSeconds, speedMultiplier);
+    grounds.update(deltaSeconds, speedMultiplier);
     dustField.update();
 
     // Start dust fade-in when transition background has entered the viewport
@@ -180,6 +186,7 @@ const init = async () => {
     }
 
     const state = physics.update(deltaSeconds);
+    ball.position.x = state.x;
     ball.position.y = state.y;
     ball.scale.set(state.scaleX, state.scaleY);
 
@@ -189,6 +196,13 @@ const init = async () => {
   ticker.start();
 
   const triggerJump = () => physics.startJumpCharge();
+
+  // Track mouse/pointer movement for horizontal player position
+  const handlePointerMove = (event: PointerEvent) => {
+    physics.setMousePosition(event.clientX);
+  };
+
+  window.addEventListener('pointermove', handlePointerMove);
   window.addEventListener('pointerdown', triggerJump);
   window.addEventListener('keydown', (event) => {
     if (event.code === 'Space' || event.code === 'ArrowUp') {
@@ -229,7 +243,7 @@ const init = async () => {
 
     const updatedGround = computePlayerGround();
     physics.setGroundSurface(updatedGround);
-    ball.position.x = app.renderer.width * 0.32;
+    physics.updateScreenWidth(app.renderer.width);
     ball.position.y = updatedGround - playerRadius;
   };
 

@@ -94,12 +94,12 @@ class SegmentScroller {
     return 'cloud';
   }
 
-  update(deltaSeconds: number): void {
+  update(deltaSeconds: number, speedMultiplier: number = 1): void {
     if (this.segments.length === 0) {
       this.buildInitialSegments();
     }
 
-    const scrollSpeed = this.speedByMode[this.mode];
+    const scrollSpeed = this.speedByMode[this.mode] * speedMultiplier;
     this.segments.forEach(({ sprite }) => {
       sprite.x -= scrollSpeed * deltaSeconds;
     });
@@ -248,9 +248,9 @@ export class ParallaxBackgrounds {
     return this.container;
   }
 
-  update(deltaSeconds: number): void {
+  update(deltaSeconds: number, speedMultiplier: number = 1): void {
     if (this.state === 'transition' && this.transitionGroup) {
-      this.transitionGroup.x -= CLOUD_BACKGROUND_SPEED * deltaSeconds;
+      this.transitionGroup.x -= CLOUD_BACKGROUND_SPEED * speedMultiplier * deltaSeconds;
       const transitionSprite = this.transitionGroup.children[0] as Sprite;
       const forestSprite = this.transitionGroup.children[1] as Sprite;
       const transitionRight = this.transitionGroup.x + (transitionSprite?.width || 0);
@@ -266,7 +266,7 @@ export class ParallaxBackgrounds {
       }
     } else if (this.state === 'forest' && this.forestLoop) {
       this.forestLoop.tilePosition.x -=
-        CLOUD_BACKGROUND_SPEED * FOREST_BACKGROUND_MULTIPLIER * deltaSeconds;
+        CLOUD_BACKGROUND_SPEED * FOREST_BACKGROUND_MULTIPLIER * speedMultiplier * deltaSeconds;
     }
   }
 
@@ -377,8 +377,8 @@ export class ParallaxGrounds {
     );
   }
 
-  update(deltaSeconds: number): void {
-    this.scroller.update(deltaSeconds);
+  update(deltaSeconds: number, speedMultiplier: number = 1): void {
+    this.scroller.update(deltaSeconds, speedMultiplier);
   }
 
   resize(width: number, height: number): void {

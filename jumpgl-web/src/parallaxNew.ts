@@ -116,12 +116,12 @@ class SegmentScroller {
     return baseSpeed;
   }
 
-  update(deltaSeconds: number): void {
+  update(deltaSeconds: number, speedMultiplier: number = 1): void {
     if (this.segments.length === 0) {
       this.buildInitialSegments();
     }
 
-    const scrollSpeed = this.getCurrentScrollSpeed();
+    const scrollSpeed = this.getCurrentScrollSpeed() * speedMultiplier;
     this.segments.forEach(({ sprite }) => {
       sprite.x -= scrollSpeed * deltaSeconds;
     });
@@ -346,10 +346,10 @@ export class ParallaxBackgrounds {
     return this.container;
   }
 
-  update(deltaSeconds: number): void {
+  update(deltaSeconds: number, speedMultiplier: number = 1): void {
     const currentBiome = this.biomeManager.getCurrentBiome();
     const config = BIOME_CONFIGS[currentBiome];
-    const scrollSpeed = BASE_BACKGROUND_SPEED * config.backgroundSpeedMultiplier;
+    const scrollSpeed = BASE_BACKGROUND_SPEED * config.backgroundSpeedMultiplier * speedMultiplier;
 
     // During transition, only scroll the transition group (not the background)
     // OR if transition group exists (even if biome switched)
@@ -481,8 +481,8 @@ export class ParallaxGrounds {
     );
   }
 
-  update(deltaSeconds: number): void {
-    this.scroller.update(deltaSeconds);
+  update(deltaSeconds: number, speedMultiplier: number = 1): void {
+    this.scroller.update(deltaSeconds, speedMultiplier);
   }
 
   resize(width: number, height: number): void {
