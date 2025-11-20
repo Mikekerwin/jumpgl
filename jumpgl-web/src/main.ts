@@ -1,6 +1,8 @@
 import './style.css';
 import { Application, Container, Graphics, Sprite, Texture, Ticker } from 'pixi.js';
 import { PlayerPhysics } from './playerPhysics';
+import { EnemyPhysics } from './enemyPhysics';
+import { EnemyMovement } from './enemyMovement';
 import { loadParallaxTextures, ParallaxBackgrounds, ParallaxGrounds } from './parallaxNew';
 import { BiomeSequenceManager } from './biomeSystem';
 import { ForestDustField } from './forestDustField';
@@ -136,6 +138,25 @@ const init = async () => {
     screenWidth: app.renderer.width,
   });
 
+  // Create enemy at 90% of screen width
+  const enemyBall = new Graphics().circle(0, 0, playerRadius).fill({ color: 0xff0000 });
+  const enemyX = app.renderer.width * 0.9;
+  enemyBall.position.set(enemyX, initialGround - playerRadius);
+  playfieldContainer.addChild(enemyBall);
+
+  // Enemy systems
+  const enemyPhysics = new EnemyPhysics({
+    groundSurface: initialGround,
+  });
+
+  const enemyMovement = new EnemyMovement({
+    initialY: initialGround - playerRadius,
+  });
+
+  // Start enemy in physics mode with jump sequence
+  let enemyMode: 'physics' | 'hover' = 'physics';
+  enemyPhysics.startJumpSequence();
+
   let dustRevealStartTime: number | null = null;
   const DUST_FADE_DURATION = 5000; // 5 seconds
   const TRANSITION_VISIBLE_THRESHOLD = 0.15; // Start dust when transition is ~15% visible
@@ -192,10 +213,29 @@ const init = async () => {
 
     // Update shadow position based on player and ground
     playerShadow.update(ball.position.x, ball.position.y, computePlayerGround());
+
+    // Update enemy based on current mode
+    if (enemyMode === 'physics') {
+      const enemyState = enemyPhysics.update(deltaSeconds);
+      enemyBall.position.y = enemyState.y;
+      enemyBall.scale.set(enemyState.scaleX, enemyState.scaleY);
+
+      // Check if ready to transition to hover mode
+      if (enemyPhysics.isReadyForHover()) {
+        const velocity = enemyPhysics.enableHoverMode();
+        enemyMovement.startTransition(velocity, enemyState.y);
+        enemyMode = 'hover';
+      }
+    } else {
+      const enemyState = enemyMovement.update(deltaSeconds);
+      enemyBall.position.y = enemyState.y;
+      enemyBall.scale.set(enemyState.scaleX, enemyState.scaleY);
+    }
   });
   ticker.start();
 
   const triggerJump = () => physics.startJumpCharge();
+  const releaseJump = () => physics.endJump();
 
   // Track mouse/pointer movement for horizontal player position
   const handlePointerMove = (event: PointerEvent) => {
@@ -204,10 +244,17 @@ const init = async () => {
 
   window.addEventListener('pointermove', handlePointerMove);
   window.addEventListener('pointerdown', triggerJump);
+  window.addEventListener('pointerup', releaseJump);
   window.addEventListener('keydown', (event) => {
     if (event.code === 'Space' || event.code === 'ArrowUp') {
       event.preventDefault();
       triggerJump();
+    }
+  });
+  window.addEventListener('keyup', (event) => {
+    if (event.code === 'Space' || event.code === 'ArrowUp') {
+      event.preventDefault();
+      releaseJump();
     }
   });
 
@@ -245,6 +292,12 @@ const init = async () => {
     physics.setGroundSurface(updatedGround);
     physics.updateScreenWidth(app.renderer.width);
     ball.position.y = updatedGround - playerRadius;
+
+    // Redraw enemy with new radius
+    enemyBall.clear();
+    enemyBall.circle(0, 0, playerRadius).fill({ color: 0xff0000 });
+    enemyPhysics.setGroundSurface(updatedGround);
+    enemyBall.position.x = app.renderer.width * 0.9;
   };
 
   window.addEventListener('resize', handleResize);
@@ -262,6 +315,28 @@ const init = async () => {
   transitionButton.type = 'button';
   transitionButton.addEventListener('click', triggerTransition);
   document.body.appendChild(transitionButton);
+
+  // Toggle enemy mode button (for testing gravity/hover transitions)
+  const toggleEnemyModeButton = document.createElement('button');
+  toggleEnemyModeButton.className = 'transition-btn';
+  toggleEnemyModeButton.style.top = '70px'; // Position below the forest button
+  toggleEnemyModeButton.textContent = 'Enemy: Physics';
+  toggleEnemyModeButton.type = 'button';
+  toggleEnemyModeButton.addEventListener('click', () => {
+    if (enemyMode === 'physics') {
+      // Switch to hover
+      const velocity = enemyPhysics.enableHoverMode();
+      enemyMovement.startTransition(velocity, enemyBall.position.y);
+      enemyMode = 'hover';
+      toggleEnemyModeButton.textContent = 'Enemy: Hover';
+    } else {
+      // Switch to physics
+      enemyPhysics.enablePhysicsMode(enemyBall.position.y, enemyMovement.getY() - enemyBall.position.y);
+      enemyMode = 'physics';
+      toggleEnemyModeButton.textContent = 'Enemy: Physics';
+    }
+  });
+  document.body.appendChild(toggleEnemyModeButton);
 };
 
 init().catch((err) => {

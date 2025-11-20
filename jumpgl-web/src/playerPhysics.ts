@@ -37,10 +37,17 @@ export class PlayerPhysics {
   private horizontalRangeRight = 150; // Pixels player can move right from initialX (reduced to stop at ~45% screen)
   private lastCursorX = 0; // Track the actual cursor position for speed calculation
 
+  // Hold boost state
+  private isHolding = false;
+  private holdStartTime = 0;
+  private readonly holdBoost: number;
+  private readonly maxHoldTime = 2200; // ms
+
   constructor(opts: PlayerPhysicsOptions) {
     this.radius = opts.radius;
-    this.gravity = opts.gravity ?? 3000; // Increased from 2500 (20% faster)
-    this.jumpForce = opts.jumpForce ?? 1800; // Increased from 1500 (20% faster)
+    this.gravity = opts.gravity ?? 4500; // Increased from 2500 (20% faster)
+    this.jumpForce = opts.jumpForce ?? 2100; // Increased from 1500 (20% faster)
+    this.holdBoost = 0.16 * (this.gravity / 3000); // Scale with gravity
     this.groundSurface = opts.groundSurface;
     this.restCenterY = this.groundSurface - this.radius;
     this.y = this.restCenterY;
@@ -55,13 +62,25 @@ export class PlayerPhysics {
       if (this.chargeTimer >= this.chargeDuration) {
         this.isCharging = false;
         // Second jump is weaker than first jump (60% power)
-        const jumpPower = this.jumpCount === 0 ? this.jumpForce : this.jumpForce * 0.6;
+        const jumpPower = this.jumpCount === 0 ? this.jumpForce : this.jumpForce * 0.52;
         this.velocity = -jumpPower;
         this.jumpCount++;
       }
     }
 
+    // Apply gravity
     this.velocity += this.gravity * deltaSeconds;
+
+    // Apply hold boost (counteracts gravity to extend jump)
+    if (this.isHolding) {
+      const heldTime = performance.now() - this.holdStartTime;
+      if (heldTime < this.maxHoldTime) {
+        this.velocity -= this.holdBoost * (deltaSeconds * 1000); // Convert to per-ms
+      } else {
+        this.isHolding = false;
+      }
+    }
+
     this.y += this.velocity * deltaSeconds;
 
     if (this.y > this.restCenterY) {
@@ -90,7 +109,16 @@ export class PlayerPhysics {
     if (this.jumpCount < 2 && !this.isCharging) {
       this.isCharging = true;
       this.chargeTimer = 0;
+      this.isHolding = true;
+      this.holdStartTime = performance.now();
     }
+  }
+
+  /**
+   * Stop holding jump (called on pointer/key up)
+   */
+  endJump(): void {
+    this.isHolding = false;
   }
 
   setGroundSurface(surface: number): void {
@@ -166,33 +194,39 @@ export class PlayerPhysics {
   /**
    * Calculate scroll speed multiplier based on actual cursor position.
    * Mapping:
-   * - Cursor at 0px (far left): Speed = 0 (stopped)
-   * - Cursor at 150px from left: Speed = 1 (normal walk speed)
-   * - Cursor at 300px from left and beyond: Speed = 2.3 (max run speed)
-   *
-   * This creates easy control where you only need to move your cursor 150px
-   * to walk, and 300px (about middle of most screens) to reach max speed.
+   * - Cursor at 0-10% screen: Speed = 0.1 → 1.5 (slow crawl to walk)
+   * - Cursor at 10-25% screen: Speed = 1.5 (default walk speed)
+   * - Cursor at 25-50% screen: Speed = 1.5 → 3.0 (walk to sprint)
+   * - Cursor at 50%+ screen: Speed = 3.0 (max sprint speed)
    */
   getScrollSpeedMultiplier(): number {
     // Use actual cursor position (not the mapped player position)
     const cursorX = this.lastCursorX;
 
-    // Walk speed at 150px, max speed (2.3x) at 300px
-    const walkSpeedThreshold = 150;
-    const maxSpeedThreshold = 300;
-    const maxSpeed = 2.3;
+    // Calculate screen percentages
+    const screen10Percent = this.screenWidth * 0.10;
+    const screen25Percent = this.screenWidth * 0.25;
+    const screen50Percent = this.screenWidth * 0.50;
+
+    const minSpeed = 0.1; // 10% speed at far left
+    const walkSpeed = 1.5; // Default walking speed
+    const maxSpeed = 3.0; // Sprint speed
 
     if (cursorX <= 0) {
-      return 0; // Stopped at far left
-    } else if (cursorX <= walkSpeedThreshold) {
-      // 0px to 150px: 0 → 1 (stopped to walk)
-      return cursorX / walkSpeedThreshold;
-    } else if (cursorX <= maxSpeedThreshold) {
-      // 150px to 300px: 1 → 2.3 (walk to max run)
-      const progress = (cursorX - walkSpeedThreshold) / (maxSpeedThreshold - walkSpeedThreshold);
-      return 1 + progress * (maxSpeed - 1);
+      return minSpeed;
+    } else if (cursorX <= screen10Percent) {
+      // 0% to 10% screen: 0.1 → 1.5 (fast ramp to walk)
+      const progress = cursorX / screen10Percent;
+      return minSpeed + progress * (walkSpeed - minSpeed);
+    } else if (cursorX <= screen25Percent) {
+      // 10% to 25% screen: 1.5 (maintain walk speed)
+      return walkSpeed;
+    } else if (cursorX <= screen50Percent) {
+      // 25% to 50% screen: 1.5 → 3.0 (walk to sprint)
+      const progress = (cursorX - screen25Percent) / (screen50Percent - screen25Percent);
+      return walkSpeed + progress * (maxSpeed - walkSpeed);
     } else {
-      // Beyond 300px: stay at max speed (2.3)
+      // Beyond 50% screen: 3.0 (max sprint speed)
       return maxSpeed;
     }
   }
