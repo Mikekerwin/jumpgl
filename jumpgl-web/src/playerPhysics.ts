@@ -50,6 +50,7 @@ export class PlayerPhysics {
 
   // Platform surface override
   private surfaceOverrideY: number | null = null;
+  private platformBounceCount: number = 0;
 
   constructor(opts: PlayerPhysicsOptions) {
     this.radius = opts.radius;
@@ -96,15 +97,31 @@ export class PlayerPhysics {
 
     // Determine effective ground (platform override or default ground)
     const effectiveGround = this.surfaceOverrideY ?? this.restCenterY;
+    const isOnPlatform = this.surfaceOverrideY !== null;
 
     if (this.y > effectiveGround) {
       this.y = effectiveGround;
       this.jumpCount = 0; // Reset jump count when touching ground/platform
       if (this.velocity > 0) {
-        // Apply bounce damping (works for both ground and platforms)
-        this.velocity = -this.velocity * this.bounceDamping;
-        if (Math.abs(this.velocity) < this.minBounceVelocity) {
-          this.velocity = 0;
+        if (isOnPlatform) {
+          // Platform collision: allow 3 bounces then stop
+          this.platformBounceCount++;
+          if (this.platformBounceCount >= 3) {
+            this.velocity = 0;
+          } else {
+            // Apply bounce damping
+            this.velocity = -this.velocity * this.bounceDamping;
+            if (Math.abs(this.velocity) < this.minBounceVelocity) {
+              this.velocity = 0;
+              this.platformBounceCount = 3; // Prevent further bouncing
+            }
+          }
+        } else {
+          // Ground collision: normal bounce damping (infinite bounces allowed)
+          this.velocity = -this.velocity * this.bounceDamping;
+          if (Math.abs(this.velocity) < this.minBounceVelocity) {
+            this.velocity = 0;
+          }
         }
       }
     }
@@ -128,6 +145,7 @@ export class PlayerPhysics {
       this.holdStartTime = performance.now();
       // Clear platform override when jumping
       this.surfaceOverrideY = null;
+      this.platformBounceCount = 0; // Reset bounce counter when jumping
     }
   }
 
@@ -179,13 +197,19 @@ export class PlayerPhysics {
   }
 
   /**
-   * Land the player on a platform surface (preserves bouncing)
+   * Land the player on a platform surface (allows bouncing with limit)
    * @param surfaceY Y position where player's top should be
    */
   landOnSurface(surfaceY: number): void {
+    // Only set override if it's a new platform or first landing
+    const isNewPlatform = this.surfaceOverrideY !== surfaceY;
     this.surfaceOverrideY = surfaceY;
-    // Don't force position or velocity - let physics handle it naturally
-    // This allows bouncing to continue on platforms
+
+    // Reset bounce counter when landing on a new platform
+    if (isNewPlatform) {
+      this.platformBounceCount = 0;
+    }
+    // Don't force position or velocity - let physics handle bouncing naturally
   }
 
   /**
@@ -193,6 +217,7 @@ export class PlayerPhysics {
    */
   clearSurfaceOverride(): void {
     this.surfaceOverrideY = null;
+    this.platformBounceCount = 0; // Reset bounce counter when leaving platform
   }
 
   /**

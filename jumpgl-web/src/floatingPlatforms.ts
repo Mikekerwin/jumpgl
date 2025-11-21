@@ -1,6 +1,7 @@
 import { Container, Sprite, Texture } from 'pixi.js';
 
 export interface PlatformCollision {
+  id: number;
   surfaceY: number;
   left: number;
   right: number;
@@ -99,14 +100,13 @@ export class FloatingPlatforms {
     // Calculate surface Y - where the player's center should be when standing on platform
     const surfaceCenterY = groundCenterY - verticalOffset;
 
-    // Player position.y is the top of the player circle
-    // When standing on platform, player bottom (position.y + diameter) should be at platform middle
-    const playerDiameter = playerRadius * 2;
-    const platformMiddle = surfaceCenterY;
-    const surfaceY = platformMiddle - playerDiameter;
-
     // Render Y - where to draw the image (centered on surfaceCenterY)
     const renderY = surfaceCenterY - imageHeight / 2;
+
+    // Player top position when their bottom sits on the platform's top edge
+    // Graphics use y as center, so top = renderY - diameter
+    const playerDiameter = playerRadius * 2;
+    const surfaceY = renderY - playerDiameter;
 
     // Position hitbox offset to the right (5px for large, proportional for small)
     const hitboxOffsetX = isLarge ? 10 : 5;
@@ -124,7 +124,7 @@ export class FloatingPlatforms {
 
     console.log(
       `[PLATFORM SPAWN] Type=${platformType} X=${worldX.toFixed(0)} SurfaceY=${surfaceY.toFixed(0)} ` +
-      `PlatformMiddle=${platformMiddle.toFixed(0)} RenderY=${renderY.toFixed(0)} GroundY=${groundCenterY.toFixed(0)}`
+      `PlatformMiddle=${surfaceCenterY.toFixed(0)} RenderY=${renderY.toFixed(0)} GroundY=${groundCenterY.toFixed(0)}`
     );
   }
 
@@ -264,6 +264,7 @@ export class FloatingPlatforms {
       // Return platform collision if either condition is met
       if (crossedThisFrame || resting) {
         return {
+          id: platform.id,
           surfaceY: platform.surfaceY,
           left: platformLeft,
           right: platformRight,
@@ -288,6 +289,21 @@ export class FloatingPlatforms {
    */
   getActivePlatformCount(): number {
     return this.platforms.filter(p => p.active).length;
+  }
+
+  /**
+   * Get live bounds for a platform by id (returns null if deactivated)
+   */
+  getPlatformBounds(id: number): PlatformCollision | null {
+    const platform = this.platforms.find(p => p.id === id && p.active);
+    if (!platform) return null;
+
+    return {
+      id: platform.id,
+      surfaceY: platform.surfaceY,
+      left: platform.x,
+      right: platform.x + platform.width,
+    };
   }
 
   private createPlatform(): PlatformInstance {

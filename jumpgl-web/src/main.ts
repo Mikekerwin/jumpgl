@@ -107,6 +107,9 @@ const init = async () => {
   // Initialize platform system
   const platforms = new FloatingPlatforms(PLATFORM_LARGE_IMAGE_PATH, PLATFORM_SMALL_IMAGE_PATH);
   let platformSpawnType: 'large' | 'small' = 'large'; // Tracks which platform type to spawn next
+  let activePlatformId: number | null = null;
+  const PLATFORM_LANDING_OFFSET = 30; // Extra pixels to sink into platform at rest
+  const PLATFORM_EDGE_TOLERANCE = 8; // Horizontal forgiveness so we don't drop too early
 
   const stars = Array.from({ length: 80 }).map(() => {
     const dot = new Graphics()
@@ -251,16 +254,39 @@ const init = async () => {
 
     if (supportingPlatform) {
       // Player is on a platform - set surface override
-      physics.landOnSurface(supportingPlatform.surfaceY);
+      activePlatformId = supportingPlatform.id;
+      // Convert stored platform surface (player top) to the center y the physics uses, and sink slightly for visuals
+      const landingY = supportingPlatform.surfaceY + playerRadius + PLATFORM_LANDING_OFFSET;
+      physics.landOnSurface(landingY);
 
       // Check if player has moved outside platform horizontal bounds
-      if (playerBounds.right < supportingPlatform.left || playerBounds.left > supportingPlatform.right) {
+      if (
+        playerBounds.right < supportingPlatform.left - PLATFORM_EDGE_TOLERANCE ||
+        playerBounds.left > supportingPlatform.right + PLATFORM_EDGE_TOLERANCE
+      ) {
         // Player walked off the edge - clear platform override
         physics.clearSurfaceOverride();
+        activePlatformId = null;
       }
-    } else {
-      // No platform support - use normal ground physics
-      physics.clearSurfaceOverride();
+    } else if (activePlatformId !== null) {
+      // Keep platform override while bouncing vertically so the bounce counter isn't reset
+      const livePlatform = platforms.getPlatformBounds(activePlatformId);
+
+      // If platform has been culled (scrolled away), release the player
+      if (!livePlatform) {
+        physics.clearSurfaceOverride();
+        activePlatformId = null;
+      } else {
+        const stillOverPlatform =
+          playerBounds.right >= livePlatform.left - PLATFORM_EDGE_TOLERANCE &&
+          playerBounds.left <= livePlatform.right + PLATFORM_EDGE_TOLERANCE;
+
+        // If we've drifted off the platform horizontally, drop the override so we can fall
+        if (!stillOverPlatform) {
+          physics.clearSurfaceOverride();
+          activePlatformId = null;
+        }
+      }
     }
 
     ball.position.x = state.x;
