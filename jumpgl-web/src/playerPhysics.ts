@@ -5,6 +5,11 @@ export type PlayerPhysicsState = {
   scaleY: number;
 };
 
+const ORIGINAL_GRAVITY = 0.60;
+const ORIGINAL_HOLD_BOOST = 0.30;
+const HOLD_FORCE_RATIO = ORIGINAL_HOLD_BOOST / ORIGINAL_GRAVITY;
+const MAX_HOLD_TIME_MS = 1000;
+
 export interface PlayerPhysicsOptions {
   radius: number;
   groundSurface: number;
@@ -41,13 +46,16 @@ export class PlayerPhysics {
   private isHolding = false;
   private holdStartTime = 0;
   private readonly holdBoost: number;
-  private readonly maxHoldTime = 2200; // ms
+  private readonly maxHoldTime = MAX_HOLD_TIME_MS; // ms
+
+  // Platform surface override
+  private surfaceOverrideY: number | null = null;
 
   constructor(opts: PlayerPhysicsOptions) {
     this.radius = opts.radius;
-    this.gravity = opts.gravity ?? 4500; // Increased from 2500 (20% faster)
-    this.jumpForce = opts.jumpForce ?? 2100; // Increased from 1500 (20% faster)
-    this.holdBoost = 0.16 * (this.gravity / 3000); // Scale with gravity
+    this.gravity = opts.gravity ?? 6525; // Increased from 2500 (20% faster)
+    this.jumpForce = opts.jumpForce ?? 2250; // Increased from 1500 (20% faster)
+    this.holdBoost = this.gravity * HOLD_FORCE_RATIO; // Match original hold/grav ratio
     this.groundSurface = opts.groundSurface;
     this.restCenterY = this.groundSurface - this.radius;
     this.y = this.restCenterY;
@@ -62,9 +70,12 @@ export class PlayerPhysics {
       if (this.chargeTimer >= this.chargeDuration) {
         this.isCharging = false;
         // Second jump is weaker than first jump (60% power)
-        const jumpPower = this.jumpCount === 0 ? this.jumpForce : this.jumpForce * 0.52;
+        const jumpPower = this.jumpCount === 0 ? this.jumpForce : this.jumpForce * 0.575;
         this.velocity = -jumpPower;
         this.jumpCount++;
+        if (this.isHolding) {
+          this.holdStartTime = performance.now();
+        }
       }
     }
 
@@ -75,7 +86,7 @@ export class PlayerPhysics {
     if (this.isHolding) {
       const heldTime = performance.now() - this.holdStartTime;
       if (heldTime < this.maxHoldTime) {
-        this.velocity -= this.holdBoost * (deltaSeconds * 1000); // Convert to per-ms
+        this.velocity -= this.holdBoost * deltaSeconds;
       } else {
         this.isHolding = false;
       }
@@ -83,10 +94,14 @@ export class PlayerPhysics {
 
     this.y += this.velocity * deltaSeconds;
 
-    if (this.y > this.restCenterY) {
-      this.y = this.restCenterY;
-      this.jumpCount = 0; // Reset jump count when touching ground
+    // Determine effective ground (platform override or default ground)
+    const effectiveGround = this.surfaceOverrideY ?? this.restCenterY;
+
+    if (this.y > effectiveGround) {
+      this.y = effectiveGround;
+      this.jumpCount = 0; // Reset jump count when touching ground/platform
       if (this.velocity > 0) {
+        // Apply bounce damping (works for both ground and platforms)
         this.velocity = -this.velocity * this.bounceDamping;
         if (Math.abs(this.velocity) < this.minBounceVelocity) {
           this.velocity = 0;
@@ -111,6 +126,8 @@ export class PlayerPhysics {
       this.chargeTimer = 0;
       this.isHolding = true;
       this.holdStartTime = performance.now();
+      // Clear platform override when jumping
+      this.surfaceOverrideY = null;
     }
   }
 
@@ -154,10 +171,28 @@ export class PlayerPhysics {
   }
 
   private isGrounded(): boolean {
+    const effectiveGround = this.surfaceOverrideY ?? this.restCenterY;
     return (
-      Math.abs(this.y - this.restCenterY) < 0.5 &&
+      Math.abs(this.y - effectiveGround) < 0.5 &&
       Math.abs(this.velocity) < this.minBounceVelocity
     );
+  }
+
+  /**
+   * Land the player on a platform surface (preserves bouncing)
+   * @param surfaceY Y position where player's top should be
+   */
+  landOnSurface(surfaceY: number): void {
+    this.surfaceOverrideY = surfaceY;
+    // Don't force position or velocity - let physics handle it naturally
+    // This allows bouncing to continue on platforms
+  }
+
+  /**
+   * Clear platform surface override (return to normal ground physics)
+   */
+  clearSurfaceOverride(): void {
+    this.surfaceOverrideY = null;
   }
 
   /**

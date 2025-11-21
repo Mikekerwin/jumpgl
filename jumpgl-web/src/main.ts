@@ -7,7 +7,8 @@ import { loadParallaxTextures, ParallaxBackgrounds, ParallaxGrounds } from './pa
 import { BiomeSequenceManager } from './biomeSystem';
 import { ForestDustField } from './forestDustField';
 import { Shadow } from './shadow';
-import { calculateResponsiveSizes, GROUND_PLAYER_DEPTH } from './config';
+import { FloatingPlatforms, type PlayerBounds } from './floatingPlatforms';
+import { calculateResponsiveSizes, GROUND_PLAYER_DEPTH, PLATFORM_LARGE_IMAGE_PATH, PLATFORM_SMALL_IMAGE_PATH, PLATFORM_VERTICAL_OFFSET } from './config';
 
 const createGroundGradientSprite = (width: number, height: number): Sprite => {
   const gradientHeight = Math.max(200, height * 0.45);
@@ -52,9 +53,10 @@ const init = async () => {
   const backgroundContainer = new Container();
   const overlayContainer = new Container();
   const groundContainer = new Container();
+  const platformContainer = new Container();
   const playfieldContainer = new Container();
 
-  scene.addChild(backgroundContainer, overlayContainer, groundContainer, playfieldContainer);
+  scene.addChild(backgroundContainer, overlayContainer, groundContainer, platformContainer, playfieldContainer);
 
   let starsActive = true;
   const parallaxTextures = await loadParallaxTextures();
@@ -101,6 +103,10 @@ const init = async () => {
     app.renderer.width,
     app.renderer.height
   );
+
+  // Initialize platform system
+  const platforms = new FloatingPlatforms(PLATFORM_LARGE_IMAGE_PATH, PLATFORM_SMALL_IMAGE_PATH);
+  let platformSpawnType: 'large' | 'small' = 'large'; // Tracks which platform type to spawn next
 
   const stars = Array.from({ length: 80 }).map(() => {
     const dot = new Graphics()
@@ -172,6 +178,11 @@ const init = async () => {
     grounds.update(deltaSeconds, speedMultiplier);
     dustField.update();
 
+    // Update platforms with ground scroll speed (72 px/sec * speedMultiplier)
+    const BASE_GROUND_SCROLL_SPEED = 72; // pixels per second (from parallaxNew.ts)
+    const groundScrollSpeed = BASE_GROUND_SCROLL_SPEED * speedMultiplier;
+    platforms.update(deltaSeconds, groundScrollSpeed, app.renderer.width);
+
     // Start dust fade-in when transition background has entered the viewport
     const forestProgress = backgrounds.getTransitionProgress();
 
@@ -196,6 +207,10 @@ const init = async () => {
     // Update texture from canvas - this tells PixiJS the canvas has changed
     dustTexture.source.update();
     dustSprite.alpha = dustField.getOpacity();
+
+    // Render platforms using PixiJS Sprites
+    platforms.renderToContainer(platformContainer, 0); // No camera offset for now
+
     if (starsActive) {
       stars.forEach((star) => {
         star.view.y += star.speed * tickerInstance.deltaTime;
@@ -206,7 +221,48 @@ const init = async () => {
       });
     }
 
+    // Platform collision detection
+    // Store previous position for frame-by-frame tracking
+    const prevState = { x: ball.position.x, y: ball.position.y };
+
     const state = physics.update(deltaSeconds);
+
+    // Calculate player bounds for collision detection
+    const playerBounds: PlayerBounds = {
+      left: state.x - playerRadius,
+      right: state.x + playerRadius,
+      top: state.y - playerRadius,
+      bottom: state.y + playerRadius,
+    };
+
+    const prevBounds: PlayerBounds = {
+      left: prevState.x - playerRadius,
+      right: prevState.x + playerRadius,
+      top: prevState.y - playerRadius,
+      bottom: prevState.y + playerRadius,
+    };
+
+    // Check for platform collision
+    const supportingPlatform = platforms.getSupportingPlatform(
+      playerBounds,
+      prevBounds,
+      state.y > prevState.y ? (state.y - prevState.y) / deltaSeconds : -(prevState.y - state.y) / deltaSeconds
+    );
+
+    if (supportingPlatform) {
+      // Player is on a platform - set surface override
+      physics.landOnSurface(supportingPlatform.surfaceY);
+
+      // Check if player has moved outside platform horizontal bounds
+      if (playerBounds.right < supportingPlatform.left || playerBounds.left > supportingPlatform.right) {
+        // Player walked off the edge - clear platform override
+        physics.clearSurfaceOverride();
+      }
+    } else {
+      // No platform support - use normal ground physics
+      physics.clearSurfaceOverride();
+    }
+
     ball.position.x = state.x;
     ball.position.y = state.y;
     ball.scale.set(state.scaleX, state.scaleY);
@@ -316,27 +372,29 @@ const init = async () => {
   transitionButton.addEventListener('click', triggerTransition);
   document.body.appendChild(transitionButton);
 
-  // Toggle enemy mode button (for testing gravity/hover transitions)
-  const toggleEnemyModeButton = document.createElement('button');
-  toggleEnemyModeButton.className = 'transition-btn';
-  toggleEnemyModeButton.style.top = '70px'; // Position below the forest button
-  toggleEnemyModeButton.textContent = 'Enemy: Physics';
-  toggleEnemyModeButton.type = 'button';
-  toggleEnemyModeButton.addEventListener('click', () => {
-    if (enemyMode === 'physics') {
-      // Switch to hover
-      const velocity = enemyPhysics.enableHoverMode();
-      enemyMovement.startTransition(velocity, enemyBall.position.y);
-      enemyMode = 'hover';
-      toggleEnemyModeButton.textContent = 'Enemy: Hover';
-    } else {
-      // Switch to physics
-      enemyPhysics.enablePhysicsMode(enemyBall.position.y, enemyMovement.getY() - enemyBall.position.y);
-      enemyMode = 'physics';
-      toggleEnemyModeButton.textContent = 'Enemy: Physics';
-    }
-  });
-  document.body.appendChild(toggleEnemyModeButton);
+  // Platform spawn button
+  const spawnPlatform = () => {
+    // Spawn off-screen to the right (so it animates in like the ground)
+    const spawnX = app.renderer.width + 100; // Off-screen right
+    const groundY = computePlayerGround();
+    platforms.spawn(spawnX, groundY, playerRadius, platformSpawnType, PLATFORM_VERTICAL_OFFSET);
+
+    console.log(`[PLATFORM SPAWN] Spawned ${platformSpawnType} platform at X=${spawnX}`);
+
+    // Alternate between large and small platforms
+    platformSpawnType = platformSpawnType === 'large' ? 'small' : 'large';
+
+    // Update button text to show next platform type
+    platformButton.textContent = `Spawn ${platformSpawnType === 'large' ? 'Large' : 'Small'} Platform`;
+  };
+
+  const platformButton = document.createElement('button');
+  platformButton.className = 'transition-btn';
+  platformButton.textContent = 'Spawn Large Platform';
+  platformButton.type = 'button';
+  platformButton.style.top = '60px'; // Position below transition button
+  platformButton.addEventListener('click', spawnPlatform);
+  document.body.appendChild(platformButton);
 };
 
 init().catch((err) => {

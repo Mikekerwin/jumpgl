@@ -54,6 +54,11 @@ export const FOREST_DUST_BUCKETS: ForestDustBucket[] = [
 export const FOREST_DUST_SMALL_CLUSTER_COUNT = 10;
 export const FOREST_DUST_SMALL_CLUSTER_RADIUS = 140;
 
+// Platform configuration
+export const PLATFORM_LARGE_IMAGE_PATH = '/jumpgl/grassPlatform_Large.png';
+export const PLATFORM_SMALL_IMAGE_PATH = '/jumpgl/smallPlatform.png';
+export const PLATFORM_VERTICAL_OFFSET = 200; // Pixels above ground center
+
 // Responsive sizing configuration
 // These maintain proportions relative to a baseline window height
 export const BASELINE_WINDOW_HEIGHT = 800; // Reference height for design
