@@ -5,7 +5,7 @@ export type PlayerPhysicsState = {
   scaleY: number;
 };
 
-const ORIGINAL_GRAVITY = 1.1;
+const ORIGINAL_GRAVITY = 1;
 const ORIGINAL_HOLD_BOOST = 0.30;
 const HOLD_FORCE_RATIO = ORIGINAL_HOLD_BOOST / ORIGINAL_GRAVITY;
 const MAX_HOLD_TIME_MS = 1000;

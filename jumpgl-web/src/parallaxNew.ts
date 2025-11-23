@@ -259,12 +259,13 @@ const createFittedSprite = (texture: Texture, width: number, height: number): Sp
   const sprite = new Sprite(texture);
   const texWidth = texture.width || 1;
   const texHeight = texture.height || 1;
-  const scale = Math.max(width / texWidth, height / texHeight);
+  const scale = width / texWidth;
+  const scaledHeight = texHeight * scale;
   sprite.scale.set(scale);
   sprite.x = 0;
-  sprite.y = 0;
+  sprite.y = height - scaledHeight; // bottom-align
   sprite.width = texWidth * scale;
-  sprite.height = texHeight * scale;
+  sprite.height = scaledHeight;
   return sprite;
 };
 
@@ -357,21 +358,19 @@ export class ParallaxBackgrounds {
       return; // rely on persistent sky
     }
     const texture = this.textures[textureName];
-    const backgroundHeight = this.viewportHeight;
+    const scale = this.viewportWidth / (texture.width || 1);
+    const scaledHeight = (texture.height || 1) * scale;
 
     this.currentBackground = new TilingSprite({
       texture,
       width: this.viewportWidth,
-      height: backgroundHeight,
+      height: scaledHeight,
     });
 
-    // Scale by width, anchor bottom
-    const scale = this.viewportWidth / (texture.width || 1);
     this.currentBackground.tileScale.set(scale);
-    const scaledHeight = (texture.height || 1) * scale;
-    const extraHeight = Math.max(0, scaledHeight - backgroundHeight);
-    this.currentBackground.tilePosition.set(0, extraHeight); // shift texture down so bottom aligns
-    this.currentBackground.y = -extraHeight;
+    this.currentBackground.tilePosition.set(0, 0);
+    // Place so the bottom of the scaled image sits at the bottom of the viewport
+    this.currentBackground.y = this.viewportHeight - scaledHeight;
 
     this.container.addChildAt(this.currentBackground, 1);
   }
@@ -432,15 +431,13 @@ export class ParallaxBackgrounds {
 
     if (this.currentBackground) {
       const texture = this.currentBackground.texture;
-      const backgroundHeight = height;
       const baseScale = width / (texture.width || 1);
       const scaledHeight = (texture.height || 1) * baseScale;
-      const extraHeight = Math.max(0, scaledHeight - backgroundHeight);
       this.currentBackground.width = width;
-      this.currentBackground.height = backgroundHeight;
+      this.currentBackground.height = scaledHeight;
       this.currentBackground.tileScale.set(baseScale);
-      this.currentBackground.tilePosition.set(0, extraHeight);
-      this.currentBackground.y = -extraHeight;
+      this.currentBackground.tilePosition.set(0, 0);
+      this.currentBackground.y = this.viewportHeight - scaledHeight;
     }
 
     if (this.transitionGroup) {
