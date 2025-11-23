@@ -255,6 +255,8 @@ class SegmentScroller {
   }
 }
 
+const FOREST_TOP_CROP = 2; // pixels to trim from the top of forest/transition images
+
 const createFittedSprite = (texture: Texture, width: number, height: number): Sprite => {
   const sprite = new Sprite(texture);
   const texWidth = texture.width || 1;
@@ -263,9 +265,9 @@ const createFittedSprite = (texture: Texture, width: number, height: number): Sp
   const scaledHeight = texHeight * scale;
   sprite.scale.set(scale);
   sprite.x = 0;
-  sprite.y = height - scaledHeight; // bottom-align
+  sprite.y = height - (scaledHeight - FOREST_TOP_CROP); // bottom-align with crop
   sprite.width = texWidth * scale;
-  sprite.height = scaledHeight;
+  sprite.height = scaledHeight - FOREST_TOP_CROP; // crop a few pixels from the top
   return sprite;
 };
 
@@ -360,17 +362,18 @@ export class ParallaxBackgrounds {
     const texture = this.textures[textureName];
     const scale = this.viewportWidth / (texture.width || 1);
     const scaledHeight = (texture.height || 1) * scale;
+    const visibleHeight = scaledHeight - FOREST_TOP_CROP;
 
     this.currentBackground = new TilingSprite({
       texture,
       width: this.viewportWidth,
-      height: scaledHeight,
+      height: visibleHeight,
     });
 
     this.currentBackground.tileScale.set(scale);
-    this.currentBackground.tilePosition.set(0, 0);
+    this.currentBackground.tilePosition.set(0, -FOREST_TOP_CROP);
     // Place so the bottom of the scaled image sits at the bottom of the viewport
-    this.currentBackground.y = this.viewportHeight - scaledHeight;
+    this.currentBackground.y = this.viewportHeight - visibleHeight;
 
     this.container.addChildAt(this.currentBackground, 1);
   }
@@ -433,11 +436,12 @@ export class ParallaxBackgrounds {
       const texture = this.currentBackground.texture;
       const baseScale = width / (texture.width || 1);
       const scaledHeight = (texture.height || 1) * baseScale;
+      const visibleHeight = scaledHeight - FOREST_TOP_CROP;
       this.currentBackground.width = width;
-      this.currentBackground.height = scaledHeight;
+      this.currentBackground.height = visibleHeight;
       this.currentBackground.tileScale.set(baseScale);
-      this.currentBackground.tilePosition.set(0, 0);
-      this.currentBackground.y = this.viewportHeight - scaledHeight;
+      this.currentBackground.tilePosition.set(0, -FOREST_TOP_CROP);
+      this.currentBackground.y = this.viewportHeight - visibleHeight;
     }
 
     if (this.transitionGroup) {
