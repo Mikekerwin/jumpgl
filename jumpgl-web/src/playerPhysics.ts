@@ -5,11 +5,10 @@ export type PlayerPhysicsState = {
   scaleY: number;
 };
 
-const ORIGINAL_GRAVITY = 1;
-const ORIGINAL_HOLD_BOOST = 0.30;
+const ORIGINAL_GRAVITY = 0.42;
+const ORIGINAL_HOLD_BOOST = 0.2;
 const HOLD_FORCE_RATIO = ORIGINAL_HOLD_BOOST / ORIGINAL_GRAVITY;
-const MAX_HOLD_TIME_MS = 1000;
-const MAX_CHARGE_TIME_MS = 500; // Maximum charge duration for variable jump power
+const MAX_HOLD_TIME_MS = 2700;
 
 export interface PlayerPhysicsOptions {
   radius: number;
@@ -40,10 +39,8 @@ export class PlayerPhysics {
   private horizontalRangeRight = 150; // Pixels player can move right from initialX (reduced to stop at ~45% screen)
   private lastCursorX = 0; // Track the actual cursor position for speed calculation
 
-  // Charge state (pre-jump)
+  // Jump input state (tracks whether jump button is held)
   private isCharging = false;
-  private chargeStartTime = 0;
-  private readonly maxChargeTime = MAX_CHARGE_TIME_MS;
 
   // Hold boost state (in-air)
   private isHolding = false;
@@ -69,8 +66,6 @@ export class PlayerPhysics {
   }
 
   update(deltaSeconds: number): PlayerPhysicsState {
-    // No auto-fire logic - jump fires on button release via releaseJump()
-
     // Apply gravity
     this.velocity += this.gravity * deltaSeconds;
 
@@ -128,54 +123,38 @@ export class PlayerPhysics {
   }
 
   /**
-   * Start charging a jump (called on pointer/key down)
-   * Returns true if charge started, false if jump not available
+   * Start a jump immediately (called on pointer/key down).
+   * Returns true if a jump was executed.
    */
-  startJumpCharge(): boolean {
-    // Allow jump if we haven't used both jumps yet
-    if (this.jumpCount < 2 && !this.isCharging) {
-      this.isCharging = true;
-      this.chargeStartTime = performance.now();
-      return true; // Jump charge started
-    }
-    return false; // Jump was not allowed
+  startJump(): boolean {
+    if (this.jumpCount >= 2 || this.isCharging) return false;
+
+    // Second jump is weaker (60% of first jump power)
+    const jumpPower = this.jumpCount === 0 ? this.jumpForce : this.jumpForce * 0.6;
+    this.velocity = -jumpPower;
+    this.jumpCount++;
+
+    // Track held input for variable jump height
+    this.isCharging = true;
+    this.isHolding = true;
+    this.holdStartTime = performance.now();
+
+    return true;
   }
 
   /**
-   * Release jump (called on pointer/key up)
-   * CHARGE DISABLED: Fires instant jump without variable power
-   * @returns true if a jump was executed, false otherwise
+   * Compatibility alias for existing callers expecting startJumpCharge()
    */
-  endJump(): boolean {
-    // If we were charging, fire the jump
-    if (this.isCharging) {
-      // DISABLED: Variable charge power
-      // const chargeTime = performance.now() - this.chargeStartTime;
-      // const clampedChargeTime = Math.min(chargeTime, this.maxChargeTime);
-      // const chargeRatio = clampedChargeTime / this.maxChargeTime;
-      // const powerMultiplier = 1.0 + (chargeRatio * 0.6);
+  startJumpCharge(): boolean {
+    return this.startJump();
+  }
 
-      // Use fixed power (no charge scaling)
-      const powerMultiplier = 1.0;
-
-      // Second jump is weaker (60% of first jump power)
-      const baseJumpPower = this.jumpCount === 0 ? this.jumpForce : this.jumpForce * 0.6;
-      const finalJumpPower = baseJumpPower * powerMultiplier;
-
-      this.velocity = -finalJumpPower;
-      this.jumpCount++;
-      this.isCharging = false;
-
-      // Start hold boost for extending jump arc (separate from charge)
-      this.isHolding = true;
-      this.holdStartTime = performance.now();
-
-      return true; // Jump was executed
-    } else {
-      // If not charging, just stop hold boost (in-air extension)
-      this.isHolding = false;
-      return false; // No jump executed
-    }
+  /**
+   * Stop holding jump (called on pointer/key up)
+   */
+  endJump(): void {
+    this.isCharging = false;
+    this.isHolding = false;
   }
 
   setGroundSurface(surface: number): void {
@@ -281,9 +260,9 @@ export class PlayerPhysics {
    */
   getChargeLevel(): number {
     if (!this.isCharging) return 0;
-    const chargeTime = performance.now() - this.chargeStartTime;
-    const clampedChargeTime = Math.min(chargeTime, this.maxChargeTime);
-    return clampedChargeTime / this.maxChargeTime;
+    const holdTime = performance.now() - this.holdStartTime;
+    const clampedHoldTime = Math.min(holdTime, this.maxHoldTime);
+    return clampedHoldTime / this.maxHoldTime;
   }
 
   /**

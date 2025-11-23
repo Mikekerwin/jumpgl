@@ -559,16 +559,13 @@ const init = async () => {
   ticker.start();
 
   const triggerJump = () => {
-    physics.startJumpCharge();
-  };
-  const releaseJump = () => {
-    const jumpExecuted = physics.endJump();
-    // Record jump time if jump was actually executed (not just releasing while in air)
+    const jumpExecuted = physics.startJump();
     if (jumpExecuted) {
       lastJumpTime = performance.now();
     }
-    // DISABLED: Clear charge particles when jump is released
-    // chargeParticles.clear();
+  };
+  const releaseJump = () => {
+    physics.endJump();
   };
 
   // Track mouse/pointer movement for horizontal player position
