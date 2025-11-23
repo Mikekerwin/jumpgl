@@ -283,8 +283,8 @@ export const loadParallaxTextures = async (): Promise<ParallaxTextures> => {
   if (!bundleRegistered) {
     Assets.addBundle('jump-parallax', {
       cloudSky: 'cloud_light_sky.webp',
-      forestTrees: 'forest_light_trees.webp',
-      forestTransition: 'forestTransition.webp',
+      forestTrees: 'RepeatTreeLineWithTop.webp',
+      forestTransition: 'TransitionTreeLineWithTop.webp',
       cloudGround: 'cloud_light_ground.webp',
       transitionGround: 'cloud_light_ground_forest_transition.webp',
       forestGround: 'forest_light_ground.webp',
