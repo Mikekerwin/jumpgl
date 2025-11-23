@@ -108,7 +108,8 @@ const init = async () => {
   const jumpDustSprite = new Sprite(jumpDustTexture);
   jumpDustSprite.blendMode = 'normal';
 
-  // Initialize charge particle system
+  // Initialize charge particle system (currently disabled but keeping structure for future re-enable)
+  // @ts-expect-error - Keeping for future re-enable
   const chargeParticles = new ChargeParticles();
   const chargeCanvas = document.createElement('canvas');
   chargeCanvas.width = app.renderer.width;

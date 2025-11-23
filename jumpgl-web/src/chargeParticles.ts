@@ -68,10 +68,10 @@ export class ChargeParticles {
    * Render all particles to a 2D canvas context
    * NOTE: Context should already be translated to player position
    * @param ctx Canvas 2D context
-   * @param canvasWidth Canvas width for bounds checking
-   * @param canvasHeight Canvas height for bounds checking
+   * @param _canvasWidth Canvas width for bounds checking (unused)
+   * @param _canvasHeight Canvas height for bounds checking (unused)
    */
-  render(ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number): void {
+  render(ctx: CanvasRenderingContext2D, _canvasWidth: number, _canvasHeight: number): void {
     this.particles.forEach((p) => {
       // Calculate particle position based on angle and distance
       // These are relative to player center (0, 0) since context is already translated
