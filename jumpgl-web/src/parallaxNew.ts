@@ -331,14 +331,31 @@ export class ParallaxBackgrounds {
     }
     const textureName = BIOME_CONFIGS[biome].backgroundTexture as keyof ParallaxTextures;
     const texture = this.textures[textureName];
+
+    // Only apply 2x scaling to cloud sky background (for camera upward movement)
+    // Forest and other backgrounds stay normal size
+    const isCloudSky = textureName === 'cloudSky';
+    const heightMultiplier = isCloudSky ? 2 : 1;
+    const backgroundHeight = this.viewportHeight * heightMultiplier;
+
     this.currentBackground = new TilingSprite({
       texture,
       width: this.viewportWidth,
-      height: this.viewportHeight,
+      height: backgroundHeight,
     });
-    const scale = this.viewportHeight / (texture.height || 1);
+
+    // Scale texture to fit background height
+    const scale = backgroundHeight / (texture.height || 1);
     this.currentBackground.tileScale.set(scale);
     this.currentBackground.tilePosition.set(0, 0);
+
+    // Anchor at bottom only for cloud sky (so extra height extends upward)
+    if (isCloudSky) {
+      this.currentBackground.y = -this.viewportHeight; // Move up by 1 viewport height
+    } else {
+      this.currentBackground.y = 0; // Normal position for other backgrounds
+    }
+
     this.container.addChildAt(this.currentBackground, 0);
   }
 
