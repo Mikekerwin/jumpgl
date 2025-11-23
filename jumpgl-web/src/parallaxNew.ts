@@ -300,6 +300,7 @@ export const loadParallaxTextures = async (): Promise<ParallaxTextures> => {
 export class ParallaxBackgrounds {
   private container: Container;
   private biomeManager: BiomeSequenceManager;
+  private skyBackground: TilingSprite | null = null;
   private currentBackground: TilingSprite | null = null;
   private transitionGroup: Container | null = null;
   private textures: ParallaxTextures;
@@ -322,20 +323,41 @@ export class ParallaxBackgrounds {
     this.viewportWidth = width;
     this.viewportHeight = height;
     this.onBiomeChange = onBiomeChange;
+    this.setupSkyBackground();
     this.setupBackground(this.biomeManager.getCurrentBiome());
+  }
+
+  private setupSkyBackground(): void {
+    if (this.skyBackground) {
+      this.skyBackground.destroy();
+    }
+    const texture = this.textures.cloudSky;
+    const heightMultiplier = 1.5;
+    const backgroundHeight = this.viewportHeight * heightMultiplier;
+    this.skyBackground = new TilingSprite({
+      texture,
+      width: this.viewportWidth,
+      height: backgroundHeight,
+    });
+    const scale = backgroundHeight / (texture.height || 1);
+    this.skyBackground.tileScale.set(scale);
+    this.skyBackground.tilePosition.set(0, 0);
+    const extraHeight = Math.max(0, backgroundHeight - this.viewportHeight);
+    this.skyBackground.y = -extraHeight;
+    this.container.addChildAt(this.skyBackground, 0);
   }
 
   private setupBackground(biome: BiomeType): void {
     if (this.currentBackground) {
       this.currentBackground.destroy();
+      this.currentBackground = null;
     }
     const textureName = BIOME_CONFIGS[biome].backgroundTexture as keyof ParallaxTextures;
+    if (textureName === 'cloudSky') {
+      return; // rely on persistent sky
+    }
     const texture = this.textures[textureName];
-
-    // Apply extra height to cloud sky so there’s room for camera lift
-    const isCloudSky = textureName === 'cloudSky';
-    const heightMultiplier = isCloudSky ? 1.5 : 1;
-    const backgroundHeight = this.viewportHeight * heightMultiplier;
+    const backgroundHeight = this.viewportHeight;
 
     this.currentBackground = new TilingSprite({
       texture,
@@ -343,16 +365,15 @@ export class ParallaxBackgrounds {
       height: backgroundHeight,
     });
 
-    // Scale texture to fit background height
-    const scale = backgroundHeight / (texture.height || 1);
+    // Scale by width, anchor bottom
+    const scale = this.viewportWidth / (texture.width || 1);
     this.currentBackground.tileScale.set(scale);
     this.currentBackground.tilePosition.set(0, 0);
-
-    // Anchor at bottom: move up by any extra height so the bottom stays near the screen bottom
-    const extraHeight = Math.max(0, backgroundHeight - this.viewportHeight);
+    const scaledHeight = (texture.height || 1) * scale;
+    const extraHeight = Math.max(0, scaledHeight - backgroundHeight);
     this.currentBackground.y = -extraHeight;
 
-    this.container.addChildAt(this.currentBackground, 0);
+    this.container.addChildAt(this.currentBackground, 1);
   }
 
   getRoot(): Container {
@@ -386,8 +407,8 @@ export class ParallaxBackgrounds {
       }
     } else {
       // Not in transition - scroll the current background (if not cloud)
-      // Cloud sky is static (doesn't scroll), forest scrolls
-      if (currentBiome !== 'cloud' && this.currentBackground) {
+      // Sky stays static; forest scrolls
+      if (this.currentBackground) {
         this.currentBackground.tilePosition.x -= scrollSpeed * deltaSeconds;
       }
     }
@@ -397,11 +418,28 @@ export class ParallaxBackgrounds {
     this.viewportWidth = width;
     this.viewportHeight = height;
 
+    if (this.skyBackground) {
+      const texture = this.skyBackground.texture;
+      const heightMultiplier = 1.5;
+      const backgroundHeight = height * heightMultiplier;
+      const scale = backgroundHeight / (texture.height || 1);
+      this.skyBackground.width = width;
+      this.skyBackground.height = backgroundHeight;
+      this.skyBackground.tileScale.set(scale);
+      const extraHeight = Math.max(0, backgroundHeight - height);
+      this.skyBackground.y = -extraHeight;
+    }
+
     if (this.currentBackground) {
+      const texture = this.currentBackground.texture;
+      const backgroundHeight = height;
+      const baseScale = width / (texture.width || 1);
+      const scaledHeight = (texture.height || 1) * baseScale;
+      const extraHeight = Math.max(0, scaledHeight - backgroundHeight);
       this.currentBackground.width = width;
-      this.currentBackground.height = height;
-      const scale = height / (this.currentBackground.texture.height || 1);
-      this.currentBackground.tileScale.set(scale);
+      this.currentBackground.height = backgroundHeight;
+      this.currentBackground.tileScale.set(baseScale);
+      this.currentBackground.y = -extraHeight;
     }
 
     if (this.transitionGroup) {
