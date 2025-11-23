@@ -348,13 +348,9 @@ export class ParallaxBackgrounds {
     this.currentBackground.tileScale.set(scale);
     this.currentBackground.tilePosition.set(0, 0);
 
-    // Anchor at bottom only for cloud sky (so extra height extends upward)
-    if (isCloudSky) {
-      const extraHeight = (heightMultiplier - 1) * this.viewportHeight;
-      this.currentBackground.y = -extraHeight; // Move up by the extra so the bottom aligns
-    } else {
-      this.currentBackground.y = 0; // Normal position for other backgrounds
-    }
+    // Anchor at bottom: move up by any extra height so the bottom stays near the screen bottom
+    const extraHeight = Math.max(0, backgroundHeight - this.viewportHeight);
+    this.currentBackground.y = -extraHeight;
 
     this.container.addChildAt(this.currentBackground, 0);
   }
