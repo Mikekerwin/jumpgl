@@ -206,6 +206,12 @@ const init = async () => {
     initialY: initialGround - playerRadius,
   });
 
+  // Debug hitbox overlay
+  const DEBUG_DRAW_HITBOXES = false;
+  const hitboxOverlay = new Graphics();
+  playfieldContainer.addChild(hitboxOverlay);
+  const hitboxLogCache = new Map<number, string>();
+
   // Start enemy in physics mode with jump sequence
   let enemyMode: 'physics' | 'hover' = 'physics';
   enemyPhysics.startJumpSequence();
@@ -217,6 +223,13 @@ const init = async () => {
   // Jump dust tracking
   let wasGrounded = false;
   let previousVelocity = 0;
+
+  // Platform jump tracking - prevent fall-through on jump execution
+  let lastJumpTime = 0;
+  const JUMP_GRACE_PERIOD = 380; // ms - ignore downward movement for this long after jump
+
+  // Platform fall-through control - Down arrow key to drop through platforms
+  let isPressingDown = false;
 
   // Camera tracking - locks to platform heights and follows player downward
   let cameraY = 0; // Current camera Y offset
@@ -319,7 +332,8 @@ const init = async () => {
       bottom: prevState.y + playerRadius,
     };
 
-    // Check for platform collision
+    // Check for platform collision (ignore small movements during charge to prevent falling through)
+    const isCharging = physics.isChargingJump();
     const supportingPlatform = platforms.getSupportingPlatform(
       playerBounds,
       prevBounds,
@@ -339,13 +353,20 @@ const init = async () => {
       }
 
       // Check if player has moved outside platform horizontal bounds
-      if (
-        playerBounds.right < supportingPlatform.left - PLATFORM_EDGE_TOLERANCE ||
-        playerBounds.left > supportingPlatform.right + PLATFORM_EDGE_TOLERANCE
-      ) {
-        // Player walked off the edge - clear platform override
-        physics.clearSurfaceOverride();
-        activePlatformId = null;
+      // Skip this check when charging to prevent squash animation from causing fall-through
+      const timeSinceJump = performance.now() - lastJumpTime;
+      const inJumpGracePeriod = timeSinceJump < JUMP_GRACE_PERIOD;
+
+      if (!isCharging) {
+        const walkedOff =
+          playerBounds.right < supportingPlatform.left - PLATFORM_EDGE_TOLERANCE ||
+          playerBounds.left > supportingPlatform.right + PLATFORM_EDGE_TOLERANCE;
+
+        // Fall through if walked off edge OR if pressing Down key
+        if ((walkedOff || isPressingDown) && !inJumpGracePeriod) {
+          physics.clearSurfaceOverride();
+          activePlatformId = null;
+        }
       }
       // Increase climb bonus when we successfully land on any platform
       platformAscendBonus = Math.min(platformAscendBonus + PLATFORM_ASCEND_STEP, PLATFORM_ASCEND_MAX);
@@ -362,8 +383,17 @@ const init = async () => {
           playerBounds.right >= livePlatform.left - PLATFORM_EDGE_TOLERANCE &&
           playerBounds.left <= livePlatform.right + PLATFORM_EDGE_TOLERANCE;
 
-        // If we've drifted off the platform horizontally, drop the override so we can fall
-        if (!stillOverPlatform) {
+        // Check if we're in the grace period after a jump (ignore brief downward movement)
+        const timeSinceJump = performance.now() - lastJumpTime;
+        const inJumpGracePeriod = timeSinceJump < JUMP_GRACE_PERIOD;
+
+        // If we're deliberately pressing Down, force a fall-through (unless in grace)
+        if (isPressingDown && !inJumpGracePeriod) {
+          physics.clearSurfaceOverride();
+          activePlatformId = null;
+        } else if (!stillOverPlatform && !inJumpGracePeriod) {
+          // If we've drifted off the platform horizontally, drop the override so we can fall
+          // BUT: Skip this check during jump grace period to prevent fall-through on jump execution
           physics.clearSurfaceOverride();
           activePlatformId = null;
         }
@@ -390,12 +420,34 @@ const init = async () => {
     if (isGrounded && !wasGrounded && previousVelocity > 0) {
       // Spawn landing dust at player's feet
       const feetY = state.y + playerRadius;
-      jumpDust.spawnLandingDust(state.x, feetY, previousVelocity);
+    jumpDust.spawnLandingDust(state.x, feetY, previousVelocity);
     }
 
     // Update tracking variables
     wasGrounded = isGrounded;
     previousVelocity = Math.abs(verticalVelocity);
+
+    // Debug: draw player and platform hitboxes
+    if (DEBUG_DRAW_HITBOXES) {
+      hitboxOverlay.clear();
+      // Player bounds
+      hitboxOverlay.rect(playerBounds.left, playerBounds.top, playerBounds.right - playerBounds.left, playerBounds.bottom - playerBounds.top).fill({ color: 0xff0000, alpha: 0.25 });
+
+      // Platform hitboxes
+      const platformHitboxes = platforms.getDebugHitboxes(playerDiameter);
+      platformHitboxes.forEach(box => {
+        const color = box.type === 'large' ? 0x00ff00 : 0x0000ff;
+        hitboxOverlay.rect(box.left, box.top, box.width, box.height).fill({ color, alpha: 0.25 });
+
+        // Log when hitbox data changes to spot unexpected shifts
+        const sig = `${box.type}|${box.left.toFixed(1)}|${box.width.toFixed(1)}`;
+        const prevSig = hitboxLogCache.get(box.id);
+        if (prevSig !== sig) {
+          console.debug(`[HITBOX] id=${box.id} type=${box.type} left=${box.left.toFixed(1)} width=${box.width.toFixed(1)} top=${box.top.toFixed(1)}`);
+          hitboxLogCache.set(box.id, sig);
+        }
+      });
+    }
 
     // Camera system: locks to platform floors, follows player downward
     let targetCameraY = 0;
@@ -443,8 +495,41 @@ const init = async () => {
     ball.position.y = state.y;
     ball.scale.set(state.scaleX, state.scaleY);
 
-    // Update shadow position based on player and ground
-    playerShadow.update(ball.position.x, ball.position.y, computePlayerGround());
+    // Update shadow position - project onto platform surface if player is above one
+    const shadowSurface = (() => {
+      // Check all platforms to find the closest one directly below the player
+      const allPlatforms = platforms.getAllPlatforms();
+      let closestPlatformY: number | null = null;
+
+      for (const plat of allPlatforms) {
+        if (!plat.active) continue;
+
+        // Check if player is horizontally aligned with platform
+        const platLeft = plat.x;
+        const platRight = plat.x + plat.width;
+        const playerLeft = state.x - playerRadius;
+        const playerRight = state.x + playerRadius;
+
+        // If player overlaps platform horizontally
+        if (playerRight > platLeft && playerLeft < platRight) {
+          // Calculate shadow position on this platform
+          // Platform surfaceY is where player's top would be, add diameter + landing offset
+          const platformShadowY = plat.surfaceY + playerDiameter + PLATFORM_LANDING_OFFSET;
+
+          // Track the closest platform below the player's current position
+          if (platformShadowY > state.y - playerRadius) {
+            if (closestPlatformY === null || platformShadowY < closestPlatformY) {
+              closestPlatformY = platformShadowY;
+            }
+          }
+        }
+      }
+
+      // Use closest platform if found, otherwise use ground
+      return closestPlatformY ?? computePlayerGround();
+    })();
+
+    playerShadow.update(ball.position.x, ball.position.y, shadowSurface);
 
     // Update enemy based on current mode
     if (enemyMode === 'physics') {
@@ -475,7 +560,11 @@ const init = async () => {
     }
   };
   const releaseJump = () => {
-    physics.endJump();
+    const jumpExecuted = physics.endJump();
+    // Record jump time if jump was actually executed (not just releasing while in air)
+    if (jumpExecuted) {
+      lastJumpTime = performance.now();
+    }
     // DISABLED: Clear charge particles when jump is released
     // chargeParticles.clear();
   };
@@ -492,12 +581,18 @@ const init = async () => {
     if (event.code === 'Space' || event.code === 'ArrowUp') {
       event.preventDefault();
       triggerJump();
+    } else if (event.code === 'ArrowDown') {
+      event.preventDefault();
+      isPressingDown = true;
     }
   });
   window.addEventListener('keyup', (event) => {
     if (event.code === 'Space' || event.code === 'ArrowUp') {
       event.preventDefault();
       releaseJump();
+    } else if (event.code === 'ArrowDown') {
+      event.preventDefault();
+      isPressingDown = false;
     }
   });
 

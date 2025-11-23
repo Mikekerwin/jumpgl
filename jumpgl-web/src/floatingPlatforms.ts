@@ -26,6 +26,7 @@ interface PlatformInstance {
   active: boolean;
   platformType: 'large' | 'small';
   sprite?: Sprite; // PixiJS sprite for rendering
+   spriteType?: 'large' | 'small';
 }
 
 export class FloatingPlatforms {
@@ -172,11 +173,20 @@ export class FloatingPlatforms {
       if (!platform.sprite) {
         const texture = Texture.from(image);
         platform.sprite = new Sprite(texture);
+        platform.spriteType = platform.platformType;
+      } else if (platform.spriteType !== platform.platformType) {
+        // Update texture and dimensions when reusing a platform slot for a different type
+        platform.sprite.texture = Texture.from(image);
+        platform.spriteType = platform.platformType;
+        platform.sprite.width = image.width;
+        platform.sprite.height = image.height;
       }
 
       // Update sprite position
       const screenX = platform.x - cameraX;
       platform.sprite.position.set(screenX, platform.renderY);
+      platform.sprite.width = image.width;
+      platform.sprite.height = image.height;
 
       // Add to container
       container.addChild(platform.sprite);
@@ -292,6 +302,22 @@ export class FloatingPlatforms {
   }
 
   /**
+   * Debug helper: return simple hitbox data for active platforms
+   */
+  getDebugHitboxes(playerDiameter: number): Array<{ id: number; type: 'large' | 'small'; left: number; top: number; width: number; height: number }> {
+    return this.platforms
+      .filter(p => p.active)
+      .map(p => ({
+        id: p.id,
+        type: p.platformType,
+        left: p.x,
+        top: p.surfaceY,
+        width: p.width,
+        height: playerDiameter,
+      }));
+  }
+
+  /**
    * Get live bounds for a platform by id (returns null if deactivated)
    */
   getPlatformBounds(id: number): PlatformCollision | null {
@@ -304,6 +330,13 @@ export class FloatingPlatforms {
       left: platform.x,
       right: platform.x + platform.width,
     };
+  }
+
+  /**
+   * Get all platforms (for shadow projection and other systems)
+   */
+  getAllPlatforms(): PlatformInstance[] {
+    return this.platforms;
   }
 
   private createPlatform(): PlatformInstance {

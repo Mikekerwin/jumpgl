@@ -136,9 +136,6 @@ export class PlayerPhysics {
     if (this.jumpCount < 2 && !this.isCharging) {
       this.isCharging = true;
       this.chargeStartTime = performance.now();
-      // Clear platform override when jumping
-      this.surfaceOverrideY = null;
-      this.platformBounceCount = 0; // Reset bounce counter when jumping
       return true; // Jump charge started
     }
     return false; // Jump was not allowed
@@ -147,8 +144,9 @@ export class PlayerPhysics {
   /**
    * Release jump (called on pointer/key up)
    * CHARGE DISABLED: Fires instant jump without variable power
+   * @returns true if a jump was executed, false otherwise
    */
-  endJump(): void {
+  endJump(): boolean {
     // If we were charging, fire the jump
     if (this.isCharging) {
       // DISABLED: Variable charge power
@@ -171,9 +169,12 @@ export class PlayerPhysics {
       // Start hold boost for extending jump arc (separate from charge)
       this.isHolding = true;
       this.holdStartTime = performance.now();
+
+      return true; // Jump was executed
     } else {
       // If not charging, just stop hold boost (in-air extension)
       this.isHolding = false;
+      return false; // No jump executed
     }
   }
 
