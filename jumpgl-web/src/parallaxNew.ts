@@ -368,8 +368,8 @@ export class ParallaxBackgrounds {
     // Scale by width, anchor bottom
     const scale = this.viewportWidth / (texture.width || 1);
     this.currentBackground.tileScale.set(scale);
-    this.currentBackground.tilePosition.set(0, 0);
     const scaledHeight = (texture.height || 1) * scale;
+    this.currentBackground.tilePosition.set(0, backgroundHeight - scaledHeight);
     const extraHeight = Math.max(0, scaledHeight - backgroundHeight);
     this.currentBackground.y = -extraHeight;
 
@@ -439,6 +439,7 @@ export class ParallaxBackgrounds {
       this.currentBackground.width = width;
       this.currentBackground.height = backgroundHeight;
       this.currentBackground.tileScale.set(baseScale);
+      this.currentBackground.tilePosition.set(0, backgroundHeight - scaledHeight);
       this.currentBackground.y = -extraHeight;
     }
 
