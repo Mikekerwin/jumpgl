@@ -6,6 +6,8 @@ import { EnemyMovement } from './enemyMovement';
 import { loadParallaxTextures, ParallaxBackgrounds, ParallaxGrounds } from './parallaxNew';
 import { BiomeSequenceManager } from './biomeSystem';
 import { ForestDustField } from './forestDustField';
+import { JumpDustParticles } from './jumpDustParticles';
+import { ChargeParticles } from './chargeParticles';
 import { Shadow } from './shadow';
 import { FloatingPlatforms, type PlayerBounds } from './floatingPlatforms';
 import { calculateResponsiveSizes, GROUND_PLAYER_DEPTH, PLATFORM_LARGE_IMAGE_PATH, PLATFORM_SMALL_IMAGE_PATH, PLATFORM_VERTICAL_OFFSET } from './config';
@@ -93,6 +95,33 @@ const init = async () => {
   dustSprite.blendMode = 'normal';
   dustSprite.alpha = 0; // stays hidden until reveal triggers
 
+  // Initialize jump dust particle system
+  const jumpDust = new JumpDustParticles();
+  const jumpDustCanvas = document.createElement('canvas');
+  jumpDustCanvas.width = app.renderer.width;
+  jumpDustCanvas.height = app.renderer.height;
+  const jumpDustCtx = jumpDustCanvas.getContext('2d');
+  if (!jumpDustCtx) {
+    throw new Error('Failed to create jump dust context');
+  }
+  const jumpDustTexture = Texture.from(jumpDustCanvas);
+  const jumpDustSprite = new Sprite(jumpDustTexture);
+  jumpDustSprite.blendMode = 'normal';
+
+  // Initialize charge particle system
+  const chargeParticles = new ChargeParticles();
+  const chargeCanvas = document.createElement('canvas');
+  chargeCanvas.width = app.renderer.width;
+  chargeCanvas.height = app.renderer.height;
+  const chargeCtx = chargeCanvas.getContext('2d');
+  if (!chargeCtx) {
+    throw new Error('Failed to create charge particle context');
+  }
+  const chargeTexture = Texture.from(chargeCanvas);
+  const chargeSprite = new Sprite(chargeTexture);
+  chargeSprite.blendMode = 'normal';
+  // Don't center the sprite anchor - keep it at default (0,0) like other canvas-based sprites
+
   let gradientSprite = createGroundGradientSprite(app.renderer.width, app.renderer.height);
   overlayContainer.addChild(dustSprite);
   overlayContainer.addChild(gradientSprite);
@@ -110,6 +139,13 @@ const init = async () => {
   let activePlatformId: number | null = null;
   const PLATFORM_LANDING_OFFSET = 30; // Extra pixels to sink into platform at rest
   const PLATFORM_EDGE_TOLERANCE = 8; // Horizontal forgiveness so we don't drop too early
+  let platformAscendBonus = 0; // Additional vertical offset for successive spawns after landings
+  const PLATFORM_ASCEND_STEP = 40; // Pixels higher per qualifying landing
+  const PLATFORM_ASCEND_MAX = Number.POSITIVE_INFINITY; // Cap climb bonus (effectively unlimited)
+  const SMALL_PLATFORM_EXTRA = 100; // Extra height for small platforms (applied 50% of the time)
+  const SMALL_PLATFORM_CHANCE = 0.5;
+  let isOnBaselineGround = true; // Tracks when player is resting on main ground
+
 
   const stars = Array.from({ length: 80 }).map(() => {
     const dot = new Graphics()
@@ -135,6 +171,12 @@ const init = async () => {
   const playerShadow = new Shadow({ playerWidth: playerDiameter });
   playfieldContainer.addChild(playerShadow.getView());
 
+  // Add jump dust sprite (before player so it appears behind player but in front of ground)
+  playfieldContainer.addChild(jumpDustSprite);
+
+  // Add charge particle sprite (same layer as jump dust)
+  playfieldContainer.addChild(chargeSprite);
+
   const ball = new Graphics().circle(0, 0, playerRadius).fill({ color: 0x4fc3f7 });
   const initialGround = computePlayerGround();
   ball.position.set(app.renderer.width * 0.32, initialGround - playerRadius);
@@ -146,6 +188,7 @@ const init = async () => {
     initialX: app.renderer.width * 0.32,
     screenWidth: app.renderer.width,
   });
+
 
   // Create enemy at 90% of screen width
   const enemyBall = new Graphics().circle(0, 0, playerRadius).fill({ color: 0xff0000 });
@@ -169,6 +212,16 @@ const init = async () => {
   let dustRevealStartTime: number | null = null;
   const DUST_FADE_DURATION = 5000; // 5 seconds
   const TRANSITION_VISIBLE_THRESHOLD = 0.15; // Start dust when transition is ~15% visible
+
+  // Jump dust tracking
+  let wasGrounded = false;
+  let previousVelocity = 0;
+
+  // Camera tracking - locks to platform heights and follows player downward
+  let cameraY = 0; // Current camera Y offset
+  let cameraFloorY = Infinity; // The Y position the camera is locked to (follows player if they go below this)
+  const CAMERA_LERP_SPEED = 0.15; // How quickly camera follows (faster for downward tracking)
+  const CAMERA_FOLLOW_THRESHOLD = 20; // How far below floor before camera starts following down
 
   const ticker = new Ticker();
   ticker.add((tickerInstance) => {
@@ -211,6 +264,25 @@ const init = async () => {
     dustTexture.source.update();
     dustSprite.alpha = dustField.getOpacity();
 
+    // Update and render jump dust particles
+    jumpDust.update(deltaSeconds);
+    jumpDustCtx.clearRect(0, 0, jumpDustCanvas.width, jumpDustCanvas.height);
+    jumpDust.render(jumpDustCtx, jumpDustCanvas.width, jumpDustCanvas.height);
+    jumpDustTexture.source.update();
+
+    // DISABLED: Update and render charge particles
+    // Keeping code for future re-enable
+    // const chargeLevel = physics.getChargeLevel();
+    // chargeParticles.update(deltaSeconds, chargeLevel);
+    // chargeCtx.clearRect(0, 0, chargeCanvas.width, chargeCanvas.height);
+    // // Translate context to player center with offset adjustment
+    // // Move right by 1/3 player radius and up by 25% of player radius
+    // chargeCtx.save();
+    // chargeCtx.translate(ball.position.x + playerRadius * 0.33, ball.position.y - playerRadius * 0.25);
+    // chargeParticles.render(chargeCtx, chargeCanvas.width, chargeCanvas.height);
+    // chargeCtx.restore();
+    // chargeTexture.source.update();
+
     // Render platforms using PixiJS Sprites
     platforms.renderToContainer(platformContainer, 0); // No camera offset for now
 
@@ -229,6 +301,7 @@ const init = async () => {
     const prevState = { x: ball.position.x, y: ball.position.y };
 
     const state = physics.update(deltaSeconds);
+    const verticalVelocity = (state.y - prevState.y) / deltaSeconds;
 
     // Calculate player bounds for collision detection
     const playerBounds: PlayerBounds = {
@@ -249,7 +322,7 @@ const init = async () => {
     const supportingPlatform = platforms.getSupportingPlatform(
       playerBounds,
       prevBounds,
-      state.y > prevState.y ? (state.y - prevState.y) / deltaSeconds : -(prevState.y - state.y) / deltaSeconds
+      verticalVelocity
     );
 
     if (supportingPlatform) {
@@ -258,6 +331,11 @@ const init = async () => {
       // Convert stored platform surface (player top) to the center y the physics uses, and sink slightly for visuals
       const landingY = supportingPlatform.surfaceY + playerRadius + PLATFORM_LANDING_OFFSET;
       physics.landOnSurface(landingY);
+
+      // Lock camera floor to this platform if it's higher than current floor
+      if (supportingPlatform.surfaceY < cameraFloorY) {
+        cameraFloorY = supportingPlatform.surfaceY;
+      }
 
       // Check if player has moved outside platform horizontal bounds
       if (
@@ -268,6 +346,8 @@ const init = async () => {
         physics.clearSurfaceOverride();
         activePlatformId = null;
       }
+      // Increase climb bonus when we successfully land on any platform
+      platformAscendBonus = Math.min(platformAscendBonus + PLATFORM_ASCEND_STEP, PLATFORM_ASCEND_MAX);
     } else if (activePlatformId !== null) {
       // Keep platform override while bouncing vertically so the bounce counter isn't reset
       const livePlatform = platforms.getPlatformBounds(activePlatformId);
@@ -288,6 +368,67 @@ const init = async () => {
         }
       }
     }
+
+    // Determine if we're back on the baseline ground
+    const baselineRestY = computePlayerGround() - playerRadius;
+    isOnBaselineGround =
+      activePlatformId === null &&
+      state.y >= baselineRestY - 0.5 &&
+      Math.abs(verticalVelocity) < 25;
+
+    if (isOnBaselineGround) {
+      platformAscendBonus = 0; // Reset climb when returning to ground
+    }
+
+    // Detect landing events for jump dust particles
+    const isGrounded =
+      isOnBaselineGround ||
+      (supportingPlatform !== null && Math.abs(verticalVelocity) < 25);
+
+    // Landing detection: was in air, now grounded, and was moving downward
+    if (isGrounded && !wasGrounded && previousVelocity > 0) {
+      // Spawn landing dust at player's feet
+      const feetY = state.y + playerRadius;
+      jumpDust.spawnLandingDust(state.x, feetY, previousVelocity);
+    }
+
+    // Update tracking variables
+    wasGrounded = isGrounded;
+    previousVelocity = Math.abs(verticalVelocity);
+
+    // Camera system: locks to platform floors, follows player downward
+    let targetCameraY = 0;
+
+    // If player is back on baseline ground, reset camera floor
+    if (isOnBaselineGround) {
+      cameraFloorY = Infinity;
+      targetCameraY = 0;
+    } else if (cameraFloorY < baselineRestY) {
+      // We have a locked camera floor from landing on a platform
+      const platformHeight = baselineRestY - cameraFloorY;
+      const lockedCameraY = platformHeight * 0.5; // Camera position locked to this platform height
+
+      // Check if player has fallen below the camera floor
+      const playerTop = state.y - playerRadius;
+      if (playerTop > cameraFloorY + CAMERA_FOLLOW_THRESHOLD) {
+        // Player is falling below the locked floor - follow them down
+        // Calculate how far below the floor they are
+        const fallDistance = playerTop - cameraFloorY;
+        // Camera follows proportionally (move down as player descends)
+        targetCameraY = lockedCameraY - fallDistance * 0.5;
+        // Don't go below ground level (targetCameraY can't be negative)
+        targetCameraY = Math.max(0, targetCameraY);
+      } else {
+        // Player is at or above the camera floor - stay locked
+        targetCameraY = lockedCameraY;
+      }
+    }
+
+    // Smoothly interpolate camera to target position
+    cameraY += (targetCameraY - cameraY) * CAMERA_LERP_SPEED;
+
+    // Apply camera position to scene (positive Y moves content down = camera up)
+    scene.position.y = cameraY;
 
     ball.position.x = state.x;
     ball.position.y = state.y;
@@ -316,8 +457,19 @@ const init = async () => {
   });
   ticker.start();
 
-  const triggerJump = () => physics.startJumpCharge();
-  const releaseJump = () => physics.endJump();
+  const triggerJump = () => {
+    const jumpStarted = physics.startJumpCharge();
+    // Spawn jump dust on every successful jump (both first and double jump)
+    if (jumpStarted) {
+      const feetY = ball.position.y + playerRadius;
+      jumpDust.spawnJumpDust(ball.position.x, feetY);
+    }
+  };
+  const releaseJump = () => {
+    physics.endJump();
+    // DISABLED: Clear charge particles when jump is released
+    // chargeParticles.clear();
+  };
 
   // Track mouse/pointer movement for horizontal player position
   const handlePointerMove = (event: PointerEvent) => {
@@ -349,6 +501,14 @@ const init = async () => {
     dustCompositeCanvas.height = app.renderer.height;
     // Update the existing texture source instead of creating a new texture
     dustTexture.source.update();
+    // Resize jump dust canvas
+    jumpDustCanvas.width = app.renderer.width;
+    jumpDustCanvas.height = app.renderer.height;
+    jumpDustTexture.source.update();
+    // Resize charge particle canvas
+    chargeCanvas.width = app.renderer.width;
+    chargeCanvas.height = app.renderer.height;
+    chargeTexture.source.update();
     overlayContainer.removeChild(gradientSprite);
     gradientSprite.destroy();
     gradientSprite = createGroundGradientSprite(app.renderer.width, app.renderer.height);
@@ -403,9 +563,15 @@ const init = async () => {
     // Spawn off-screen to the right (so it animates in like the ground)
     const spawnX = app.renderer.width + 100; // Off-screen right
     const groundY = computePlayerGround();
-    platforms.spawn(spawnX, groundY, playerRadius, platformSpawnType, PLATFORM_VERTICAL_OFFSET);
+    const isSmall = platformSpawnType === 'small';
+    const smallBonus = isSmall && Math.random() < SMALL_PLATFORM_CHANCE ? SMALL_PLATFORM_EXTRA : 0;
+    const baseOffset = PLATFORM_VERTICAL_OFFSET + smallBonus;
+    const adjustedOffset = Math.min(baseOffset + platformAscendBonus, baseOffset + PLATFORM_ASCEND_MAX);
+    platforms.spawn(spawnX, groundY, playerRadius, platformSpawnType, adjustedOffset);
 
     console.log(`[PLATFORM SPAWN] Spawned ${platformSpawnType} platform at X=${spawnX}`);
+
+    // Climb bonus now increments on successful landings; reset handled when grounded
 
     // Alternate between large and small platforms
     platformSpawnType = platformSpawnType === 'large' ? 'small' : 'large';

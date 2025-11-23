@@ -5,10 +5,11 @@ export type PlayerPhysicsState = {
   scaleY: number;
 };
 
-const ORIGINAL_GRAVITY = 0.60;
+const ORIGINAL_GRAVITY = 1.1;
 const ORIGINAL_HOLD_BOOST = 0.30;
 const HOLD_FORCE_RATIO = ORIGINAL_HOLD_BOOST / ORIGINAL_GRAVITY;
 const MAX_HOLD_TIME_MS = 1000;
+const MAX_CHARGE_TIME_MS = 500; // Maximum charge duration for variable jump power
 
 export interface PlayerPhysicsOptions {
   radius: number;
@@ -31,9 +32,6 @@ export class PlayerPhysics {
   private readonly jumpForce: number;
   private readonly bounceDamping = 0.45;
   private readonly minBounceVelocity = 140;
-  private readonly chargeDuration = 0.12;
-  private isCharging = false;
-  private chargeTimer = 0;
   private scaleX = 1;
   private scaleY = 1;
   private jumpCount = 0; // Track number of jumps (0, 1, or 2 for double jump)
@@ -42,7 +40,12 @@ export class PlayerPhysics {
   private horizontalRangeRight = 150; // Pixels player can move right from initialX (reduced to stop at ~45% screen)
   private lastCursorX = 0; // Track the actual cursor position for speed calculation
 
-  // Hold boost state
+  // Charge state (pre-jump)
+  private isCharging = false;
+  private chargeStartTime = 0;
+  private readonly maxChargeTime = MAX_CHARGE_TIME_MS;
+
+  // Hold boost state (in-air)
   private isHolding = false;
   private holdStartTime = 0;
   private readonly holdBoost: number;
@@ -54,8 +57,8 @@ export class PlayerPhysics {
 
   constructor(opts: PlayerPhysicsOptions) {
     this.radius = opts.radius;
-    this.gravity = opts.gravity ?? 6525; // Increased from 2500 (20% faster)
-    this.jumpForce = opts.jumpForce ?? 2250; // Increased from 1500 (20% faster)
+    this.gravity = opts.gravity ?? 9000; // Increased from 6525 (~38% increase to lower jump height)
+    this.jumpForce = opts.jumpForce ?? 2250; // Base jump force
     this.holdBoost = this.gravity * HOLD_FORCE_RATIO; // Match original hold/grav ratio
     this.groundSurface = opts.groundSurface;
     this.restCenterY = this.groundSurface - this.radius;
@@ -66,19 +69,7 @@ export class PlayerPhysics {
   }
 
   update(deltaSeconds: number): PlayerPhysicsState {
-    if (this.isCharging) {
-      this.chargeTimer += deltaSeconds;
-      if (this.chargeTimer >= this.chargeDuration) {
-        this.isCharging = false;
-        // Second jump is weaker than first jump (60% power)
-        const jumpPower = this.jumpCount === 0 ? this.jumpForce : this.jumpForce * 0.575;
-        this.velocity = -jumpPower;
-        this.jumpCount++;
-        if (this.isHolding) {
-          this.holdStartTime = performance.now();
-        }
-      }
-    }
+    // No auto-fire logic - jump fires on button release via releaseJump()
 
     // Apply gravity
     this.velocity += this.gravity * deltaSeconds;
@@ -136,24 +127,54 @@ export class PlayerPhysics {
     };
   }
 
-  startJumpCharge(): void {
+  /**
+   * Start charging a jump (called on pointer/key down)
+   * Returns true if charge started, false if jump not available
+   */
+  startJumpCharge(): boolean {
     // Allow jump if we haven't used both jumps yet
     if (this.jumpCount < 2 && !this.isCharging) {
       this.isCharging = true;
-      this.chargeTimer = 0;
-      this.isHolding = true;
-      this.holdStartTime = performance.now();
+      this.chargeStartTime = performance.now();
       // Clear platform override when jumping
       this.surfaceOverrideY = null;
       this.platformBounceCount = 0; // Reset bounce counter when jumping
+      return true; // Jump charge started
     }
+    return false; // Jump was not allowed
   }
 
   /**
-   * Stop holding jump (called on pointer/key up)
+   * Release jump (called on pointer/key up)
+   * CHARGE DISABLED: Fires instant jump without variable power
    */
   endJump(): void {
-    this.isHolding = false;
+    // If we were charging, fire the jump
+    if (this.isCharging) {
+      // DISABLED: Variable charge power
+      // const chargeTime = performance.now() - this.chargeStartTime;
+      // const clampedChargeTime = Math.min(chargeTime, this.maxChargeTime);
+      // const chargeRatio = clampedChargeTime / this.maxChargeTime;
+      // const powerMultiplier = 1.0 + (chargeRatio * 0.6);
+
+      // Use fixed power (no charge scaling)
+      const powerMultiplier = 1.0;
+
+      // Second jump is weaker (60% of first jump power)
+      const baseJumpPower = this.jumpCount === 0 ? this.jumpForce : this.jumpForce * 0.6;
+      const finalJumpPower = baseJumpPower * powerMultiplier;
+
+      this.velocity = -finalJumpPower;
+      this.jumpCount++;
+      this.isCharging = false;
+
+      // Start hold boost for extending jump arc (separate from charge)
+      this.isHolding = true;
+      this.holdStartTime = performance.now();
+    } else {
+      // If not charging, just stop hold boost (in-air extension)
+      this.isHolding = false;
+    }
   }
 
   setGroundSurface(surface: number): void {
@@ -169,10 +190,12 @@ export class PlayerPhysics {
     let targetX = 1;
     let targetY = 1;
 
-    if (this.isCharging) {
-      targetX = 1.2;
-      targetY = 0.82;
-    } else if (this.velocity < -220) {
+    // DISABLED: Charging squash animation
+    // if (this.isCharging) {
+    //   targetX = 1.2;
+    //   targetY = 0.82;
+    // } else
+    if (this.velocity < -220) {
       targetX = 0.78;
       targetY = 1.22;
     } else if (this.velocity > 220) {
@@ -249,6 +272,24 @@ export class PlayerPhysics {
    */
   updateScreenWidth(newWidth: number): void {
     this.screenWidth = newWidth;
+  }
+
+  /**
+   * Get current charge level (0.0 to 1.0) for particle system
+   * Returns 0 if not charging
+   */
+  getChargeLevel(): number {
+    if (!this.isCharging) return 0;
+    const chargeTime = performance.now() - this.chargeStartTime;
+    const clampedChargeTime = Math.min(chargeTime, this.maxChargeTime);
+    return clampedChargeTime / this.maxChargeTime;
+  }
+
+  /**
+   * Check if currently charging a jump
+   */
+  isChargingJump(): boolean {
+    return this.isCharging;
   }
 
   /**
