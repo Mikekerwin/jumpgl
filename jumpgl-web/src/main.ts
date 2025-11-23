@@ -428,8 +428,16 @@ const init = async () => {
     // Smoothly interpolate camera to target position
     cameraY += (targetCameraY - cameraY) * CAMERA_LERP_SPEED;
 
-    // Apply camera position to scene (positive Y moves content down = camera up)
-    scene.position.y = cameraY;
+    // Apply camera position with parallax
+    // Ground and playfield move at 100% camera speed (1.0x)
+    // Backgrounds move at their horizontal parallax rate (0.5x for backgrounds)
+    const BACKGROUND_PARALLAX_FACTOR = 0.5; // Same as horizontal parallax (BASE_BACKGROUND_SPEED / BASE_GROUND_SCROLL_SPEED)
+
+    backgroundContainer.position.y = cameraY * BACKGROUND_PARALLAX_FACTOR;
+    overlayContainer.position.y = cameraY; // Gradient moves with ground
+    groundContainer.position.y = cameraY;
+    platformContainer.position.y = cameraY;
+    playfieldContainer.position.y = cameraY; // Player and effects move with ground
 
     ball.position.x = state.x;
     ball.position.y = state.y;
