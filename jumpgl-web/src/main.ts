@@ -411,16 +411,23 @@ const init = async () => {
       platformAscendBonus = 0; // Reset climb when returning to ground
     }
 
-    // Detect landing events for jump dust particles
+    // Detect surface contact for jump/landing dust
     const isGrounded =
       isOnBaselineGround ||
       (supportingPlatform !== null && Math.abs(verticalVelocity) < 25);
+
+    // Jump dust: player accelerates upward from a surface
+    const leftSurface = wasGrounded && !isGrounded && previousVelocity <= 0 && verticalVelocity < -200;
+    if (leftSurface) {
+      const feetY = prevState.y + playerRadius;
+      jumpDust.spawnJumpDust(prevState.x, feetY);
+    }
 
     // Landing detection: was in air, now grounded, and was moving downward
     if (isGrounded && !wasGrounded && previousVelocity > 0) {
       // Spawn landing dust at player's feet
       const feetY = state.y + playerRadius;
-    jumpDust.spawnLandingDust(state.x, feetY, previousVelocity);
+      jumpDust.spawnLandingDust(state.x, feetY, previousVelocity);
     }
 
     // Update tracking variables
@@ -552,12 +559,7 @@ const init = async () => {
   ticker.start();
 
   const triggerJump = () => {
-    const jumpStarted = physics.startJumpCharge();
-    // Spawn jump dust on every successful jump (both first and double jump)
-    if (jumpStarted) {
-      const feetY = ball.position.y + playerRadius;
-      jumpDust.spawnJumpDust(ball.position.x, feetY);
-    }
+    physics.startJumpCharge();
   };
   const releaseJump = () => {
     const jumpExecuted = physics.endJump();
