@@ -259,14 +259,12 @@ const createFittedSprite = (texture: Texture, width: number, height: number): Sp
   const sprite = new Sprite(texture);
   const texWidth = texture.width || 1;
   const texHeight = texture.height || 1;
-  // Scale to fit width, keep aspect, anchor bottom
-  const scale = width / texWidth;
-  const scaledHeight = texHeight * scale;
+  const scale = Math.max(width / texWidth, height / texHeight);
   sprite.scale.set(scale);
   sprite.x = 0;
-  sprite.y = height - scaledHeight;
+  sprite.y = 0;
   sprite.width = texWidth * scale;
-  sprite.height = scaledHeight;
+  sprite.height = texHeight * scale;
   return sprite;
 };
 
@@ -327,17 +325,17 @@ export class ParallaxBackgrounds {
     this.setupBackground(this.biomeManager.getCurrentBiome());
   }
 
-  private setupBackground(_biome: BiomeType): void {
+  private setupBackground(biome: BiomeType): void {
     if (this.currentBackground) {
       this.currentBackground.destroy();
     }
-    // Always keep cloud sky as the backdrop, even in forest biome
-    const texture = this.textures.cloudSky;
-    const isCloudSky = true;
+    const textureName = BIOME_CONFIGS[biome].backgroundTexture as keyof ParallaxTextures;
+    const texture = this.textures[textureName];
+
+    // Apply extra height to cloud sky so there’s room for camera lift
+    const isCloudSky = textureName === 'cloudSky';
     const heightMultiplier = isCloudSky ? 1.5 : 1;
-    const baseHeight = this.viewportHeight * heightMultiplier;
-    const baseScale = isCloudSky ? baseHeight / (texture.height || 1) : this.viewportWidth / (texture.width || 1);
-    const backgroundHeight = isCloudSky ? baseHeight : (texture.height || 1) * baseScale;
+    const backgroundHeight = this.viewportHeight * heightMultiplier;
 
     this.currentBackground = new TilingSprite({
       texture,
@@ -345,7 +343,9 @@ export class ParallaxBackgrounds {
       height: backgroundHeight,
     });
 
-    this.currentBackground.tileScale.set(baseScale);
+    // Scale texture to fit background height
+    const scale = backgroundHeight / (texture.height || 1);
+    this.currentBackground.tileScale.set(scale);
     this.currentBackground.tilePosition.set(0, 0);
 
     // Anchor at bottom: move up by any extra height so the bottom stays near the screen bottom
@@ -398,17 +398,10 @@ export class ParallaxBackgrounds {
     this.viewportHeight = height;
 
     if (this.currentBackground) {
-      const texture = this.currentBackground.texture;
-      const isCloudSky = BIOME_CONFIGS[this.biomeManager.getCurrentBiome()].backgroundTexture === 'cloudSky';
-      const heightMultiplier = isCloudSky ? 1.5 : 1;
-      const baseHeight = height * heightMultiplier;
-      const baseScale = isCloudSky ? baseHeight / (texture.height || 1) : width / (texture.width || 1);
-      const backgroundHeight = isCloudSky ? baseHeight : (texture.height || 1) * baseScale;
       this.currentBackground.width = width;
-      this.currentBackground.height = backgroundHeight;
-      this.currentBackground.tileScale.set(baseScale);
-      const extraHeight = Math.max(0, backgroundHeight - height);
-      this.currentBackground.y = -extraHeight;
+      this.currentBackground.height = height;
+      const scale = height / (this.currentBackground.texture.height || 1);
+      this.currentBackground.tileScale.set(scale);
     }
 
     if (this.transitionGroup) {
@@ -438,7 +431,7 @@ export class ParallaxBackgrounds {
         this.viewportWidth,
         this.viewportHeight
       );
-      const nextBgTexture = this.textures.cloudSky;
+      const nextBgTexture = this.textures[BIOME_CONFIGS[nextBiome].backgroundTexture as keyof ParallaxTextures];
       const nextSprite = createFittedSprite(nextBgTexture, this.viewportWidth, this.viewportHeight);
       nextSprite.x = transitionSprite.width;
       group.addChild(transitionSprite, nextSprite);
