@@ -51,6 +51,7 @@ export class PlayerPhysics {
   // Platform surface override
   private surfaceOverrideY: number | null = null;
   private platformBounceCount: number = 0;
+  private groundCollisionEnabled = true;
 
   constructor(opts: PlayerPhysicsOptions) {
     this.radius = opts.radius;
@@ -85,7 +86,7 @@ export class PlayerPhysics {
     const effectiveGround = this.surfaceOverrideY ?? this.restCenterY;
     const isOnPlatform = this.surfaceOverrideY !== null;
 
-    if (this.y > effectiveGround) {
+    if (this.groundCollisionEnabled && this.y > effectiveGround) {
       this.y = effectiveGround;
       this.jumpCount = 0; // Reset jump count when touching ground/platform
       if (this.velocity > 0) {
@@ -221,6 +222,30 @@ export class PlayerPhysics {
   clearSurfaceOverride(): void {
     this.surfaceOverrideY = null;
     this.platformBounceCount = 0; // Reset bounce counter when leaving platform
+  }
+
+  setGroundCollisionEnabled(enabled: boolean): void {
+    this.groundCollisionEnabled = enabled;
+  }
+
+  forceVelocity(newVelocity: number): void {
+    this.velocity = newVelocity;
+  }
+
+  respawn(initialX: number, groundSurface: number): void {
+    this.initialX = initialX;
+    this.groundSurface = groundSurface;
+    this.restCenterY = this.groundSurface - this.radius;
+    this.x = this.initialX;
+    this.y = this.restCenterY;
+    this.velocity = 0;
+    this.jumpCount = 0;
+    this.platformBounceCount = 0;
+    this.surfaceOverrideY = null;
+    this.isCharging = false;
+    this.isHolding = false;
+    this.holdStartTime = 0;
+    this.groundCollisionEnabled = true;
   }
 
   /**

@@ -25,23 +25,23 @@ export class JumpDustParticles {
    * @param y Y position to spawn from
    */
   spawnJumpDust(x: number, y: number): void {
-    const particleCount = 8 + Math.floor(Math.random() * 4); // 8-11 particles (increased from 6-8)
+    const particleCount = 10 + Math.floor(Math.random() * 4); // 10-13 particles for a fuller splash
 
     for (let i = 0; i < particleCount; i++) {
-      // Upward arc spread: -120° to -60° (upward fan)
-      const angleMin = -Math.PI * 2 / 3; // -120°
-      const angleMax = -Math.PI / 3; // -60°
-      const angle = angleMin + Math.random() * (angleMax - angleMin);
-
-      const speed = 150 + Math.random() * 100; // 150-250 px/s
+      // Splash upward first, then drift outward
+      const verticalSpeed = 260 + Math.random() * 140; // 260-400 px/s straight up
+      const horizontalSpeed = 80 + Math.random() * 90; // 80-170 px/s sideways
+      const horizontalDirection = Math.random() < 0.5 ? -1 : 1; // left or right
+      const vx = horizontalDirection * horizontalSpeed * (0.55 + Math.random() * 0.45); // bias to start narrow then fan out
+      const vy = -verticalSpeed;
 
       this.addParticle({
         x,
         y,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed,
+        vx,
+        vy,
         life: 0,
-        maxLife: 0.45 + Math.random() * 0.2, // 0.45-0.65 seconds (increased by 150ms)
+        maxLife: 0.55 + Math.random() * 0.25, // 0.55-0.80 seconds for a visible arc
         size: 2 + Math.random() * 3, // 2-5px
         color: Math.random() > 0.5 ? 0xcccccc : 0xe0e0e0, // Gray/white colors
       });

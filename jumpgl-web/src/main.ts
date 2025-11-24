@@ -10,7 +10,16 @@ import { JumpDustParticles } from './jumpDustParticles';
 import { ChargeParticles } from './chargeParticles';
 import { Shadow } from './shadow';
 import { FloatingPlatforms, type PlayerBounds } from './floatingPlatforms';
-import { calculateResponsiveSizes, GROUND_PLAYER_DEPTH, PLATFORM_LARGE_IMAGE_PATH, PLATFORM_SMALL_IMAGE_PATH, PLATFORM_VERTICAL_OFFSET } from './config';
+import { HoleManager } from './holeManager';
+import {
+  calculateResponsiveSizes,
+  GROUND_PLAYER_DEPTH,
+  HOLE_LARGE_IMAGE_PATH,
+  HOLE_SMALL_IMAGE_PATH,
+  PLATFORM_LARGE_IMAGE_PATH,
+  PLATFORM_SMALL_IMAGE_PATH,
+  PLATFORM_VERTICAL_OFFSET,
+} from './config';
 
 const createGroundGradientSprite = (width: number, height: number): Sprite => {
   const gradientHeight = Math.max(200, height * 0.45);
@@ -56,6 +65,7 @@ const init = async () => {
   const overlayContainer = new Container();
   const groundContainer = new Container();
   const platformContainer = new Container();
+  const holeContainer = new Container();
   const playfieldContainer = new Container();
 
   scene.addChild(backgroundContainer, overlayContainer, groundContainer, platformContainer, playfieldContainer);
@@ -136,7 +146,9 @@ const init = async () => {
 
   // Initialize platform system
   const platforms = new FloatingPlatforms(PLATFORM_LARGE_IMAGE_PATH, PLATFORM_SMALL_IMAGE_PATH);
+  const holes = new HoleManager(HOLE_SMALL_IMAGE_PATH, HOLE_LARGE_IMAGE_PATH);
   let platformSpawnType: 'large' | 'small' = 'large'; // Tracks which platform type to spawn next
+  let holePlatformSpawnType: 'large' | 'small' = 'small'; // Tracks which hole-platform type to spawn next
   let activePlatformId: number | null = null;
   const PLATFORM_LANDING_OFFSET = 30; // Extra pixels to sink into platform at rest
   const PLATFORM_EDGE_TOLERANCE = 8; // Horizontal forgiveness so we don't drop too early
@@ -145,7 +157,10 @@ const init = async () => {
   const PLATFORM_ASCEND_MAX = Number.POSITIVE_INFINITY; // Cap climb bonus (effectively unlimited)
   const SMALL_PLATFORM_EXTRA = 100; // Extra height for small platforms (applied 50% of the time)
   const SMALL_PLATFORM_CHANCE = 0.5;
+  const HOLE_PLATFORM_OFFSET = 115; // Further lowered platforms with holes (100px lower than before)
+  const HOLE_ALIGNMENT_TWEAK = 25; // Shift hole right to better center on platform art
   let isOnBaselineGround = true; // Tracks when player is resting on main ground
+  let fallingIntoHole = false;
 
 
   const stars = Array.from({ length: 80 }).map(() => {
@@ -167,6 +182,7 @@ const init = async () => {
 
   const groundSurface = () => grounds.getSurfaceY();
   const computePlayerGround = () => groundSurface() + playerDiameter * GROUND_PLAYER_DEPTH;
+  const initialPlayerX = () => app.renderer.width * 0.32;
 
   // Create shadow (added before player so it appears behind)
   const playerShadow = new Shadow({ playerWidth: playerDiameter });
@@ -180,13 +196,13 @@ const init = async () => {
 
   const ball = new Graphics().circle(0, 0, playerRadius).fill({ color: 0x4fc3f7 });
   const initialGround = computePlayerGround();
-  ball.position.set(app.renderer.width * 0.32, initialGround - playerRadius);
+  ball.position.set(initialPlayerX(), initialGround - playerRadius);
   playfieldContainer.addChild(ball);
 
   const physics = new PlayerPhysics({
     radius: playerRadius,
     groundSurface: initialGround,
-    initialX: app.renderer.width * 0.32,
+    initialX: initialPlayerX(),
     screenWidth: app.renderer.width,
   });
 
@@ -197,6 +213,9 @@ const init = async () => {
   enemyBall.position.set(enemyX, initialGround - playerRadius);
   playfieldContainer.addChild(enemyBall);
 
+  // Holes render above the player so the player can sink beneath them
+  playfieldContainer.addChild(holeContainer);
+
   // Enemy systems
   const enemyPhysics = new EnemyPhysics({
     groundSurface: initialGround,
@@ -206,8 +225,30 @@ const init = async () => {
     initialY: initialGround - playerRadius,
   });
 
+  const respawnPlayer = () => {
+    fallingIntoHole = false;
+    ball.alpha = 1;
+    ball.scale.set(1, 1);
+    const ground = computePlayerGround();
+    physics.respawn(initialPlayerX(), ground);
+  };
+
+  const triggerFallIntoHole = (currentVelocity: number) => {
+    fallingIntoHole = true;
+    physics.clearSurfaceOverride();
+    physics.setGroundCollisionEnabled(false);
+    physics.forceVelocity(Math.max(300, Math.abs(currentVelocity) + 150));
+    ball.alpha = 0.65;
+    ball.scale.set(0.92, 0.92);
+
+    // Simple respawn after short drop
+    window.setTimeout(() => {
+      respawnPlayer();
+    }, 500);
+  };
+
   // Debug hitbox overlay
-  const DEBUG_DRAW_HITBOXES = false;
+  const DEBUG_DRAW_HITBOXES = true;
   const hitboxOverlay = new Graphics();
   playfieldContainer.addChild(hitboxOverlay);
   const hitboxLogCache = new Map<number, string>();
@@ -252,6 +293,7 @@ const init = async () => {
     const BASE_GROUND_SCROLL_SPEED = 72; // pixels per second (from parallaxNew.ts)
     const groundScrollSpeed = BASE_GROUND_SCROLL_SPEED * speedMultiplier;
     platforms.update(deltaSeconds, groundScrollSpeed, app.renderer.width);
+    holes.update(deltaSeconds, groundScrollSpeed, app.renderer.width);
 
     // Start dust fade-in when transition background has entered the viewport
     const forestProgress = backgrounds.getTransitionProgress();
@@ -299,6 +341,7 @@ const init = async () => {
 
     // Render platforms using PixiJS Sprites
     platforms.renderToContainer(platformContainer, 0); // No camera offset for now
+    holes.renderToContainer(holeContainer, 0);
 
     if (starsActive) {
       stars.forEach((star) => {
@@ -340,62 +383,73 @@ const init = async () => {
       verticalVelocity
     );
 
-    if (supportingPlatform) {
-      // Player is on a platform - set surface override
-      activePlatformId = supportingPlatform.id;
-      // Convert stored platform surface (player top) to the center y the physics uses, and sink slightly for visuals
-      const landingY = supportingPlatform.surfaceY + playerRadius + PLATFORM_LANDING_OFFSET;
-      physics.landOnSurface(landingY);
-
-      // Lock camera floor to this platform if it's higher than current floor
-      if (supportingPlatform.surfaceY < cameraFloorY) {
-        cameraFloorY = supportingPlatform.surfaceY;
-      }
-
-      // Check if player has moved outside platform horizontal bounds
-      // Skip this check when charging to prevent squash animation from causing fall-through
-      const timeSinceJump = performance.now() - lastJumpTime;
-      const inJumpGracePeriod = timeSinceJump < JUMP_GRACE_PERIOD;
-
-      if (!isCharging) {
-        const walkedOff =
-          playerBounds.right < supportingPlatform.left - PLATFORM_EDGE_TOLERANCE ||
-          playerBounds.left > supportingPlatform.right + PLATFORM_EDGE_TOLERANCE;
-
-        // Fall through if walked off edge OR if pressing Down key
-        if ((walkedOff || isPressingDown) && !inJumpGracePeriod) {
-          physics.clearSurfaceOverride();
-          activePlatformId = null;
-        }
-      }
-      // Increase climb bonus when we successfully land on any platform
-      platformAscendBonus = Math.min(platformAscendBonus + PLATFORM_ASCEND_STEP, PLATFORM_ASCEND_MAX);
-    } else if (activePlatformId !== null) {
-      // Keep platform override while bouncing vertically so the bounce counter isn't reset
-      const livePlatform = platforms.getPlatformBounds(activePlatformId);
-
-      // If platform has been culled (scrolled away), release the player
-      if (!livePlatform) {
-        physics.clearSurfaceOverride();
+    // Hole collision: if we're not on a platform and overlap a hole, fall and respawn
+    if (!supportingPlatform && !fallingIntoHole) {
+      const hole = holes.getCollidingHole(playerBounds);
+      if (hole) {
+        triggerFallIntoHole(verticalVelocity);
         activePlatformId = null;
-      } else {
-        const stillOverPlatform =
-          playerBounds.right >= livePlatform.left - PLATFORM_EDGE_TOLERANCE &&
-          playerBounds.left <= livePlatform.right + PLATFORM_EDGE_TOLERANCE;
+      }
+    }
 
-        // Check if we're in the grace period after a jump (ignore brief downward movement)
+    if (!fallingIntoHole) {
+      if (supportingPlatform) {
+        // Player is on a platform - set surface override
+        activePlatformId = supportingPlatform.id;
+        // Convert stored platform surface (player top) to the center y the physics uses, and sink slightly for visuals
+        const landingY = supportingPlatform.surfaceY + playerRadius + PLATFORM_LANDING_OFFSET;
+        physics.landOnSurface(landingY);
+
+        // Lock camera floor to this platform if it's higher than current floor
+        if (supportingPlatform.surfaceY < cameraFloorY) {
+          cameraFloorY = supportingPlatform.surfaceY;
+        }
+
+        // Check if player has moved outside platform horizontal bounds
+        // Skip this check when charging to prevent squash animation from causing fall-through
         const timeSinceJump = performance.now() - lastJumpTime;
         const inJumpGracePeriod = timeSinceJump < JUMP_GRACE_PERIOD;
 
-        // If we're deliberately pressing Down, force a fall-through (unless in grace)
-        if (isPressingDown && !inJumpGracePeriod) {
+        if (!isCharging) {
+          const walkedOff =
+            playerBounds.right < supportingPlatform.left - PLATFORM_EDGE_TOLERANCE ||
+            playerBounds.left > supportingPlatform.right + PLATFORM_EDGE_TOLERANCE;
+
+          // Fall through if walked off edge OR if pressing Down key
+          if ((walkedOff || isPressingDown) && !inJumpGracePeriod) {
+            physics.clearSurfaceOverride();
+            activePlatformId = null;
+          }
+        }
+        // Increase climb bonus when we successfully land on any platform
+        platformAscendBonus = Math.min(platformAscendBonus + PLATFORM_ASCEND_STEP, PLATFORM_ASCEND_MAX);
+      } else if (activePlatformId !== null) {
+        // Keep platform override while bouncing vertically so the bounce counter isn't reset
+        const livePlatform = platforms.getPlatformBounds(activePlatformId);
+
+        // If platform has been culled (scrolled away), release the player
+        if (!livePlatform) {
           physics.clearSurfaceOverride();
           activePlatformId = null;
-        } else if (!stillOverPlatform && !inJumpGracePeriod) {
-          // If we've drifted off the platform horizontally, drop the override so we can fall
-          // BUT: Skip this check during jump grace period to prevent fall-through on jump execution
-          physics.clearSurfaceOverride();
-          activePlatformId = null;
+        } else {
+          const stillOverPlatform =
+            playerBounds.right >= livePlatform.left - PLATFORM_EDGE_TOLERANCE &&
+            playerBounds.left <= livePlatform.right + PLATFORM_EDGE_TOLERANCE;
+
+          // Check if we're in the grace period after a jump (ignore brief downward movement)
+          const timeSinceJump = performance.now() - lastJumpTime;
+          const inJumpGracePeriod = timeSinceJump < JUMP_GRACE_PERIOD;
+
+          // If we're deliberately pressing Down, force a fall-through (unless in grace)
+          if (isPressingDown && !inJumpGracePeriod) {
+            physics.clearSurfaceOverride();
+            activePlatformId = null;
+          } else if (!stillOverPlatform && !inJumpGracePeriod) {
+            // If we've drifted off the platform horizontally, drop the override so we can fall
+            // BUT: Skip this check during jump grace period to prevent fall-through on jump execution
+            physics.clearSurfaceOverride();
+            activePlatformId = null;
+          }
         }
       }
     }
@@ -453,6 +507,13 @@ const init = async () => {
           console.debug(`[HITBOX] id=${box.id} type=${box.type} left=${box.left.toFixed(1)} width=${box.width.toFixed(1)} top=${box.top.toFixed(1)}`);
           hitboxLogCache.set(box.id, sig);
         }
+      });
+
+      // Hole hitboxes
+      const holeHitboxes = holes.getDebugHitboxes();
+      holeHitboxes.forEach(hole => {
+        const color = hole.size === 'large' ? 0xffa500 : 0xffff00;
+        hitboxOverlay.rect(hole.left, hole.top, hole.width, hole.height).fill({ color, alpha: 0.25 });
       });
     }
 
@@ -683,6 +744,30 @@ const init = async () => {
     platformButton.textContent = `Spawn ${platformSpawnType === 'large' ? 'Large' : 'Small'} Platform`;
   };
 
+  // Platform + hole spawn button
+  const spawnPlatformWithHole = () => {
+    const spawnX = app.renderer.width + 100;
+    const groundY = computePlayerGround();
+    const holeType = holePlatformSpawnType;
+    const baseOffset = HOLE_PLATFORM_OFFSET;
+
+    // Center the hole relative to the platform art widths
+    let holeX = spawnX;
+    const platformDims = platforms.getImageDimensions(holeType);
+    const holeDims = holes.getImageDimensions(holeType);
+    if (platformDims && holeDims) {
+      holeX = spawnX + (platformDims.width - holeDims.width) / 2 + HOLE_ALIGNMENT_TWEAK;
+    }
+
+    platforms.spawn(spawnX, groundY, playerRadius, holeType, baseOffset);
+    holes.spawn(holeX, groundY, holeType);
+
+    console.log(`[PLATFORM+HOLE SPAWN] Spawned ${holeType} platform with hole at X=${spawnX}`);
+
+    holePlatformSpawnType = holePlatformSpawnType === 'large' ? 'small' : 'large';
+    platformHoleButton.textContent = `Spawn ${holePlatformSpawnType === 'large' ? 'Large' : 'Small'} Platform + Hole`;
+  };
+
   const platformButton = document.createElement('button');
   platformButton.className = 'transition-btn';
   platformButton.textContent = 'Spawn Large Platform';
@@ -690,6 +775,14 @@ const init = async () => {
   platformButton.style.top = '60px'; // Position below transition button
   platformButton.addEventListener('click', spawnPlatform);
   document.body.appendChild(platformButton);
+
+  const platformHoleButton = document.createElement('button');
+  platformHoleButton.className = 'transition-btn';
+  platformHoleButton.textContent = 'Spawn Small Platform + Hole';
+  platformHoleButton.type = 'button';
+  platformHoleButton.style.top = '100px'; // Stack below the regular platform button
+  platformHoleButton.addEventListener('click', spawnPlatformWithHole);
+  document.body.appendChild(platformHoleButton);
 };
 
 init().catch((err) => {

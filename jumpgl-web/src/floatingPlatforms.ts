@@ -295,6 +295,16 @@ export class FloatingPlatforms {
   }
 
   /**
+   * Get the loaded image dimensions for a platform type (null if not loaded yet)
+   */
+  getImageDimensions(type: 'large' | 'small'): { width: number; height: number } | null {
+    const image = type === 'large' ? this.largeImage : this.smallImage;
+    const loaded = type === 'large' ? this.largeImageLoaded : this.smallImageLoaded;
+    if (!image || !loaded) return null;
+    return { width: image.width, height: image.height };
+  }
+
+  /**
    * Get count of active platforms
    */
   getActivePlatformCount(): number {
