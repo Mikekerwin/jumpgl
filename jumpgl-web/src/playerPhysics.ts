@@ -224,6 +224,15 @@ export class PlayerPhysics {
     this.platformBounceCount = 0; // Reset bounce counter when leaving platform
   }
 
+  getState() {
+    return {
+      x: this.x,
+      y: this.y,
+      scaleX: this.scaleX,
+      scaleY: this.scaleY,
+    };
+  }
+
   setGroundCollisionEnabled(enabled: boolean): void {
     this.groundCollisionEnabled = enabled;
   }

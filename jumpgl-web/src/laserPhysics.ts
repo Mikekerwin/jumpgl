@@ -52,6 +52,7 @@ export class LaserPhysics {
   private laserWidth: number = LASER_WIDTH;
   private laserHeight: number = LASER_HEIGHT;
   private isCalmProfile: boolean = true;
+  private scrollSpeedPerFrame: number = 0;
 
   constructor(_screenWidth: number, screenHeight: number, centerY: number, enemyX: number) {
     this.centerY = centerY;
@@ -260,7 +261,7 @@ export class LaserPhysics {
       }
     }
 
-    const currentSpeed = this.baseSpeed;
+    const currentSpeed = this.baseSpeed + this.scrollSpeedPerFrame;
     let wasHit = false;
     let scoreChange = 0;
     let hitPosition: { x: number; y: number } | null = null;
@@ -325,5 +326,13 @@ export class LaserPhysics {
     this.centerY = centerY;
     this.minLaserY = screenHeight * 0.2;
     this.enemyX = enemyX;
+  }
+
+  /**
+   * Adjust laser movement to track world scroll speed (pixels per second)
+   */
+  setScrollSpeed(pixelsPerSecond: number): void {
+    // Convert to per-frame speed assuming ~60fps
+    this.scrollSpeedPerFrame = pixelsPerSecond / 60;
   }
 }

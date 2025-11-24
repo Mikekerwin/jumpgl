@@ -197,10 +197,15 @@ const init = async () => {
   let scenarioStage: 'idle' | 'awaiting' | 'prep' | 'charging' | 'firing' = 'idle';
   let megaLaserActive = false;
   let megaLaserStart = 0;
+  let megaLaserStartTick = 0;
   const MEGA_LASER_DURATION = 1200;
   const MEGA_LASER_CHARGE = 3000;
+  const MEGA_LASER_GROWTH = 150; // ms for beam to fully extend (slightly faster)
   let megaLaserHeight = 0;
   let megaLaserHitPlayer = false;
+  let freezePlayer = false;
+  let shakeActive = false;
+  let shakeEndTime = 0;
   const megaLaserGraphic = new Graphics();
   megaLaserGraphic.blendMode = 'add';
 
@@ -344,6 +349,18 @@ const init = async () => {
   const ticker = new Ticker();
   ticker.add((tickerInstance) => {
     const deltaSeconds = tickerInstance.deltaMS / 1000;
+    // Apply screen shake if active
+    if (shakeActive) {
+      const now = performance.now();
+      if (now > shakeEndTime) {
+        shakeActive = false;
+        scene.position.set(0, 0);
+      } else {
+        const intensity = 6;
+        scene.position.set((Math.random() - 0.5) * intensity, (Math.random() - 0.5) * intensity);
+      }
+    }
+
     // Get scroll speed multiplier from player position (0 = stopped, 1 = normal, 2 = double)
     const speedMultiplier = physics.getScrollSpeedMultiplier();
 
@@ -356,6 +373,8 @@ const init = async () => {
     const groundScrollSpeed = BASE_GROUND_SCROLL_SPEED * speedMultiplier;
     platforms.update(deltaSeconds, groundScrollSpeed, app.renderer.width);
     holes.update(deltaSeconds, groundScrollSpeed, app.renderer.width);
+    // Keep laser horizontal speed in sync with ground scroll so pace feels consistent
+    laserPhysics.setScrollSpeed(groundScrollSpeed);
 
     // Start dust fade-in when transition background has entered the viewport
     const forestProgress = backgrounds.getTransitionProgress();
@@ -463,8 +482,11 @@ const init = async () => {
     // Store previous position for frame-by-frame tracking
     const prevState = { x: ball.position.x, y: ball.position.y };
 
-    const state = physics.update(deltaSeconds);
-    const verticalVelocity = (state.y - prevState.y) / deltaSeconds;
+    const state = freezePlayer ? physics.getState() : physics.update(deltaSeconds);
+    if (freezePlayer) {
+      physics.forceVelocity(0);
+    }
+    const verticalVelocity = (state.y - prevState.y) / Math.max(deltaSeconds, 0.0001);
 
     // Scenario proximity checks
     if (scenarioActive && scenarioSmallId !== null) {
@@ -788,6 +810,7 @@ const init = async () => {
         scenarioStage = 'firing';
         megaLaserActive = true;
         megaLaserStart = performance.now();
+        megaLaserStartTick = tickerInstance.lastTime;
         megaLaserHitPlayer = false;
         enemyChargeParticles.clear();
       }
@@ -796,6 +819,7 @@ const init = async () => {
         megaLaserActive = false;
         scenarioStage = 'idle';
         scenarioActive = false;
+        freezePlayer = false;
         enemyChargeParticles.clear();
       }
     }
@@ -805,7 +829,9 @@ const init = async () => {
     if (megaLaserActive) {
       const baseY = enemyBall.position.y; // follow enemy vertical oscillation
       const megaY = baseY - megaLaserHeight * 0.5;
-      let beamWidth = app.renderer.width;
+      const elapsed = Math.max(0, tickerInstance.lastTime - megaLaserStartTick);
+      const growthProgress = Math.min(1, elapsed / MEGA_LASER_GROWTH);
+      let beamWidth = enemyBall.position.x * growthProgress;
 
       const playerTop = state.y - playerRadius;
       const playerBottom = state.y + playerRadius;
@@ -816,18 +842,38 @@ const init = async () => {
         playerBottom > beamTop &&
         playerTop < beamBottom
       ) {
-        beamWidth = Math.max(0, state.x - playerRadius);
+        beamWidth = Math.max(0, enemyBall.position.x - (state.x - playerRadius));
         megaLaserHitPlayer = true;
+        shakeActive = true;
+        shakeEndTime = megaLaserStart + MEGA_LASER_DURATION;
+        freezePlayer = true;
       }
+
+      const startX = enemyBall.position.x - beamWidth;
+      const fadeLength = Math.min(beamWidth, 90);
+      const solidWidth = Math.max(0, beamWidth - fadeLength);
+      const solidStartX = startX + fadeLength;
+      const fadeSteps = 3;
+
+      const drawFadeLayer = (y: number, height: number, color: number, alpha: number) => {
+        const slice = fadeLength / fadeSteps;
+        for (let i = 0; i < fadeSteps; i++) {
+          const a = alpha * ((i + 1) / fadeSteps);
+          megaLaserGraphic.rect(startX + i * slice, y, slice, height).fill({ color, alpha: a });
+        }
+        if (solidWidth > 0) {
+          megaLaserGraphic.rect(solidStartX, y, solidWidth, height).fill({ color, alpha });
+        }
+      };
 
       // Outer glow
       const glowHeight = megaLaserHeight * 1.4;
       const glowY = megaY - (glowHeight - megaLaserHeight) * 0.5;
-      megaLaserGraphic.rect(0, glowY, beamWidth, glowHeight).fill({ color: 0xff4040, alpha: 0.2 });
-      megaLaserGraphic.rect(0, megaY - 6, beamWidth, megaLaserHeight + 12).fill({ color: 0xff2020, alpha: 0.35 });
+      drawFadeLayer(glowY, glowHeight, 0xff4040, 0.2);
+      drawFadeLayer(megaY - 6, megaLaserHeight + 12, 0xff2020, 0.35);
 
       // Core beam
-      megaLaserGraphic.rect(0, megaY, beamWidth, megaLaserHeight).fill({ color: 0xff3030, alpha: 1 });
+      drawFadeLayer(megaY, megaLaserHeight, 0xff3030, 1);
 
       // Rotating side rays (1-3px) around the beam
       const rayCount = 6;
@@ -836,7 +882,7 @@ const init = async () => {
         const phase = time * 2 + (i / rayCount) * Math.PI * 2;
         const rayY = megaY + (Math.sin(phase) * megaLaserHeight) / 2 + megaLaserHeight / 2;
         const rayHeight = 1 + Math.random() * 2;
-        megaLaserGraphic.rect(0, rayY, beamWidth, rayHeight).fill({ color: 0xff6060, alpha: 1 });
+        drawFadeLayer(rayY, rayHeight, 0xff6060, 1);
       }
     }
   });
