@@ -20,6 +20,11 @@ export class ChargeParticles {
   private readonly maxParticles = 20; // Reduced from 30
   private spawnTimer = 0;
   private readonly spawnInterval = 0.06; // Spawn every 60ms (slower than 40ms)
+  private readonly baseColor: number;
+
+  constructor(baseColor: number = 0x4fc3f7) {
+    this.baseColor = baseColor;
+  }
 
   /**
    * Update particles while charging
@@ -121,6 +126,20 @@ export class ChargeParticles {
     this.spawnTimer = 0;
   }
 
+  private tintColor(hex: number, variance: number): number {
+    const r = (hex >> 16) & 0xff;
+    const g = (hex >> 8) & 0xff;
+    const b = hex & 0xff;
+    const apply = (c: number) => {
+      const v = c * (1 + variance);
+      return Math.max(0, Math.min(255, Math.round(v)));
+    };
+    const nr = apply(r);
+    const ng = apply(g);
+    const nb = apply(b);
+    return (nr << 16) | (ng << 8) | nb;
+  }
+
   /**
    * Generate particle size with variety - two distinct systems:
    * 1. Larger inner particles (close to player)
@@ -180,20 +199,14 @@ export class ChargeParticles {
     }
 
     // Choose color based on particle size:
-    // Large particles (size >= 3): player blue color
-    // Small particles (size < 3): white/gray shades
+    // Large particles (size >= 3): main color
+    // Small particles (size < 3): lighter/darker variants of main color
     let color: number;
     if (size >= 3) {
-      color = 0x4fc3f7; // Same blue as player
+      color = this.baseColor;
     } else {
-      const shadeRandom = Math.random();
-      if (shadeRandom < 0.33) {
-        color = 0xffffff; // Pure white
-      } else if (shadeRandom < 0.66) {
-        color = 0xe0e0e0; // Light gray
-      } else {
-        color = 0xcccccc; // Medium gray
-      }
+      const variance = (Math.random() - 0.5) * 0.35; // ±35%
+      color = this.tintColor(this.baseColor, variance);
     }
 
     this.particles.push({

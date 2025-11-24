@@ -61,6 +61,18 @@ export const PLATFORM_VERTICAL_OFFSET = 200; // Pixels above ground center
 export const HOLE_SMALL_IMAGE_PATH = '/jumpgl/holeSmall.png';
 export const HOLE_LARGE_IMAGE_PATH = '/jumpgl/holeLarge.png';
 
+// Laser configuration (ported from original Jump)
+export const LASER_WIDTH = 25;
+export const LASER_HEIGHT = 2;
+export const BASE_LASER_SPEED = 2; // Increased for snappier laser travel (original Jump pacing)
+export const MAX_LASERS = 4;
+export const SCORE_PER_LASER_UNLOCK = 25;
+export const CHAOS_INCREMENT_INTERVAL = 5;
+export const BASE_LASER_RANDOMNESS = 1.0;
+export const CHAOS_MULTIPLIER_PER_INTERVAL = 0.0;
+export const WIDE_LASER_UNLOCK_SCORE = 100;
+export const WIDE_LASER_WIDTH = 125;
+
 // Responsive sizing configuration
 // These maintain proportions relative to a baseline window height
 export const BASELINE_WINDOW_HEIGHT = 800; // Reference height for design

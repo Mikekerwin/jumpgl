@@ -10,10 +10,14 @@ import { JumpDustParticles } from './jumpDustParticles';
 import { ChargeParticles } from './chargeParticles';
 import { Shadow } from './shadow';
 import { FloatingPlatforms, type PlayerBounds } from './floatingPlatforms';
+import { LaserPhysics } from './laserPhysics';
 import { HoleManager } from './holeManager';
+import { SparkParticles } from './sparkParticles';
 import {
   calculateResponsiveSizes,
   GROUND_PLAYER_DEPTH,
+  LASER_HEIGHT,
+  LASER_WIDTH,
   HOLE_LARGE_IMAGE_PATH,
   HOLE_SMALL_IMAGE_PATH,
   PLATFORM_LARGE_IMAGE_PATH,
@@ -65,6 +69,7 @@ const init = async () => {
   const overlayContainer = new Container();
   const groundContainer = new Container();
   const platformContainer = new Container();
+  const laserContainer = new Container();
   const holeContainer = new Container();
   const playfieldContainer = new Container();
 
@@ -118,6 +123,32 @@ const init = async () => {
   const jumpDustSprite = new Sprite(jumpDustTexture);
   jumpDustSprite.blendMode = 'normal';
 
+  // Initialize spark particles (for laser hits)
+  const sparkParticles = new SparkParticles();
+  const sparkCanvas = document.createElement('canvas');
+  sparkCanvas.width = app.renderer.width;
+  sparkCanvas.height = app.renderer.height;
+  const sparkCtx = sparkCanvas.getContext('2d');
+  if (!sparkCtx) {
+    throw new Error('Failed to create spark canvas');
+  }
+  const sparkTexture = Texture.from(sparkCanvas);
+  const sparkSprite = new Sprite(sparkTexture);
+  sparkSprite.blendMode = 'normal';
+
+  // Enemy charge particles (red)
+  const enemyChargeParticles = new ChargeParticles(0xff2020);
+  const enemyChargeCanvas = document.createElement('canvas');
+  enemyChargeCanvas.width = app.renderer.width;
+  enemyChargeCanvas.height = app.renderer.height;
+  const enemyChargeCtx = enemyChargeCanvas.getContext('2d');
+  if (!enemyChargeCtx) {
+    throw new Error('Failed to create enemy charge canvas');
+  }
+  const enemyChargeTexture = Texture.from(enemyChargeCanvas);
+  const enemyChargeSprite = new Sprite(enemyChargeTexture);
+  enemyChargeSprite.blendMode = 'add';
+
   // Initialize charge particle system (currently disabled but keeping structure for future re-enable)
   // @ts-expect-error - Keeping for future re-enable
   const chargeParticles = new ChargeParticles();
@@ -161,6 +192,15 @@ const init = async () => {
   const HOLE_ALIGNMENT_TWEAK = 25; // Shift hole right to better center on platform art
   let isOnBaselineGround = true; // Tracks when player is resting on main ground
   let fallingIntoHole = false;
+  let scenarioActive = false;
+  let scenarioSmallId: number | null = null;
+  let scenarioStage: 'idle' | 'awaiting' | 'prep' | 'charging' | 'firing' = 'idle';
+  let megaLaserActive = false;
+  let megaLaserStart = 0;
+  const MEGA_LASER_DURATION = 1200;
+  const MEGA_LASER_CHARGE = 3000;
+  let megaLaserHeight = 0;
+  const megaLaserGraphic = new Graphics();
 
 
   const stars = Array.from({ length: 80 }).map(() => {
@@ -179,6 +219,7 @@ const init = async () => {
   let sizes = calculateResponsiveSizes(app.renderer.height);
   let playerRadius = sizes.playerRadius;
   let playerDiameter = sizes.playerDiameter;
+  megaLaserHeight = playerDiameter * 1.2;
 
   const groundSurface = () => grounds.getSurfaceY();
   const computePlayerGround = () => groundSurface() + playerDiameter * GROUND_PLAYER_DEPTH;
@@ -213,8 +254,14 @@ const init = async () => {
   enemyBall.position.set(enemyX, initialGround - playerRadius);
   playfieldContainer.addChild(enemyBall);
 
+  // Lasers render above players
+  playfieldContainer.addChild(laserContainer);
+
   // Holes render above the player so the player can sink beneath them
   playfieldContainer.addChild(holeContainer);
+  playfieldContainer.addChild(sparkSprite);
+  playfieldContainer.addChild(megaLaserGraphic);
+  playfieldContainer.addChild(enemyChargeSprite);
 
   // Enemy systems
   const enemyPhysics = new EnemyPhysics({
@@ -224,6 +271,20 @@ const init = async () => {
   const enemyMovement = new EnemyMovement({
     initialY: initialGround - playerRadius,
   });
+
+  const laserPhysics = new LaserPhysics(
+    app.renderer.width,
+    app.renderer.height,
+    initialGround - playerRadius,
+    enemyX
+  );
+  let laserScore = 0;
+  let introComplete = false;
+
+  // Laser visuals - simple color lines
+  const beamHeight = LASER_HEIGHT;
+  const beamTexture = Texture.WHITE;
+  const laserSprites: Sprite[] = [];
 
   const respawnPlayer = () => {
     fallingIntoHole = false;
@@ -281,7 +342,6 @@ const init = async () => {
   const ticker = new Ticker();
   ticker.add((tickerInstance) => {
     const deltaSeconds = tickerInstance.deltaMS / 1000;
-
     // Get scroll speed multiplier from player position (0 = stopped, 1 = normal, 2 = double)
     const speedMultiplier = physics.getScrollSpeedMultiplier();
 
@@ -320,6 +380,23 @@ const init = async () => {
     dustTexture.source.update();
     dustSprite.alpha = dustField.getOpacity();
 
+    // Update sparks
+    sparkParticles.update(deltaSeconds);
+    sparkCtx.clearRect(0, 0, sparkCanvas.width, sparkCanvas.height);
+    sparkParticles.render(sparkCtx, sparkCanvas.width, sparkCanvas.height);
+    sparkTexture.source.update();
+
+    // Update enemy charge particles
+    enemyChargeParticles.update(deltaSeconds, scenarioStage === 'charging'
+      ? Math.min(1, (performance.now() - megaLaserStart) / MEGA_LASER_CHARGE)
+      : scenarioStage === 'prep' ? 0.25 : 0);
+    enemyChargeCtx.clearRect(0, 0, enemyChargeCanvas.width, enemyChargeCanvas.height);
+    enemyChargeCtx.save();
+    enemyChargeCtx.translate(enemyBall.position.x, enemyBall.position.y);
+    enemyChargeParticles.render(enemyChargeCtx, enemyChargeCanvas.width, enemyChargeCanvas.height);
+    enemyChargeCtx.restore();
+    enemyChargeTexture.source.update();
+
     // Update and render jump dust particles
     jumpDust.update(deltaSeconds);
     jumpDustCtx.clearRect(0, 0, jumpDustCanvas.width, jumpDustCanvas.height);
@@ -343,6 +420,40 @@ const init = async () => {
     platforms.renderToContainer(platformContainer, 0); // No camera offset for now
     holes.renderToContainer(holeContainer, 0);
 
+    megaLaserHeight = playerDiameter * 1.2;
+
+    // Render lasers using pooled sprites with flat color
+    const lasers = laserPhysics.getLasers();
+    while (laserSprites.length < lasers.length) {
+      const sprite = new Sprite(beamTexture);
+      sprite.anchor.set(0, 0);
+      sprite.blendMode = 'normal';
+      laserContainer.addChild(sprite);
+      laserSprites.push(sprite);
+    }
+
+    for (let i = 0; i < laserSprites.length; i++) {
+      const sprite = laserSprites[i];
+      const laser = lasers[i];
+      if (!laser || laser.x + laser.width < -LASER_WIDTH) {
+        sprite.visible = false;
+        continue;
+      }
+      sprite.visible = true;
+      sprite.texture = beamTexture;
+      sprite.width = laser.width;
+      sprite.height = beamHeight;
+      sprite.tint = 0xff4040; // enemy laser red
+      sprite.position.set(laser.x, laser.y);
+    }
+
+    // Render mega laser if active
+    megaLaserGraphic.clear();
+    if (megaLaserActive) {
+      const megaY = computePlayerGround() - megaLaserHeight + playerRadius;
+      megaLaserGraphic.rect(0, megaY, app.renderer.width, megaLaserHeight).fill({ color: 0xff2020, alpha: 0.5 });
+    }
+
     if (starsActive) {
       stars.forEach((star) => {
         star.view.y += star.speed * tickerInstance.deltaTime;
@@ -359,6 +470,25 @@ const init = async () => {
 
     const state = physics.update(deltaSeconds);
     const verticalVelocity = (state.y - prevState.y) / deltaSeconds;
+
+    // Scenario proximity checks
+    if (scenarioActive && scenarioSmallId !== null) {
+      const smallPlat = platforms.getPlatformBounds(scenarioSmallId);
+      if (smallPlat) {
+        const playerFront = state.x + playerRadius;
+        const distance = smallPlat.left - playerFront;
+        if (scenarioStage === 'awaiting' && distance < 150) {
+          scenarioStage = 'prep';
+        }
+        if (scenarioStage === 'prep' && distance < 40) {
+          scenarioStage = 'charging';
+          megaLaserActive = false;
+          megaLaserStart = performance.now();
+          const groundY = computePlayerGround() - playerRadius;
+          enemyMovement.setTarget(groundY);
+        }
+      }
+    }
 
     // Calculate player bounds for collision detection
     const playerBounds: PlayerBounds = {
@@ -610,11 +740,64 @@ const init = async () => {
         const velocity = enemyPhysics.enableHoverMode();
         enemyMovement.startTransition(velocity, enemyState.y);
         enemyMode = 'hover';
+        introComplete = true;
       }
     } else {
       const enemyState = enemyMovement.update(deltaSeconds);
       enemyBall.position.y = enemyState.y;
       enemyBall.scale.set(enemyState.scaleX, enemyState.scaleY);
+    }
+
+    const laserResult = laserPhysics.update({
+      score: laserScore,
+      playerX: state.x,
+      playerY: state.y,
+      playerRadius,
+      enemyX: enemyBall.position.x,
+      enemyY: enemyBall.position.y,
+      isHovering: enemyMode === 'hover' && scenarioStage !== 'prep' && scenarioStage !== 'charging' && scenarioStage !== 'firing',
+      introComplete,
+      stopSpawning: scenarioStage === 'prep' || scenarioStage === 'charging' || scenarioStage === 'firing',
+    });
+    if (laserResult.scoreChange !== 0) {
+      laserScore += laserResult.scoreChange;
+    }
+    if (laserResult.laserFired && laserResult.targetY !== null) {
+      enemyMovement.setTarget(laserResult.targetY);
+    }
+    if (laserResult.hitPosition) {
+      // Enemy lasers = red sparks
+      sparkParticles.spawn(laserResult.hitPosition.x, laserResult.hitPosition.y, 'red');
+    }
+
+    // Scenario / mega laser handling
+    if (scenarioActive && scenarioStage === 'awaiting' && scenarioSmallId !== null) {
+      const plat = platforms.getPlatformBounds(scenarioSmallId);
+      if (plat && plat.left < state.x + playerRadius + 60) {
+        // Trigger charge when small platform is within reach
+        scenarioStage = 'charging';
+        megaLaserActive = false;
+        megaLaserStart = performance.now();
+        // Drop enemy to ground to charge/fires
+        const groundY = computePlayerGround() - playerRadius;
+        enemyMovement.setTarget(groundY);
+      }
+    }
+
+    if (scenarioStage === 'charging') {
+      if (performance.now() - megaLaserStart >= MEGA_LASER_CHARGE) {
+        scenarioStage = 'firing';
+        megaLaserActive = true;
+        megaLaserStart = performance.now();
+        enemyChargeParticles.clear();
+      }
+    } else if (scenarioStage === 'firing') {
+      if (performance.now() - megaLaserStart >= MEGA_LASER_DURATION) {
+        megaLaserActive = false;
+        scenarioStage = 'idle';
+        scenarioActive = false;
+        enemyChargeParticles.clear();
+      }
     }
   });
   ticker.start();
@@ -704,6 +887,8 @@ const init = async () => {
     enemyBall.circle(0, 0, playerRadius).fill({ color: 0xff0000 });
     enemyPhysics.setGroundSurface(updatedGround);
     enemyBall.position.x = app.renderer.width * 0.9;
+
+    laserPhysics.updateDimensions(app.renderer.width, app.renderer.height, updatedGround - playerRadius, enemyBall.position.x);
   };
 
   window.addEventListener('resize', handleResize);
@@ -783,6 +968,33 @@ const init = async () => {
   platformHoleButton.style.top = '100px'; // Stack below the regular platform button
   platformHoleButton.addEventListener('click', spawnPlatformWithHole);
   document.body.appendChild(platformHoleButton);
+
+  // Scenario button: small platform + hole, then large platform, trigger mega laser
+  const startScenario = () => {
+    const groundY = computePlayerGround();
+    const spawnX = app.renderer.width + 120;
+    const smallId = platforms.spawn(spawnX, groundY, playerRadius, 'small', HOLE_PLATFORM_OFFSET);
+    holes.spawn(spawnX + HOLE_ALIGNMENT_TWEAK, groundY, 'small');
+
+    const largeSpawnX = spawnX + 240;
+    const baseOffset = PLATFORM_VERTICAL_OFFSET;
+    platforms.spawn(largeSpawnX, groundY, playerRadius, 'large', baseOffset);
+
+    scenarioActive = true;
+    scenarioStage = 'awaiting';
+    scenarioSmallId = smallId;
+    megaLaserActive = false;
+    enemyChargeParticles.clear();
+    console.log('[SCENARIO] Small+hole then large spawned; awaiting jump range');
+  };
+
+  const scenarioButton = document.createElement('button');
+  scenarioButton.className = 'transition-btn';
+  scenarioButton.textContent = 'Run Mega Laser Scenario';
+  scenarioButton.type = 'button';
+  scenarioButton.style.top = '140px';
+  scenarioButton.addEventListener('click', startScenario);
+  document.body.appendChild(scenarioButton);
 };
 
 init().catch((err) => {

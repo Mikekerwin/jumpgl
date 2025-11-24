@@ -77,14 +77,14 @@ export class FloatingPlatforms {
     playerRadius: number,
     platformType: 'large' | 'small',
     verticalOffset: number = 200
-  ): void {
+  ): number | null {
     const isLarge = platformType === 'large';
     const image = isLarge ? this.largeImage : this.smallImage;
     const imageLoaded = isLarge ? this.largeImageLoaded : this.smallImageLoaded;
 
     if (!imageLoaded || !image) {
       console.warn('[PLATFORM] Cannot spawn - image not loaded yet');
-      return;
+      return null;
     }
 
     // Reuse inactive platform or create new one
@@ -127,6 +127,8 @@ export class FloatingPlatforms {
       `[PLATFORM SPAWN] Type=${platformType} X=${worldX.toFixed(0)} SurfaceY=${surfaceY.toFixed(0)} ` +
       `PlatformMiddle=${surfaceCenterY.toFixed(0)} RenderY=${renderY.toFixed(0)} GroundY=${groundCenterY.toFixed(0)}`
     );
+
+    return plat.id;
   }
 
   /**
