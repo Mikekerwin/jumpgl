@@ -200,7 +200,9 @@ const init = async () => {
   const MEGA_LASER_DURATION = 1200;
   const MEGA_LASER_CHARGE = 3000;
   let megaLaserHeight = 0;
+  let megaLaserHitPlayer = false;
   const megaLaserGraphic = new Graphics();
+  megaLaserGraphic.blendMode = 'add';
 
 
   const stars = Array.from({ length: 80 }).map(() => {
@@ -309,7 +311,7 @@ const init = async () => {
   };
 
   // Debug hitbox overlay
-  const DEBUG_DRAW_HITBOXES = true;
+  const DEBUG_DRAW_HITBOXES = false;
   const hitboxOverlay = new Graphics();
   playfieldContainer.addChild(hitboxOverlay);
   const hitboxLogCache = new Map<number, string>();
@@ -445,13 +447,6 @@ const init = async () => {
       sprite.height = beamHeight;
       sprite.tint = 0xff4040; // enemy laser red
       sprite.position.set(laser.x, laser.y);
-    }
-
-    // Render mega laser if active
-    megaLaserGraphic.clear();
-    if (megaLaserActive) {
-      const megaY = computePlayerGround() - megaLaserHeight + playerRadius;
-      megaLaserGraphic.rect(0, megaY, app.renderer.width, megaLaserHeight).fill({ color: 0xff2020, alpha: 0.5 });
     }
 
     if (starsActive) {
@@ -755,7 +750,11 @@ const init = async () => {
       playerRadius,
       enemyX: enemyBall.position.x,
       enemyY: enemyBall.position.y,
-      isHovering: enemyMode === 'hover' && scenarioStage !== 'prep' && scenarioStage !== 'charging' && scenarioStage !== 'firing',
+      isHovering:
+        enemyMode === 'hover' &&
+        scenarioStage !== 'prep' &&
+        scenarioStage !== 'charging' &&
+        scenarioStage !== 'firing',
       introComplete,
       stopSpawning: scenarioStage === 'prep' || scenarioStage === 'charging' || scenarioStage === 'firing',
     });
@@ -789,6 +788,7 @@ const init = async () => {
         scenarioStage = 'firing';
         megaLaserActive = true;
         megaLaserStart = performance.now();
+        megaLaserHitPlayer = false;
         enemyChargeParticles.clear();
       }
     } else if (scenarioStage === 'firing') {
@@ -797,6 +797,46 @@ const init = async () => {
         scenarioStage = 'idle';
         scenarioActive = false;
         enemyChargeParticles.clear();
+      }
+    }
+
+    // Render mega laser if active (needs player state)
+    megaLaserGraphic.clear();
+    if (megaLaserActive) {
+      const baseY = enemyBall.position.y; // follow enemy vertical oscillation
+      const megaY = baseY - megaLaserHeight * 0.5;
+      let beamWidth = app.renderer.width;
+
+      const playerTop = state.y - playerRadius;
+      const playerBottom = state.y + playerRadius;
+      const beamTop = megaY;
+      const beamBottom = megaY + megaLaserHeight;
+      if (
+        !megaLaserHitPlayer &&
+        playerBottom > beamTop &&
+        playerTop < beamBottom
+      ) {
+        beamWidth = Math.max(0, state.x - playerRadius);
+        megaLaserHitPlayer = true;
+      }
+
+      // Outer glow
+      const glowHeight = megaLaserHeight * 1.4;
+      const glowY = megaY - (glowHeight - megaLaserHeight) * 0.5;
+      megaLaserGraphic.rect(0, glowY, beamWidth, glowHeight).fill({ color: 0xff4040, alpha: 0.2 });
+      megaLaserGraphic.rect(0, megaY - 6, beamWidth, megaLaserHeight + 12).fill({ color: 0xff2020, alpha: 0.35 });
+
+      // Core beam
+      megaLaserGraphic.rect(0, megaY, beamWidth, megaLaserHeight).fill({ color: 0xff3030, alpha: 1 });
+
+      // Rotating side rays (1-3px) around the beam
+      const rayCount = 6;
+      const time = performance.now() / 1000;
+      for (let i = 0; i < rayCount; i++) {
+        const phase = time * 2 + (i / rayCount) * Math.PI * 2;
+        const rayY = megaY + (Math.sin(phase) * megaLaserHeight) / 2 + megaLaserHeight / 2;
+        const rayHeight = 1 + Math.random() * 2;
+        megaLaserGraphic.rect(0, rayY, beamWidth, rayHeight).fill({ color: 0xff6060, alpha: 1 });
       }
     }
   });
