@@ -149,6 +149,21 @@ const init = async () => {
   const enemyChargeSprite = new Sprite(enemyChargeTexture);
   enemyChargeSprite.blendMode = 'add';
 
+  // Separate halo pass (normal blend) so large particles stay solid red
+  const haloCanvas = document.createElement('canvas');
+  haloCanvas.width = app.renderer.width;
+  haloCanvas.height = app.renderer.height;
+  const haloCtx = haloCanvas.getContext('2d');
+  if (!haloCtx) {
+    throw new Error('Failed to create halo canvas');
+  }
+  const haloTexture = Texture.from(haloCanvas);
+  const haloSprite = new Sprite(haloTexture);
+  haloSprite.blendMode = 'normal';
+  type ChargeFX = { x: number; y: number; vx: number; vy: number; size: number; life: number; maxLife: number };
+  const enemyChargeHalo: ChargeFX[] = [];
+  const enemyChargeOrbit: ChargeFX[] = [];
+
   // Initialize charge particle system (currently disabled but keeping structure for future re-enable)
   // @ts-expect-error - Keeping for future re-enable
   const chargeParticles = new ChargeParticles();
@@ -208,6 +223,8 @@ const init = async () => {
   let shakeEndTime = 0;
   const megaLaserGraphic = new Graphics();
   megaLaserGraphic.blendMode = 'add';
+  let energy = 0;
+  let playerFlashUntil = 0;
 
 
   const stars = Array.from({ length: 80 }).map(() => {
@@ -242,7 +259,16 @@ const init = async () => {
   // Add charge particle sprite (same layer as jump dust)
   playfieldContainer.addChild(chargeSprite);
 
-  const ball = new Graphics().circle(0, 0, playerRadius).fill({ color: 0x4fc3f7 });
+  const ballBaseColor = 0x4fc3f7;
+  const ballHitColor = 0xff2020;
+  let currentBallColor = ballBaseColor;
+  const ball = new Graphics();
+  const setBallColor = (color: number) => {
+    currentBallColor = color;
+    ball.clear();
+    ball.circle(0, 0, playerRadius).fill({ color });
+  };
+  setBallColor(ballBaseColor);
   const initialGround = computePlayerGround();
   ball.position.set(initialPlayerX(), initialGround - playerRadius);
   playfieldContainer.addChild(ball);
@@ -268,6 +294,7 @@ const init = async () => {
   playfieldContainer.addChild(holeContainer);
   playfieldContainer.addChild(sparkSprite);
   playfieldContainer.addChild(megaLaserGraphic);
+  playfieldContainer.addChild(haloSprite);
   playfieldContainer.addChild(enemyChargeSprite);
 
   // Enemy systems
@@ -407,16 +434,98 @@ const init = async () => {
     sparkParticles.render(sparkCtx, sparkCanvas.width, sparkCanvas.height);
     sparkTexture.source.update();
 
-    // Update enemy charge particles
-    enemyChargeParticles.update(deltaSeconds, scenarioStage === 'charging'
+  // Update enemy charge particles
+    const chargeLevel = scenarioStage === 'charging'
       ? Math.min(1, (performance.now() - megaLaserStart) / MEGA_LASER_CHARGE)
-      : scenarioStage === 'prep' ? 0.25 : 0);
+      : scenarioStage === 'prep' ? 0.25 : 0;
+
+    enemyChargeParticles.update(deltaSeconds, chargeLevel);
+
+    // Spawn and update halo particles (larger, tight around enemy)
+    const spawnHalo = chargeLevel > 0;
+    if (spawnHalo && enemyChargeHalo.length < 24) {
+      const count = 3;
+      for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const radius = playerRadius * 0.65 + Math.random() * playerRadius * 0.3;
+        enemyChargeHalo.push({
+          x: Math.cos(angle) * radius,
+          y: Math.sin(angle) * radius,
+          vx: 0,
+          vy: 0,
+          size: 6 + Math.random() * 3,
+          life: 0,
+          maxLife: 0.4 + Math.random() * 0.2,
+        });
+      }
+    }
+
+    // Spawn and update orbit particles (small, flying around)
+    const spawnOrbit = chargeLevel > 0;
+    if (spawnOrbit && enemyChargeOrbit.length < 50) {
+      const count = 3;
+      for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 120 + Math.random() * 80;
+        enemyChargeOrbit.push({
+          x: 0,
+          y: 0,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          size: 1 + Math.random() * 2, // 1-3px (mix of small and mid)
+          life: 0,
+          maxLife: 0.35 + Math.random() * 0.25,
+        });
+      }
+    }
+
+    const updateFx = (fx: ChargeFX[], gravity: number = 0) => {
+      for (let i = fx.length - 1; i >= 0; i--) {
+        const p = fx[i];
+        p.life += deltaSeconds;
+        if (p.life >= p.maxLife) {
+          fx.splice(i, 1);
+          continue;
+        }
+        p.vy += gravity * deltaSeconds;
+        p.x += p.vx * deltaSeconds;
+        p.y += p.vy * deltaSeconds;
+        p.vx *= 0.96;
+        p.vy *= 0.96;
+      }
+    };
+
+    updateFx(enemyChargeHalo);
+    updateFx(enemyChargeOrbit, 50);
+
+    // Render
     enemyChargeCtx.clearRect(0, 0, enemyChargeCanvas.width, enemyChargeCanvas.height);
     enemyChargeCtx.save();
     enemyChargeCtx.translate(enemyBall.position.x, enemyBall.position.y);
     enemyChargeParticles.render(enemyChargeCtx, enemyChargeCanvas.width, enemyChargeCanvas.height);
+    enemyChargeOrbit.forEach(p => {
+      const alpha = 1 - p.life / p.maxLife;
+      enemyChargeCtx.fillStyle = `rgba(255,32,32,${alpha})`;
+      enemyChargeCtx.beginPath();
+      enemyChargeCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      enemyChargeCtx.fill();
+    });
     enemyChargeCtx.restore();
     enemyChargeTexture.source.update();
+
+    // Render halo to separate normal-blend layer
+    haloCtx.clearRect(0, 0, haloCanvas.width, haloCanvas.height);
+    haloCtx.save();
+    haloCtx.translate(enemyBall.position.x, enemyBall.position.y);
+    enemyChargeHalo.forEach(p => {
+      const alpha = 1 - p.life / p.maxLife;
+      haloCtx.fillStyle = `rgba(255,32,32,${alpha})`;
+      haloCtx.beginPath();
+      haloCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      haloCtx.fill();
+    });
+    haloCtx.restore();
+    haloTexture.source.update();
 
     // Update and render jump dust particles
     jumpDust.update(deltaSeconds);
@@ -770,6 +879,7 @@ const init = async () => {
       playerX: state.x,
       playerY: state.y,
       playerRadius,
+      playerHasJumped: physics.hasPlayerJumped(),
       enemyX: enemyBall.position.x,
       enemyY: enemyBall.position.y,
       isHovering:
@@ -782,6 +892,9 @@ const init = async () => {
     });
     if (laserResult.scoreChange !== 0) {
       laserScore += laserResult.scoreChange;
+      // Energy +2% per cleared laser
+      energy = Math.min(100, energy + laserResult.scoreChange * 2);
+      updateEnergyUI();
     }
     if (laserResult.laserFired && laserResult.targetY !== null) {
       enemyMovement.setTarget(laserResult.targetY);
@@ -789,6 +902,28 @@ const init = async () => {
     if (laserResult.hitPosition) {
       // Enemy lasers = red sparks
       sparkParticles.spawn(laserResult.hitPosition.x, laserResult.hitPosition.y, 'red');
+      playerFlashUntil = performance.now() + 250;
+    }
+
+    // Flash player when hit
+    const now = performance.now();
+    if (playerFlashUntil > now) {
+      if (currentBallColor !== ballHitColor) {
+        setBallColor(ballHitColor);
+      }
+    } else if (currentBallColor !== ballBaseColor) {
+      // Fade back to blue over 120ms
+      const fadeProgress = Math.min(1, (now - playerFlashUntil) / 120);
+      // Linear blend between hit and base colors
+      const lerpColor = (a: number, b: number, t: number) => {
+        const ar = (a >> 16) & 0xff, ag = (a >> 8) & 0xff, ab = a & 0xff;
+        const br = (b >> 16) & 0xff, bg = (b >> 8) & 0xff, bb = b & 0xff;
+        const cr = Math.round(ar + (br - ar) * t);
+        const cg = Math.round(ag + (bg - ag) * t);
+        const cb = Math.round(ab + (bb - ab) * t);
+        return (cr << 16) | (cg << 8) | cb;
+      };
+      setBallColor(lerpColor(ballHitColor, ballBaseColor, fadeProgress));
     }
 
     // Scenario / mega laser handling
@@ -954,8 +1089,7 @@ const init = async () => {
     playerDiameter = sizes.playerDiameter;
 
     // Redraw ball with new radius
-    ball.clear();
-    ball.circle(0, 0, playerRadius).fill({ color: 0x4fc3f7 });
+    setBallColor(currentBallColor);
 
     // Update shadow size
     playerShadow.destroy();
@@ -992,6 +1126,91 @@ const init = async () => {
   transitionButton.type = 'button';
   transitionButton.addEventListener('click', triggerTransition);
   document.body.appendChild(transitionButton);
+
+  // Energy bar UI
+  const energyContainer = document.createElement('div');
+  energyContainer.style.position = 'fixed';
+  energyContainer.style.left = '20px';
+  energyContainer.style.top = '50%';
+  energyContainer.style.transform = 'translateY(-50%)';
+  energyContainer.style.width = '30px';
+  energyContainer.style.height = '300px';
+  energyContainer.style.border = '2px solid rgba(255, 255, 255, 0.3)';
+  energyContainer.style.background = 'rgba(0, 0, 0, 0.5)';
+  energyContainer.style.borderRadius = '15px';
+  energyContainer.style.overflow = 'hidden';
+  energyContainer.style.zIndex = '10';
+  const energyFill = document.createElement('div');
+  energyFill.style.position = 'absolute';
+  energyFill.style.bottom = '0';
+  energyFill.style.left = '0';
+  energyFill.style.width = '100%';
+  energyFill.style.height = '0%';
+  energyFill.style.background = '#ff0000';
+  energyFill.style.boxShadow = '0 0 6px rgba(255,0,0,0.55)';
+  energyFill.style.transition = 'height 0.2s ease, background-color 0.2s ease';
+  energyContainer.appendChild(energyFill);
+
+  // Marker line + label
+  const energyMarker = document.createElement('div');
+  energyMarker.style.position = 'absolute';
+  energyMarker.style.left = '0';
+  energyMarker.style.width = '30px';
+  energyMarker.style.height = '2px';
+  energyMarker.style.backgroundColor = 'white';
+  energyMarker.style.boxShadow = '0 0 5px rgba(255, 255, 255, 0.8)';
+  energyMarker.style.transition = 'bottom 0.2s ease';
+
+  const energyMarkerLine = document.createElement('div');
+  energyMarkerLine.style.position = 'absolute';
+  energyMarkerLine.style.top = '-1px';
+  energyMarkerLine.style.left = '100%';
+  energyMarkerLine.style.width = '20px';
+  energyMarkerLine.style.height = '2px';
+  energyMarkerLine.style.backgroundColor = 'white';
+  energyMarkerLine.style.boxShadow = '0 0 5px rgba(255, 255, 255, 0.8)';
+  energyMarker.appendChild(energyMarkerLine);
+
+  const energyLabel = document.createElement('div');
+  energyLabel.style.position = 'absolute';
+  energyLabel.style.top = '-10px';
+  energyLabel.style.left = 'calc(100% + 25px)';
+  energyLabel.style.transform = 'translateY(-50%)';
+  energyLabel.style.color = 'white';
+  energyLabel.style.fontSize = '14px';
+  energyLabel.style.fontWeight = 'bold';
+  energyLabel.style.textShadow = '0 0 8px black';
+  energyLabel.style.whiteSpace = 'nowrap';
+  energyMarker.appendChild(energyLabel);
+
+  energyContainer.appendChild(energyMarker);
+  document.body.appendChild(energyContainer);
+
+  const energyColorForLevel = (val: number) => {
+    const e = Math.max(0, Math.min(100, val));
+    if (e >= 80) return 'rgb(0,255,0)';
+    if (e <= 20) return 'rgb(255,0,0)';
+    if (e > 50) {
+      const ratio = (e - 50) / 30;
+      const r = Math.round(255 * (1 - ratio));
+      return `rgb(${r},255,0)`;
+    } else {
+      const ratio = (e - 20) / 30;
+      const g = Math.round(255 * ratio);
+      return `rgb(255,${g},0)`;
+    }
+  };
+  const updateEnergyUI = () => {
+    const clampedEnergy = Math.max(0, Math.min(100, energy));
+    energyFill.style.height = `${clampedEnergy}%`;
+    const color = energyColorForLevel(clampedEnergy);
+    energyFill.style.background = color;
+    energyFill.style.boxShadow = `0 0 8px ${color}`;
+    energyMarker.style.bottom = `${clampedEnergy}%`;
+    const barText = laserScore < 50 ? 'Fill Up!' : (clampedEnergy > 50 ? 'Shoot!' : 'Jump!');
+    energyLabel.textContent = barText;
+  };
+  updateEnergyUI();
 
   // Platform spawn button
   const spawnPlatform = () => {

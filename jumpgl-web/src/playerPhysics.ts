@@ -34,6 +34,7 @@ export class PlayerPhysics {
   private scaleX = 1;
   private scaleY = 1;
   private jumpCount = 0; // Track number of jumps (0, 1, or 2 for double jump)
+  private hasJumpedFlag = false;
   private screenWidth: number;
   private horizontalRangeLeft = 250; // Pixels player can move left from initialX (increased for more range)
   private horizontalRangeRight = 150; // Pixels player can move right from initialX (reduced to stop at ~45% screen)
@@ -89,6 +90,7 @@ export class PlayerPhysics {
     if (this.groundCollisionEnabled && this.y > effectiveGround) {
       this.y = effectiveGround;
       this.jumpCount = 0; // Reset jump count when touching ground/platform
+      this.hasJumpedFlag = false;
       if (this.velocity > 0) {
         if (isOnPlatform) {
           // Platform collision: allow 3 bounces then stop
@@ -139,6 +141,7 @@ export class PlayerPhysics {
     this.isCharging = true;
     this.isHolding = true;
     this.holdStartTime = performance.now();
+    this.hasJumpedFlag = true;
 
     return true;
   }
@@ -344,5 +347,9 @@ export class PlayerPhysics {
       // Beyond 50% screen: 3.0 (max sprint speed)
       return maxSpeed;
     }
+  }
+
+  hasPlayerJumped(): boolean {
+    return this.hasJumpedFlag;
   }
 }

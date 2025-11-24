@@ -26,6 +26,7 @@ type UpdateParams = {
   playerX: number;
   playerY: number;
   playerRadius: number;
+  playerHasJumped: boolean;
   enemyX: number;
   enemyY: number;
   isHovering: boolean;
@@ -273,8 +274,11 @@ export class LaserPhysics {
       // Mark passed/scored
       if (!laser.hit && !laser.passed && playerX > laser.x + laser.width) {
         laser.passed = true;
-        laser.scored = true;
-        scoreChange += 1;
+        // Only score when player actually jumped the laser
+        if (params.playerHasJumped) {
+          laser.scored = true;
+          scoreChange += 1;
+        }
       }
 
       // Cull inactive lasers
