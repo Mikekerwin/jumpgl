@@ -263,6 +263,12 @@ export class LaserPhysics {
     }
 
     const currentSpeed = this.baseSpeed + this.scrollSpeedPerFrame;
+
+    // Debug logging - log every 300 frames (~5 seconds at 60fps)
+    if (Math.random() < 0.003) {
+      console.log(`[LASER SPEED DEBUG] baseSpeed: ${this.baseSpeed.toFixed(2)}, scrollSpeed: ${this.scrollSpeedPerFrame.toFixed(2)}, total: ${currentSpeed.toFixed(2)} px/frame`);
+    }
+
     let wasHit = false;
     let scoreChange = 0;
     let hitPosition: { x: number; y: number } | null = null;

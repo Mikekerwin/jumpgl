@@ -113,7 +113,7 @@ export class EnemyMovement {
     }
 
     // Apply floating oscillation
-    this.applyFloating();
+    this.applyFloating(deltaSeconds);
 
     // Calculate velocity as pixels per frame (NOT per second like original)
     // This matches the original Jump game
@@ -131,9 +131,9 @@ export class EnemyMovement {
   /**
    * Apply continuous floating + settle bounce
    */
-  private applyFloating(): void {
-    // Continuous bobbing
-    this.floatPhase += this.floatFrequency;
+  private applyFloating(deltaSeconds: number): void {
+    // Continuous bobbing (scale by delta-time for frame-rate independence)
+    this.floatPhase += this.floatFrequency * deltaSeconds * 60;
     if (this.floatPhase > Math.PI * 2) {
       this.floatPhase -= Math.PI * 2;
     }

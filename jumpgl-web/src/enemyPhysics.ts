@@ -118,7 +118,7 @@ export class EnemyPhysics {
     if (this.isHolding) {
       const heldTime = performance.now() - this.holdStartTime;
       if (heldTime < this.maxHoldTime) {
-        this.velocity -= this.holdBoost * (deltaSeconds * 1000);
+        this.velocity -= this.holdBoost * deltaSeconds;
       } else {
         this.isHolding = false;
       }

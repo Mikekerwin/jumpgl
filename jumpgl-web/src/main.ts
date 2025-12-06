@@ -13,6 +13,8 @@ import { FloatingPlatforms, type PlayerBounds } from './floatingPlatforms';
 import { LaserPhysics } from './laserPhysics';
 import { HoleManager } from './holeManager';
 import { SparkParticles } from './sparkParticles';
+import { CometManager } from './cometManager';
+import { WindSpriteSystem } from './windSprites';
 import {
   calculateResponsiveSizes,
   GROUND_PLAYER_DEPTH,
@@ -71,11 +73,13 @@ const init = async () => {
   const platformContainer = new Container();
   const laserContainer = new Container();
   const holeContainer = new Container();
+  const projectileContainer = new Container();
   const playfieldContainer = new Container();
+  const cometContainer = new Container();
 
-  scene.addChild(backgroundContainer, overlayContainer, groundContainer, platformContainer, playfieldContainer);
+  scene.addChild(backgroundContainer, overlayContainer, groundContainer, platformContainer, playfieldContainer, cometContainer);
 
-  let starsActive = true;
+  // Stars temporarily disabled
   const parallaxTextures = await loadParallaxTextures();
 
   const biomeManager = new BiomeSequenceManager('cloud');
@@ -87,10 +91,7 @@ const init = async () => {
     biomeManager,
     app.renderer.width,
     app.renderer.height,
-    () => {
-      starsActive = false;
-      starContainer.visible = false;
-    }
+    () => {}
   );
   const starContainer = new Container();
   backgrounds.getRoot().addChildAt(starContainer, 1);
@@ -122,6 +123,20 @@ const init = async () => {
   const jumpDustTexture = Texture.from(jumpDustCanvas);
   const jumpDustSprite = new Sprite(jumpDustTexture);
   jumpDustSprite.blendMode = 'normal';
+
+  // Initialize wind sprite system (anime-style wind lines)
+  const windSprites = new WindSpriteSystem(24);
+  const windCanvas = document.createElement('canvas');
+  windCanvas.width = app.renderer.width;
+  windCanvas.height = app.renderer.height;
+  const windCtx = windCanvas.getContext('2d');
+  if (!windCtx) {
+    throw new Error('Failed to create wind sprite context');
+  }
+  const windTexture = Texture.from(windCanvas);
+  const windSprite = new Sprite(windTexture);
+  windSprite.blendMode = 'normal';
+  let nextWindSpawnTime = 1.2 + Math.random() * 0.8; // Random spawn interval (more breathing room)
 
   // Initialize spark particles (for laser hits)
   const sparkParticles = new SparkParticles();
@@ -193,6 +208,15 @@ const init = async () => {
   // Initialize platform system
   const platforms = new FloatingPlatforms(PLATFORM_LARGE_IMAGE_PATH, PLATFORM_SMALL_IMAGE_PATH);
   const holes = new HoleManager(HOLE_SMALL_IMAGE_PATH, HOLE_LARGE_IMAGE_PATH);
+
+  // Initialize comet system
+  const cometManager = new CometManager(cometContainer, {
+    screenWidth: app.renderer.width,
+    screenHeight: app.renderer.height,
+    speed: 400, // pixels per second
+    yPosition: 0.667, // 2/3 down from top (1/3 from bottom)
+    scale: 0.85, // 15% smaller
+  });
   let platformSpawnType: 'large' | 'small' = 'large'; // Tracks which platform type to spawn next
   let holePlatformSpawnType: 'large' | 'small' = 'small'; // Tracks which hole-platform type to spawn next
   let activePlatformId: number | null = null;
@@ -207,6 +231,14 @@ const init = async () => {
   const HOLE_ALIGNMENT_TWEAK = 25; // Shift hole right to better center on platform art
   let isOnBaselineGround = true; // Tracks when player is resting on main ground
   let fallingIntoHole = false;
+  const projectiles: { x: number; y: number; active: boolean }[] = [];
+  const PROJECTILE_SPEED = 700; // pixels per second (20 * 60fps) - much faster than enemy lasers
+  const PROJECTILE_WIDTH = 25; // Same width as enemy lasers
+  const PROJECTILE_HEIGHT = 2; // Same height as enemy lasers
+  let nextShotTime = 0;
+  const MAX_SHOOT_SPEED = 25; // Fastest cooldown at 80%+ energy (ms)
+  const MIN_SHOOT_SPEED = 350; // Slowest cooldown at 20% or less energy (ms)
+  let canShoot = false; // Unlocks after first laser jump
   let scenarioActive = false;
   let scenarioSmallId: number | null = null;
   let scenarioStage: 'idle' | 'awaiting' | 'prep' | 'charging' | 'firing' = 'idle';
@@ -225,19 +257,10 @@ const init = async () => {
   megaLaserGraphic.blendMode = 'add';
   let energy = 0;
   let playerFlashUntil = 0;
+  let enemyFlashUntil = 0;
 
 
-  const stars = Array.from({ length: 80 }).map(() => {
-    const dot = new Graphics()
-      .circle(0, 0, Math.random() * 1.5 + 0.5)
-      .fill({ color: 0xffffff, alpha: Math.random() * 0.7 + 0.3 });
-    dot.position.set(Math.random() * app.renderer.width, Math.random() * app.renderer.height);
-    starContainer.addChild(dot);
-    return {
-      view: dot,
-      speed: Math.random() * 0.4 + 0.1,
-    };
-  });
+  // Stars disabled for now
 
   // Calculate initial responsive sizes
   let sizes = calculateResponsiveSizes(app.renderer.height);
@@ -282,10 +305,25 @@ const init = async () => {
 
 
   // Create enemy at 90% of screen width
-  const enemyBall = new Graphics().circle(0, 0, playerRadius).fill({ color: 0xff0000 });
+  let enemyBaseColor = 0xff0000;
+  let enemyHitColor = 0x4fc3f7;
+  let currentEnemyColor = enemyBaseColor;
+  const enemyBall = new Graphics();
+  const setEnemyColor = (color: number) => {
+    currentEnemyColor = color;
+    enemyBall.clear();
+    enemyBall.circle(0, 0, playerRadius).fill({ color });
+  };
+  setEnemyColor(enemyBaseColor);
   const enemyX = app.renderer.width * 0.9;
   enemyBall.position.set(enemyX, initialGround - playerRadius);
   playfieldContainer.addChild(enemyBall);
+  const enemyBounds = () => ({
+    left: enemyBall.position.x - playerRadius,
+    right: enemyBall.position.x + playerRadius,
+    top: enemyBall.position.y - playerRadius,
+    bottom: enemyBall.position.y + playerRadius,
+  });
 
   // Lasers render above players
   playfieldContainer.addChild(laserContainer);
@@ -296,6 +334,8 @@ const init = async () => {
   playfieldContainer.addChild(megaLaserGraphic);
   playfieldContainer.addChild(haloSprite);
   playfieldContainer.addChild(enemyChargeSprite);
+  playfieldContainer.addChild(projectileContainer);
+  overlayContainer.addChild(windSprite);
 
   // Enemy systems
   const enemyPhysics = new EnemyPhysics({
@@ -315,9 +355,29 @@ const init = async () => {
   let laserScore = 0;
   let introComplete = false;
 
-  // Laser visuals - simple color lines
+  // Laser visuals - create custom textures with edge pixels
   const beamHeight = LASER_HEIGHT;
-  const beamTexture = Texture.WHITE;
+
+  // Enemy laser texture - solid red
+  const enemyLaserCanvas = document.createElement('canvas');
+  enemyLaserCanvas.width = LASER_WIDTH;
+  enemyLaserCanvas.height = beamHeight;
+  const enemyLaserCtx = enemyLaserCanvas.getContext('2d')!;
+  enemyLaserCtx.fillStyle = '#ff4040'; // Red
+  enemyLaserCtx.fillRect(0, 0, LASER_WIDTH, beamHeight);
+  const enemyBeamTexture = Texture.from(enemyLaserCanvas);
+
+  // Player laser texture - blue with 4-pixel white block on the right
+  const playerLaserCanvas = document.createElement('canvas');
+  playerLaserCanvas.width = PROJECTILE_WIDTH;
+  playerLaserCanvas.height = PROJECTILE_HEIGHT;
+  const playerLaserCtx = playerLaserCanvas.getContext('2d')!;
+  playerLaserCtx.fillStyle = '#4fc3f7'; // Blue
+  playerLaserCtx.fillRect(0, 0, PROJECTILE_WIDTH, PROJECTILE_HEIGHT);
+  playerLaserCtx.fillStyle = '#ffffff'; // White 4-pixel block on right edge
+  playerLaserCtx.fillRect(PROJECTILE_WIDTH - 4, 0, 4, PROJECTILE_HEIGHT);
+  const playerBeamTexture = Texture.from(playerLaserCanvas);
+
   const laserSprites: Sprite[] = [];
 
   const respawnPlayer = () => {
@@ -372,6 +432,7 @@ const init = async () => {
   let cameraFloorY = Infinity; // The Y position the camera is locked to (follows player if they go below this)
   const CAMERA_LERP_SPEED = 0.15; // How quickly camera follows (faster for downward tracking)
   const CAMERA_FOLLOW_THRESHOLD = 20; // How far below floor before camera starts following down
+  const CAMERA_TOP_MARGIN = 100; // Keep player at least this many pixels from top of screen
 
   const ticker = new Ticker();
   ticker.add((tickerInstance) => {
@@ -394,6 +455,9 @@ const init = async () => {
     backgrounds.update(deltaSeconds, speedMultiplier);
     grounds.update(deltaSeconds, speedMultiplier);
     dustField.update();
+
+    // Update comet animation and position
+    cometManager.update(deltaSeconds);
 
     // Update platforms with ground scroll speed (72 px/sec * speedMultiplier)
     const BASE_GROUND_SCROLL_SPEED = 72; // pixels per second (from parallaxNew.ts)
@@ -434,7 +498,26 @@ const init = async () => {
     sparkParticles.render(sparkCtx, sparkCanvas.width, sparkCanvas.height);
     sparkTexture.source.update();
 
-  // Update enemy charge particles
+    // Spawn wind sprites
+    nextWindSpawnTime -= deltaSeconds;
+    if (nextWindSpawnTime <= 0) {
+      const groundY = computePlayerGround();
+      const kind = windSprites.spawnRandom(app.renderer.width, app.renderer.height, groundY);
+      if (kind === 'long') {
+        nextWindSpawnTime = 2.5 + Math.random() * 1.2; // give longs breathing room
+      } else if (kind === 'pair') {
+        nextWindSpawnTime = 1.6 + Math.random() * 1.0;
+      } else {
+        nextWindSpawnTime = 1.0 + Math.random() * 0.9;
+      }
+    }
+
+    windSprites.update(deltaSeconds);
+    windCtx.clearRect(0, 0, windCanvas.width, windCanvas.height);
+    windSprites.render(windCtx, windCanvas.width, windCanvas.height);
+    windTexture.source.update();
+
+    // Update enemy charge particles
     const chargeLevel = scenarioStage === 'charging'
       ? Math.min(1, (performance.now() - megaLaserStart) / MEGA_LASER_CHARGE)
       : scenarioStage === 'prep' ? 0.25 : 0;
@@ -513,6 +596,37 @@ const init = async () => {
     enemyChargeCtx.restore();
     enemyChargeTexture.source.update();
 
+    // Update player projectiles (only when unlocked)
+    projectiles.forEach(p => {
+      if (!p.active) return;
+      p.x += PROJECTILE_SPEED * deltaSeconds;
+      if (p.x > app.renderer.width) {
+        p.active = false;
+      }
+      // Enemy hitbox
+      const bounds = enemyBounds();
+      if (
+        p.x < bounds.right &&
+        p.x + PROJECTILE_WIDTH > bounds.left &&
+        p.y < bounds.bottom &&
+        p.y + PROJECTILE_HEIGHT > bounds.top
+      ) {
+        p.active = false;
+        enemyFlashUntil = performance.now() + 250;
+        sparkParticles.spawn(p.x, p.y, 'blue');
+      }
+    });
+
+    // Render player projectiles
+    projectileContainer.removeChildren();
+    projectiles.forEach(p => {
+      if (!p.active) return;
+      const sprite = new Sprite(playerBeamTexture);
+      sprite.anchor.set(0, 0);
+      sprite.position.set(p.x, p.y);
+      projectileContainer.addChild(sprite);
+    });
+
     // Render halo to separate normal-blend layer
     haloCtx.clearRect(0, 0, haloCanvas.width, haloCanvas.height);
     haloCtx.save();
@@ -552,10 +666,10 @@ const init = async () => {
 
     megaLaserHeight = playerDiameter * 1.2;
 
-    // Render lasers using pooled sprites with flat color
+    // Render lasers using pooled sprites with custom texture
     const lasers = laserPhysics.getLasers();
     while (laserSprites.length < lasers.length) {
-      const sprite = new Sprite(beamTexture);
+      const sprite = new Sprite(enemyBeamTexture);
       sprite.anchor.set(0, 0);
       sprite.blendMode = 'normal';
       laserContainer.addChild(sprite);
@@ -570,22 +684,13 @@ const init = async () => {
         continue;
       }
       sprite.visible = true;
-      sprite.texture = beamTexture;
+      sprite.texture = enemyBeamTexture;
       sprite.width = laser.width;
       sprite.height = beamHeight;
-      sprite.tint = 0xff4040; // enemy laser red
       sprite.position.set(laser.x, laser.y);
     }
 
-    if (starsActive) {
-      stars.forEach((star) => {
-        star.view.y += star.speed * tickerInstance.deltaTime;
-        if (star.view.y > app.renderer.height) {
-          star.view.y = -5;
-          star.view.x = Math.random() * app.renderer.width;
-        }
-      });
-    }
+    // Stars disabled for now
 
     // Platform collision detection
     // Store previous position for frame-by-frame tracking
@@ -801,6 +906,15 @@ const init = async () => {
       }
     }
 
+    // Check if player is jumping too high (approaching top of screen)
+    // Player position is in world space, but we need to check screen space (with camera offset)
+    const playerTopInScreenSpace = (state.y - playerRadius) + cameraY;
+    if (playerTopInScreenSpace < CAMERA_TOP_MARGIN) {
+      // Player is too close to top of screen - push camera up
+      const upwardPush = CAMERA_TOP_MARGIN - playerTopInScreenSpace;
+      targetCameraY += upwardPush;
+    }
+
     // Smoothly interpolate camera to target position
     cameraY += (targetCameraY - cameraY) * CAMERA_LERP_SPEED;
 
@@ -894,36 +1008,61 @@ const init = async () => {
       laserScore += laserResult.scoreChange;
       // Energy +2% per cleared laser
       energy = Math.min(100, energy + laserResult.scoreChange * 2);
+
+      // Unlock shooting on first laser jump
+      if (!canShoot) {
+        canShoot = true;
+        console.log('[SHOOT UNLOCK] Unlocked after first laser jump');
+      }
+
       updateEnergyUI();
+      updateScoreDisplay();
     }
     if (laserResult.laserFired && laserResult.targetY !== null) {
       enemyMovement.setTarget(laserResult.targetY);
     }
     if (laserResult.hitPosition) {
-      // Enemy lasers = red sparks
+      // Enemy lasers = red sparks - reduce energy by 4% per hit
+      energy = Math.max(0, energy - 4);
       sparkParticles.spawn(laserResult.hitPosition.x, laserResult.hitPosition.y, 'red');
       playerFlashUntil = performance.now() + 250;
+      updateEnergyUI();
     }
 
     // Flash player when hit
     const now = performance.now();
+    const FADE_DURATION = 320; // Duration of fade from red to blue in ms
+
+    // Easing function for smooth color transition
+    const easeOutCubic = (t: number): number => 1 - Math.pow(1 - t, 3);
+
+    // Color lerp function
+    const lerpColor = (a: number, b: number, t: number) => {
+      const ar = (a >> 16) & 0xff, ag = (a >> 8) & 0xff, ab = a & 0xff;
+      const br = (b >> 16) & 0xff, bg = (b >> 8) & 0xff, bb = b & 0xff;
+      const cr = Math.round(ar + (br - ar) * t);
+      const cg = Math.round(ag + (bg - ag) * t);
+      const cb = Math.round(ab + (bb - ab) * t);
+      return (cr << 16) | (cg << 8) | cb;
+    };
+
     if (playerFlashUntil > now) {
-      if (currentBallColor !== ballHitColor) {
-        setBallColor(ballHitColor);
-      }
-    } else if (currentBallColor !== ballBaseColor) {
-      // Fade back to blue over 120ms
-      const fadeProgress = Math.min(1, (now - playerFlashUntil) / 120);
-      // Linear blend between hit and base colors
-      const lerpColor = (a: number, b: number, t: number) => {
-        const ar = (a >> 16) & 0xff, ag = (a >> 8) & 0xff, ab = a & 0xff;
-        const br = (b >> 16) & 0xff, bg = (b >> 8) & 0xff, bb = b & 0xff;
-        const cr = Math.round(ar + (br - ar) * t);
-        const cg = Math.round(ag + (bg - ag) * t);
-        const cb = Math.round(ab + (bb - ab) * t);
-        return (cr << 16) | (cg << 8) | cb;
-      };
+      // Flash red during hit window
+      setBallColor(ballHitColor);
+    } else if (now < playerFlashUntil + FADE_DURATION) {
+      // Fade back to blue with ease-out
+      const linearProgress = (now - playerFlashUntil) / FADE_DURATION;
+      const fadeProgress = easeOutCubic(linearProgress);
       setBallColor(lerpColor(ballHitColor, ballBaseColor, fadeProgress));
+    } else if (currentBallColor !== ballBaseColor) {
+      // Ensure we end at exactly the base color
+      setBallColor(ballBaseColor);
+    }
+
+    if (enemyFlashUntil > now) {
+      setEnemyColor(enemyHitColor);
+    } else if (currentEnemyColor !== enemyBaseColor) {
+      setEnemyColor(enemyBaseColor);
     }
 
     // Scenario / mega laser handling
@@ -1045,6 +1184,36 @@ const init = async () => {
     if (event.code === 'Space' || event.code === 'ArrowUp') {
       event.preventDefault();
       triggerJump();
+    } else if (event.code === 'KeyF' || event.code === 'KeyS') {
+      // Can only shoot if unlocked and has energy
+      if (!canShoot || energy <= 0) return;
+
+      const now = performance.now();
+
+      // Calculate shooting cooldown based on current energy (matches geminiTut)
+      let shootCooldown;
+      if (energy >= 80) {
+        shootCooldown = MAX_SHOOT_SPEED; // 25ms at 80%+ energy
+      } else if (energy <= 20) {
+        shootCooldown = MIN_SHOOT_SPEED; // 350ms at 20% or less energy
+      } else {
+        // Linear interpolation between 20% and 80% energy
+        const energyRange = 80 - 20; // 60
+        const cooldownRange = MIN_SHOOT_SPEED - MAX_SHOOT_SPEED; // 325ms
+        const energyRatio = (energy - 20) / energyRange;
+        shootCooldown = MIN_SHOOT_SPEED - (energyRatio * cooldownRange);
+      }
+
+      // Check if enough time has passed since last shot
+      if (now - nextShotTime < shootCooldown) return;
+
+      const state = physics.getState();
+      projectiles.push({ x: state.x + playerRadius, y: state.y, active: true });
+
+      // Consume 0.5% energy per shot
+      energy = Math.max(0, energy - 0.5);
+      nextShotTime = now;
+      updateEnergyUI();
     } else if (event.code === 'ArrowDown') {
       event.preventDefault();
       isPressingDown = true;
@@ -1069,6 +1238,9 @@ const init = async () => {
     dustCompositeCanvas.height = app.renderer.height;
     // Update the existing texture source instead of creating a new texture
     dustTexture.source.update();
+    windCanvas.width = app.renderer.width;
+    windCanvas.height = app.renderer.height;
+    windTexture.source.update();
     // Resize jump dust canvas
     jumpDustCanvas.width = app.renderer.width;
     jumpDustCanvas.height = app.renderer.height;
@@ -1103,12 +1275,14 @@ const init = async () => {
     ball.position.y = updatedGround - playerRadius;
 
     // Redraw enemy with new radius
-    enemyBall.clear();
-    enemyBall.circle(0, 0, playerRadius).fill({ color: 0xff0000 });
+    setEnemyColor(currentEnemyColor);
     enemyPhysics.setGroundSurface(updatedGround);
     enemyBall.position.x = app.renderer.width * 0.9;
 
     laserPhysics.updateDimensions(app.renderer.width, app.renderer.height, updatedGround - playerRadius, enemyBall.position.x);
+
+    // Update comet dimensions
+    cometManager.updateDimensions(app.renderer.width, app.renderer.height);
   };
 
   window.addEventListener('resize', handleResize);
@@ -1212,6 +1386,26 @@ const init = async () => {
   };
   updateEnergyUI();
 
+  // Score Display - centered at top of screen
+  const scoreDisplay = document.createElement('div');
+  scoreDisplay.style.position = 'absolute';
+  scoreDisplay.style.top = '20px';
+  scoreDisplay.style.width = '100%';
+  scoreDisplay.style.textAlign = 'center';
+  scoreDisplay.style.fontSize = '2rem';
+  scoreDisplay.style.fontWeight = 'bold';
+  scoreDisplay.style.fontFamily = '"Times New Roman", Times, serif';
+  scoreDisplay.style.color = 'white';
+  scoreDisplay.style.userSelect = 'none';
+  scoreDisplay.style.textShadow = '0px 2px 10px rgba(0,0,0,0.75)';
+  scoreDisplay.style.zIndex = '1000';
+  scoreDisplay.textContent = `${laserScore} Jumps`;
+  document.body.appendChild(scoreDisplay);
+
+  const updateScoreDisplay = () => {
+    scoreDisplay.textContent = `${laserScore} Jumps`;
+  };
+
   // Platform spawn button
   const spawnPlatform = () => {
     // Spawn off-screen to the right (so it animates in like the ground)
@@ -1300,6 +1494,40 @@ const init = async () => {
   scenarioButton.style.top = '140px';
   scenarioButton.addEventListener('click', startScenario);
   document.body.appendChild(scenarioButton);
+
+  // Comet button
+  const spawnComet = () => {
+    cometManager.spawn();
+    console.log('[COMET] Spawned comet animation');
+  };
+
+  const cometButton = document.createElement('button');
+  cometButton.className = 'transition-btn';
+  cometButton.textContent = 'Comet';
+  cometButton.type = 'button';
+  cometButton.style.top = '180px';
+  cometButton.addEventListener('click', spawnComet);
+  document.body.appendChild(cometButton);
+
+  // 100% Energy button
+  const fillEnergy = () => {
+    energy = 100;
+    // Also unlock shooting if not already unlocked
+    if (!canShoot) {
+      canShoot = true;
+      console.log('[SHOOT UNLOCK] Unlocked via energy button');
+    }
+    updateEnergyUI();
+    console.log('[ENERGY] Set to 100%');
+  };
+
+  const energyButton = document.createElement('button');
+  energyButton.className = 'transition-btn';
+  energyButton.textContent = '100% Energy';
+  energyButton.type = 'button';
+  energyButton.style.top = '220px';
+  energyButton.addEventListener('click', fillEnergy);
+  document.body.appendChild(energyButton);
 };
 
 init().catch((err) => {
