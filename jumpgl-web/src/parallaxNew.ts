@@ -375,7 +375,8 @@ export class ParallaxBackgrounds {
     // Place so the bottom of the scaled image sits at the bottom of the viewport
     this.currentBackground.y = this.viewportHeight - visibleHeight;
 
-    this.container.addChildAt(this.currentBackground, 1);
+    // Place background above sky (0) and wind (inserted at 1 in main)
+    this.container.addChild(this.currentBackground);
   }
 
   getRoot(): Container {

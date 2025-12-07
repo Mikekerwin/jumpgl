@@ -335,7 +335,8 @@ const init = async () => {
   playfieldContainer.addChild(haloSprite);
   playfieldContainer.addChild(enemyChargeSprite);
   playfieldContainer.addChild(projectileContainer);
-  overlayContainer.addChild(windSprite);
+  // Place wind on the sky layer: between sky (index 0) and forest/transition (index 1)
+  backgrounds.getRoot().addChildAt(windSprite, 1);
 
   // Enemy systems
   const enemyPhysics = new EnemyPhysics({
@@ -1022,8 +1023,8 @@ const init = async () => {
       enemyMovement.setTarget(laserResult.targetY);
     }
     if (laserResult.hitPosition) {
-      // Enemy lasers = red sparks - reduce energy by 4% per hit
-      energy = Math.max(0, energy - 4);
+      // Enemy lasers = red sparks - reduce energy by 1.5% per hit
+      energy = Math.max(0, energy - 1.5);
       sparkParticles.spawn(laserResult.hitPosition.x, laserResult.hitPosition.y, 'red');
       playerFlashUntil = performance.now() + 250;
       updateEnergyUI();
@@ -1249,11 +1250,24 @@ const init = async () => {
     chargeCanvas.width = app.renderer.width;
     chargeCanvas.height = app.renderer.height;
     chargeTexture.source.update();
+    // Resize spark canvas
+    sparkCanvas.width = app.renderer.width;
+    sparkCanvas.height = app.renderer.height;
+    sparkTexture.source.update();
+    // Resize enemy charge canvas
+    enemyChargeCanvas.width = app.renderer.width;
+    enemyChargeCanvas.height = app.renderer.height;
+    enemyChargeTexture.source.update();
+    // Resize halo canvas
+    haloCanvas.width = app.renderer.width;
+    haloCanvas.height = app.renderer.height;
+    haloTexture.source.update();
     overlayContainer.removeChild(gradientSprite);
     gradientSprite.destroy();
     gradientSprite = createGroundGradientSprite(app.renderer.width, app.renderer.height);
     overlayContainer.addChild(dustSprite);
     overlayContainer.addChild(gradientSprite);
+    overlayContainer.addChild(windSprite);
 
     // Recalculate responsive sizes based on new height
     sizes = calculateResponsiveSizes(app.renderer.height);
@@ -1399,6 +1413,7 @@ const init = async () => {
   scoreDisplay.style.userSelect = 'none';
   scoreDisplay.style.textShadow = '0px 2px 10px rgba(0,0,0,0.75)';
   scoreDisplay.style.zIndex = '1000';
+  scoreDisplay.style.pointerEvents = 'none'; // Allow clicks to pass through to buttons below
   scoreDisplay.textContent = `${laserScore} Jumps`;
   document.body.appendChild(scoreDisplay);
 
@@ -1456,7 +1471,7 @@ const init = async () => {
   platformButton.className = 'transition-btn';
   platformButton.textContent = 'Spawn Large Platform';
   platformButton.type = 'button';
-  platformButton.style.top = '60px'; // Position below transition button
+  platformButton.style.top = '62px'; // Position below transition button
   platformButton.addEventListener('click', spawnPlatform);
   document.body.appendChild(platformButton);
 
@@ -1464,7 +1479,7 @@ const init = async () => {
   platformHoleButton.className = 'transition-btn';
   platformHoleButton.textContent = 'Spawn Small Platform + Hole';
   platformHoleButton.type = 'button';
-  platformHoleButton.style.top = '100px'; // Stack below the regular platform button
+  platformHoleButton.style.top = '104px'; // Stack below the regular platform button
   platformHoleButton.addEventListener('click', spawnPlatformWithHole);
   document.body.appendChild(platformHoleButton);
 
@@ -1491,7 +1506,7 @@ const init = async () => {
   scenarioButton.className = 'transition-btn';
   scenarioButton.textContent = 'Run Mega Laser Scenario';
   scenarioButton.type = 'button';
-  scenarioButton.style.top = '140px';
+  scenarioButton.style.top = '146px';
   scenarioButton.addEventListener('click', startScenario);
   document.body.appendChild(scenarioButton);
 
@@ -1505,7 +1520,7 @@ const init = async () => {
   cometButton.className = 'transition-btn';
   cometButton.textContent = 'Comet';
   cometButton.type = 'button';
-  cometButton.style.top = '180px';
+  cometButton.style.top = '188px';
   cometButton.addEventListener('click', spawnComet);
   document.body.appendChild(cometButton);
 
@@ -1525,7 +1540,7 @@ const init = async () => {
   energyButton.className = 'transition-btn';
   energyButton.textContent = '100% Energy';
   energyButton.type = 'button';
-  energyButton.style.top = '220px';
+  energyButton.style.top = '230px';
   energyButton.addEventListener('click', fillEnergy);
   document.body.appendChild(energyButton);
 };
