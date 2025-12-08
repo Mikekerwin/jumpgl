@@ -243,6 +243,7 @@ const init = async () => {
   const MAX_SHOOT_SPEED = 25; // Fastest cooldown at 80%+ energy (ms)
   const MIN_SHOOT_SPEED = 350; // Slowest cooldown at 20% or less energy (ms)
   let canShoot = false; // Unlocks after first laser jump
+  let shootUnlocked = false;
   let scenarioActive = false;
   let scenarioSmallId: number | null = null;
   let scenarioStage: 'idle' | 'awaiting' | 'prep' | 'charging' | 'firing' = 'idle';
@@ -263,6 +264,16 @@ const init = async () => {
   let energy = 0;
   let playerFlashUntil = 0;
   let enemyFlashUntil = 0;
+  let blueHits = 0;
+  let blueOuts = 0;
+  let redHits = 0;
+  let redOuts = 0;
+  let firstOutMade = false;
+  let scoreVisible = false;
+  const HITS_PER_OUT = 20;
+  let scenarioButton: HTMLButtonElement | null = null;
+  let autoScenarioPending = false;
+  let autoScenarioTriggered = false;
 
   // Comet Hole Level state
   let cometHoleLevelActive = false;
@@ -426,14 +437,6 @@ const init = async () => {
   const playerBeamTexture = Texture.from(playerLaserCanvas);
 
   const laserSprites: Sprite[] = [];
-
-  const respawnPlayer = () => {
-    fallingIntoHole = false;
-    ball.alpha = 1;
-    ball.scale.set(1, 1);
-    const ground = computePlayerGround();
-    physics.respawn(initialPlayerX(), ground);
-  };
 
   const triggerFallIntoHole = (currentVelocity: number) => {
     fallingIntoHole = true;
@@ -696,6 +699,22 @@ const init = async () => {
         p.active = false;
         enemyFlashUntil = performance.now() + 250;
         sparkParticles.spawn(p.x, p.y, 'blue');
+        // Count hits against red; every 20 hits = 1 out on red
+        redHits += 1;
+        if (redHits >= HITS_PER_OUT) {
+          const outsGained = Math.floor(redHits / HITS_PER_OUT);
+          redOuts = Math.min(10, redOuts + outsGained);
+          redHits = redHits % HITS_PER_OUT;
+        }
+        if (!firstOutMade && (redOuts + blueOuts) > 0 && scenarioButton) {
+          firstOutMade = true;
+          scenarioButton.disabled = false;
+        }
+        if (redOuts > 0 && !autoScenarioTriggered) {
+          autoScenarioPending = true;
+          autoScenarioTriggered = true;
+        }
+        updateScoreUI();
       }
     });
 
@@ -1084,9 +1103,7 @@ const init = async () => {
     // Detect when player returns to grassy area to start roll-in animation (even if enemy never fully hid)
     if (
       redEnemyActive &&
-      (redEnemyState === 'falling' || redEnemyState === 'on_platform') &&
-      redEnemyState !== 'rolling_in' &&
-      redEnemyState !== 'jumping_intro'
+      (redEnemyState === 'falling' || redEnemyState === 'on_platform')
     ) {
       const noHolesAhead = !cometHoleLevelActive && !hasActiveHoles && !willMoreHolesCome;
       const farPastHoles = rightmostHoleX > -Infinity && state.x > rightmostHoleX + window.innerWidth * 0.25;
@@ -1097,6 +1114,7 @@ const init = async () => {
         enemyBall.visible = true;
         redEnemyState = 'rolling_in';
         redEnemyVelocityX = RED_ENEMY_ROLL_SPEED;
+        showScoreUI();
         console.log('[RED ENEMY] Player past holes, starting roll-in animation');
       }
     }
@@ -1481,10 +1499,11 @@ const init = async () => {
       // Energy +2% per cleared laser
       energy = Math.min(100, energy + laserResult.scoreChange * 2);
 
-      // Unlock shooting on first laser jump
-      if (!canShoot) {
+      // Unlock shooting only at full energy
+      if (energy >= 100 && !shootUnlocked) {
         canShoot = true;
-        console.log('[SHOOT UNLOCK] Unlocked after first laser jump');
+        shootUnlocked = true;
+        console.log('[SHOOT UNLOCK] Reached 100% energy');
       }
 
       updateEnergyUI();
@@ -1498,7 +1517,23 @@ const init = async () => {
       energy = Math.max(0, energy - 1.5);
       sparkParticles.spawn(laserResult.hitPosition.x, laserResult.hitPosition.y, 'red');
       playerFlashUntil = performance.now() + 250;
+      // Count hits dealt by red; every 20 hits = 1 out on blue
+      redHits += 1;
+      if (redHits >= HITS_PER_OUT) {
+        const outsGained = Math.floor(redHits / HITS_PER_OUT);
+        blueOuts = Math.min(10, blueOuts + outsGained);
+        redHits = redHits % HITS_PER_OUT;
+      }
+      if (!firstOutMade && (blueOuts + redOuts) > 0 && scenarioButton) {
+        firstOutMade = true;
+        scenarioButton.disabled = false;
+      }
+      if (redOuts > 0 && !autoScenarioTriggered) {
+        autoScenarioPending = true;
+        autoScenarioTriggered = true;
+      }
       updateEnergyUI();
+      updateScoreUI();
     }
 
     // Flash player when hit
@@ -1845,6 +1880,87 @@ const init = async () => {
   energyContainer.appendChild(energyMarker);
   document.body.appendChild(energyContainer);
 
+  // Scoreboard (fades in when enemy rolls in) with hits/outs styled like original Jump
+  const scoreContainer = document.createElement('div');
+  scoreContainer.style.position = 'fixed';
+  scoreContainer.style.top = '16px';
+  scoreContainer.style.left = '12px';
+  scoreContainer.style.right = '12px';
+  scoreContainer.style.display = 'flex';
+  scoreContainer.style.justifyContent = 'space-between';
+  scoreContainer.style.pointerEvents = 'none';
+  scoreContainer.style.opacity = '0';
+  scoreContainer.style.transition = 'opacity 0.5s ease';
+  document.body.appendChild(scoreContainer);
+
+  const makeSide = (side: 'left' | 'right', color: string, isEnemy: boolean) => {
+    const wrap = document.createElement('div');
+    wrap.style.display = 'flex';
+    wrap.style.flexDirection = 'column';
+    wrap.style.alignItems = side === 'left' ? 'flex-start' : 'flex-end';
+    wrap.style.gap = '6px';
+
+    const hitsRow = document.createElement('div');
+    hitsRow.style.color = color;
+    hitsRow.style.fontSize = '21px';
+    hitsRow.style.fontFamily = 'serif';
+    hitsRow.style.fontWeight = 'bold';
+    hitsRow.textContent = `Hits: 0/${HITS_PER_OUT}`;
+
+    const outsRow = document.createElement('div');
+    outsRow.style.display = 'flex';
+    outsRow.style.gap = '6px';
+    const circles: HTMLDivElement[] = [];
+    for (let i = 1; i <= 10; i++) {
+      const c = document.createElement('div');
+      const big = isEnemy && (i === 4 || i === 7 || i === 10);
+      const size = big ? 12 : 8;
+      c.style.width = `${size}px`;
+      c.style.height = `${size}px`;
+      c.style.borderRadius = '50%';
+      c.style.border = `1px solid ${color}`;
+      c.style.backgroundColor = 'transparent';
+      c.style.transform = 'scale(1)';
+      c.style.transformOrigin = 'center center';
+      c.style.transition = 'background-color 0.25s ease, transform 0.2s ease';
+      circles.push(c);
+      outsRow.appendChild(c);
+    }
+
+    wrap.appendChild(hitsRow);
+    wrap.appendChild(outsRow);
+    return { wrap, hitsRow, circles };
+  };
+
+  const blueSide = makeSide('left', '#4fc3f7', false);
+  const redSide = makeSide('right', '#ff4040', true);
+  scoreContainer.appendChild(blueSide.wrap);
+  scoreContainer.appendChild(redSide.wrap);
+
+  const updateScoreUI = () => {
+    blueSide.hitsRow.textContent = `Hits: ${Math.min(HITS_PER_OUT, Math.max(0, blueHits))}/${HITS_PER_OUT}`;
+    redSide.hitsRow.textContent = `Hits: ${Math.min(HITS_PER_OUT, Math.max(0, redHits))}/${HITS_PER_OUT}`;
+
+    blueSide.circles.forEach((c, idx) => {
+      const filled = idx < blueOuts;
+      c.style.backgroundColor = filled ? '#4fc3f7' : 'transparent';
+      c.style.transform = filled ? 'scale(1.1)' : 'scale(1)';
+    });
+    redSide.circles.forEach((c, idx) => {
+      const filled = idx < redOuts;
+      c.style.backgroundColor = filled ? '#ff4040' : 'transparent';
+      c.style.transform = filled ? 'scale(1.1)' : 'scale(1)';
+    });
+  };
+
+  const showScoreUI = () => {
+    if (!scoreVisible) {
+      scoreVisible = true;
+      scoreContainer.style.opacity = '1';
+    }
+  };
+  updateScoreUI();
+
   const energyColorForLevel = (val: number) => {
     const e = Math.max(0, Math.min(100, val));
     if (e >= 80) return 'rgb(0,255,0)';
@@ -1973,13 +2089,22 @@ const init = async () => {
     console.log('[SCENARIO] Small+hole then large spawned; awaiting jump range');
   };
 
-  const scenarioButton = document.createElement('button');
+  scenarioButton = document.createElement('button');
   scenarioButton.className = 'transition-btn';
   scenarioButton.textContent = 'Run Mega Laser Scenario';
   scenarioButton.type = 'button';
   scenarioButton.style.top = '146px';
   scenarioButton.addEventListener('click', startScenario);
+  scenarioButton.disabled = true; // enable after first out
   document.body.appendChild(scenarioButton);
+
+  // Auto trigger scenario when pending (e.g., after first red out)
+  ticker.add(() => {
+    if (autoScenarioPending && !scenarioActive) {
+      autoScenarioPending = false;
+      startScenario();
+    }
+  });
 
   // Comet button
   const spawnComet = () => {
@@ -1999,10 +2124,9 @@ const init = async () => {
   const fillEnergy = () => {
     energy = 100;
     // Also unlock shooting if not already unlocked
-    if (!canShoot) {
-      canShoot = true;
-      console.log('[SHOOT UNLOCK] Unlocked via energy button');
-    }
+    canShoot = true;
+    shootUnlocked = true;
+    console.log('[SHOOT UNLOCK] Unlocked via energy button');
     updateEnergyUI();
     console.log('[ENERGY] Set to 100%');
   };
