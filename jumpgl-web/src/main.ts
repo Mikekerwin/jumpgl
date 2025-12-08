@@ -15,6 +15,7 @@ import { HoleManager } from './holeManager';
 import { SparkParticles } from './sparkParticles';
 import { CometManager } from './cometManager';
 import { WindSpriteSystem } from './windSprites';
+import { GroundHoleManager } from './groundHoleManager';
 import {
   calculateResponsiveSizes,
   GROUND_PLAYER_DEPTH,
@@ -209,6 +210,9 @@ const init = async () => {
   const platforms = new FloatingPlatforms(PLATFORM_LARGE_IMAGE_PATH, PLATFORM_SMALL_IMAGE_PATH);
   const holes = new HoleManager(HOLE_SMALL_IMAGE_PATH, HOLE_LARGE_IMAGE_PATH);
 
+  // Initialize ground hole system for comet hole level
+  const groundHoles = new GroundHoleManager();
+
   // Initialize comet system
   const cometManager = new CometManager(cometContainer, {
     screenWidth: app.renderer.width,
@@ -253,11 +257,52 @@ const init = async () => {
   let freezePlayer = false;
   let shakeActive = false;
   let shakeEndTime = 0;
+  let lastHoleStartX: number | null = null; // track first hole start for respawn
   const megaLaserGraphic = new Graphics();
   megaLaserGraphic.blendMode = 'add';
   let energy = 0;
   let playerFlashUntil = 0;
   let enemyFlashUntil = 0;
+
+  // Comet Hole Level state
+  let cometHoleLevelActive = false;
+  let lastPlatformX = 0; // Track last platform X position
+  const PLATFORM_MIN_SPACING = 250; // Minimum pixels between platforms
+  const PLATFORM_MAX_SPACING = 450; // Maximum pixels between platforms
+
+  // Red enemy state for hole level
+  let redEnemyActive = false;
+  let redEnemyState: 'on_platform' | 'falling' | 'rolling_in' | 'jumping_intro' | 'shooting' = 'on_platform';
+  let redEnemyPlatformId: number | null = null;
+  let redEnemyVelocityY = 0;
+  let redEnemyVelocityX = 0;
+  let redEnemyFallTime = 0;
+  const RED_ENEMY_ROLL_SPEED = 700; // Faster horizontal roll-in speed
+  let highestPlatformHeight = 0; // Track highest platform to spawn enemy on it
+  let highestPlatformX = 0;
+
+  // Platform height configuration for 4 levels
+  // Level 1: Just above ground (reachable from ground)
+  // Level 2: One jump up from Level 1
+  // Level 3: One jump up from Level 2 (triggers camera pan)
+  // Level 4: Top level (reachable from Level 3)
+  const screenHeight = app.renderer.height;
+  const levelHeight = (screenHeight * 2) / 3; // Each level is ~2/3 screen height (long jump distance)
+  const FIRST_PLATFORM_HEIGHT = 50; // Just above ground - always reachable
+  const PLATFORM_LEVEL_1_MIN = 50;
+  const PLATFORM_LEVEL_1_MAX = levelHeight * 0.8;
+  const PLATFORM_LEVEL_2_MIN = levelHeight * 0.8;
+  const PLATFORM_LEVEL_2_MAX = levelHeight * 1.6;
+  const PLATFORM_LEVEL_3_MIN = levelHeight * 1.6;
+  const PLATFORM_LEVEL_3_MAX = levelHeight * 2.4;
+  const PLATFORM_LEVEL_4_MIN = levelHeight * 2.4;
+  const PLATFORM_LEVEL_4_MAX = levelHeight * 3.2;
+
+  let isFirstPlatformSpawned = false; // Track if first platform has been spawned
+  const processedSegments = new Set<string>(); // Track which segments have spawned holes
+
+  // Camera system for hole levels
+  let cameraZoom = 1.0;
 
 
   // Stars disabled for now
@@ -317,6 +362,7 @@ const init = async () => {
   setEnemyColor(enemyBaseColor);
   const enemyX = app.renderer.width * 0.9;
   enemyBall.position.set(enemyX, initialGround - playerRadius);
+  enemyBall.visible = false; // Hidden initially, will be shown in hole level
   playfieldContainer.addChild(enemyBall);
   const enemyBounds = () => ({
     left: enemyBall.position.x - playerRadius,
@@ -397,21 +443,28 @@ const init = async () => {
     ball.alpha = 0.65;
     ball.scale.set(0.92, 0.92);
 
-    // Simple respawn after short drop
+    // Respawn after short drop and delay, just before the hole sequence
     window.setTimeout(() => {
-      respawnPlayer();
-    }, 500);
+      // Start slightly before the first hole start (one screen back)
+      const fallbackX = initialPlayerX();
+      const restartX =
+        lastHoleStartX !== null ? lastHoleStartX - app.renderer.width * 0.8 : fallbackX;
+      const ground = computePlayerGround();
+      physics.respawn(restartX, ground);
+      fallingIntoHole = false;
+      ball.alpha = 1;
+      ball.scale.set(1, 1);
+    }, 1500);
   };
 
   // Debug hitbox overlay
-  const DEBUG_DRAW_HITBOXES = false;
+  const DEBUG_DRAW_HITBOXES = false; // Disable hitbox overlays
   const hitboxOverlay = new Graphics();
   playfieldContainer.addChild(hitboxOverlay);
   const hitboxLogCache = new Map<number, string>();
 
-  // Start enemy in physics mode with jump sequence
-  let enemyMode: 'physics' | 'hover' = 'physics';
-  enemyPhysics.startJumpSequence();
+  // Start enemy dormant; it will roll in later and then run its jump intro
+  let enemyMode: 'physics' | 'hover' | 'sleep' = 'sleep';
 
   let dustRevealStartTime: number | null = null;
   const DUST_FADE_DURATION = 5000; // 5 seconds
@@ -457,6 +510,33 @@ const init = async () => {
     grounds.update(deltaSeconds, speedMultiplier);
     dustField.update();
 
+    // Sync ground holes with ground segments (comet hole level)
+    if (cometHoleLevelActive) {
+      const segments = grounds.getSegments();
+      segments.forEach(seg => {
+        const segmentKey = `${seg.x.toFixed(0)}_${seg.type}`;
+        if (!processedSegments.has(segmentKey)) {
+          processedSegments.add(segmentKey);
+
+          // Use same Y position as platform holes, but offset down more
+          const groundY = computePlayerGround() + 40; // Move hitbox 40px lower
+          if (seg.type === 'meteor_transition') {
+            groundHoles.spawnGroundHole(seg.x, seg.width, groundY, 'meteor_transition');
+            console.log(`[GROUND HOLE] ✓ Spawned meteor_transition at x=${seg.x.toFixed(0)} width=${seg.width.toFixed(0)} groundY=${groundY.toFixed(0)}`);
+          } else if (seg.type === 'cloud_hole') {
+            groundHoles.spawnGroundHole(seg.x, seg.width, groundY, 'full_hole');
+            console.log(`[GROUND HOLE] ✓ Spawned full_hole at x=${seg.x.toFixed(0)} width=${seg.width.toFixed(0)} groundY=${groundY.toFixed(0)}`);
+          } else if (seg.type === 'hole_transition_back') {
+            groundHoles.spawnGroundHole(seg.x, seg.width, groundY, 'hole_transition_back');
+            console.log(`[GROUND HOLE] ✓ Spawned hole_transition_back at x=${seg.x.toFixed(0)} width=${seg.width.toFixed(0)} groundY=${groundY.toFixed(0)}`);
+          } else {
+            // Log all other segment types to debug - this helps identify type name mismatches
+            console.log(`[GROUND HOLE] ✗ Skipped segment type: "${seg.type}" at x=${seg.x.toFixed(0)}`);
+          }
+        }
+      });
+    }
+
     // Update comet animation and position
     cometManager.update(deltaSeconds);
 
@@ -465,6 +545,7 @@ const init = async () => {
     const groundScrollSpeed = BASE_GROUND_SCROLL_SPEED * speedMultiplier;
     platforms.update(deltaSeconds, groundScrollSpeed, app.renderer.width);
     holes.update(deltaSeconds, groundScrollSpeed, app.renderer.width);
+    groundHoles.update(deltaSeconds, groundScrollSpeed, app.renderer.width);
     // Keep laser horizontal speed in sync with ground scroll so pace feels consistent
     laserPhysics.setScrollSpeed(groundScrollSpeed);
 
@@ -703,6 +784,339 @@ const init = async () => {
     }
     const verticalVelocity = (state.y - prevState.y) / Math.max(deltaSeconds, 0.0001);
 
+    // Dynamic platform spawner for hole ground segments
+    // Spawn platforms consistently over any hole segments
+    // Only spawn when holes are actually visible or nearly visible on screen
+    const willMoreHolesCome = grounds.willNextSegmentBeHole();
+
+    // Get actual ground hole hitboxes to determine precise spawn boundaries
+    const groundHoleHitboxes = groundHoles.getDebugHitboxes();
+    let leftmostHoleX = Infinity;
+    let rightmostHoleX = -Infinity;
+
+    groundHoleHitboxes.forEach(hole => {
+      if (hole.left < leftmostHoleX) {
+        leftmostHoleX = hole.left;
+      }
+      if (hole.right > rightmostHoleX) {
+        rightmostHoleX = hole.right;
+      }
+    });
+
+    const hasActiveHoles = groundHoleHitboxes.length > 0;
+    if (hasActiveHoles && leftmostHoleX !== Infinity) {
+      // Track first hole start for respawn positioning
+      if (lastHoleStartX === null || leftmostHoleX < lastHoleStartX) {
+        lastHoleStartX = leftmostHoleX;
+      }
+    }
+
+    // Reset platform spawning state when hole sequence is completely over
+    if (!hasActiveHoles && !willMoreHolesCome) {
+      lastPlatformX = 0;
+      isFirstPlatformSpawned = false;
+      highestPlatformHeight = 0;
+      highestPlatformX = 0;
+      redEnemyPlatformId = null;
+      lastHoleStartX = null;
+    }
+
+    if (hasActiveHoles || willMoreHolesCome) {
+      // We have holes - but only spawn platforms when they're approaching the screen
+      const screenRightEdge = state.x + window.innerWidth;
+      const spawnAheadDistance = screenRightEdge + window.innerWidth * 1.5; // Look ahead 1.5 screens
+
+      // Only start spawning platforms if:
+      // 1. There are ground holes visible/approaching, OR
+      // 2. We've already started spawning (lastPlatformX > player position + some threshold)
+      const hasStartedSpawning = lastPlatformX > ball.position.x + 200;
+      const holeIsApproaching = leftmostHoleX < screenRightEdge + window.innerWidth;
+
+      if (!hasStartedSpawning && !holeIsApproaching) {
+        // Holes not approaching yet - don't spawn anything, skip this section
+      } else {
+        // Initialize lastPlatformX to start just before the first hole
+        if (!hasStartedSpawning && holeIsApproaching && leftmostHoleX !== Infinity) {
+          lastPlatformX = leftmostHoleX - 300; // Start 300px before first hole
+        }
+
+        // Determine how far we should spawn platforms based on ACTUAL hole hitboxes
+        let spawnTargetX: number;
+        if (willMoreHolesCome && rightmostHoleX > -Infinity) {
+          // More holes coming - keep spawning ahead, but not beyond lookahead
+          // Use the actual rightmost hole hitbox position
+          spawnTargetX = Math.max(rightmostHoleX, spawnAheadDistance);
+        } else if (rightmostHoleX > -Infinity) {
+          // No more holes coming - stop ONE PLATFORM BEFORE the rightmost hole ends
+          // This prevents spawning a platform after ground resumes
+          const averagePlatformSpacing = (PLATFORM_MIN_SPACING + PLATFORM_MAX_SPACING) / 2;
+          spawnTargetX = rightmostHoleX - averagePlatformSpacing;
+        } else {
+          // No holes visible yet but more coming - spawn up to lookahead
+          spawnTargetX = spawnAheadDistance;
+        }
+
+        // Spawn platforms in a loop until we've filled the needed area
+        let spawnCount = 0;
+        const maxSpawnsPerFrame = 10; // Prevent infinite loops
+
+        while (lastPlatformX < spawnTargetX && spawnCount < maxSpawnsPerFrame) {
+          // Calculate next platform X position
+          const spacing = PLATFORM_MIN_SPACING + Math.random() * (PLATFORM_MAX_SPACING - PLATFORM_MIN_SPACING);
+          const platformX = lastPlatformX + spacing;
+
+          // Don't spawn beyond our target
+          if (platformX > spawnTargetX) {
+            break;
+          }
+
+          // Determine platform height progressively based on player's current height
+          let verticalOffset: number;
+
+          // First platform is always at ground level for easy access
+          if (!isFirstPlatformSpawned) {
+            verticalOffset = FIRST_PLATFORM_HEIGHT;
+            isFirstPlatformSpawned = true;
+          } else {
+            // Calculate player's current height above ground
+            const groundY = computePlayerGround();
+            const playerHeightAboveGround = groundY - state.y;
+
+            // Max jump height is approximately 2x player diameter (double jump)
+            const maxJumpHeight = playerDiameter * 2;
+
+            // Build available levels - include nearby levels AND upward-leading levels
+            const availableLevels: Array<{min: number, max: number, weight: number}> = [];
+
+            // Level 1: Always available when player is near ground
+            // Higher weight when player is at this level
+            if (playerHeightAboveGround < PLATFORM_LEVEL_2_MIN + maxJumpHeight) {
+              const weight = playerHeightAboveGround < PLATFORM_LEVEL_1_MAX ? 3 : 1;
+              availableLevels.push({min: PLATFORM_LEVEL_1_MIN, max: PLATFORM_LEVEL_1_MAX, weight});
+            }
+
+            // Level 2: Available once player can reach it
+            if (playerHeightAboveGround >= PLATFORM_LEVEL_1_MIN - maxJumpHeight) {
+              const weight = (playerHeightAboveGround >= PLATFORM_LEVEL_1_MAX && playerHeightAboveGround < PLATFORM_LEVEL_2_MAX) ? 3 : 1;
+              availableLevels.push({min: PLATFORM_LEVEL_2_MIN, max: PLATFORM_LEVEL_2_MAX, weight});
+            }
+
+            // Level 3: Available once player can reach it
+            if (playerHeightAboveGround >= PLATFORM_LEVEL_2_MIN - maxJumpHeight) {
+              const weight = (playerHeightAboveGround >= PLATFORM_LEVEL_2_MAX && playerHeightAboveGround < PLATFORM_LEVEL_3_MAX) ? 3 : 1;
+              availableLevels.push({min: PLATFORM_LEVEL_3_MIN, max: PLATFORM_LEVEL_3_MAX, weight});
+            }
+
+            // Level 4: Available once player is high enough (camera zoomed out)
+            if (playerHeightAboveGround >= PLATFORM_LEVEL_3_MIN - maxJumpHeight) {
+              const weight = playerHeightAboveGround >= PLATFORM_LEVEL_3_MAX ? 3 : 1;
+              availableLevels.push({min: PLATFORM_LEVEL_4_MIN, max: PLATFORM_LEVEL_4_MAX, weight});
+            }
+
+            // If no levels are available (shouldn't happen), default to Level 1
+            if (availableLevels.length === 0) {
+              availableLevels.push({min: PLATFORM_LEVEL_1_MIN, max: PLATFORM_LEVEL_1_MAX, weight: 1});
+            }
+
+            // Weighted random selection - favors nearby levels but includes upward platforms
+            const totalWeight = availableLevels.reduce((sum, level) => sum + level.weight, 0);
+            let random = Math.random() * totalWeight;
+            let selectedLevel = availableLevels[0];
+
+            for (const level of availableLevels) {
+              random -= level.weight;
+              if (random <= 0) {
+                selectedLevel = level;
+                break;
+              }
+            }
+
+            verticalOffset = selectedLevel.min + Math.random() * (selectedLevel.max - selectedLevel.min);
+          }
+
+          const groundY = computePlayerGround();
+
+          // Check if this platform is too high (more than one screen above player)
+          // If so, spawn a stepping stone platform at mid-screen
+          const playerHeightAboveGround = groundY - state.y;
+          const platformHeightInScreenSpace = verticalOffset - playerHeightAboveGround;
+          const needsSteppingStone = platformHeightInScreenSpace > screenHeight * 0.5;
+
+          if (needsSteppingStone && verticalOffset > screenHeight * 0.6) {
+            // Spawn a stepping stone platform at mid-screen height
+            const steppingStoneHeight = playerHeightAboveGround + (screenHeight * 0.4);
+            const steppingStoneType = 'small';
+            platforms.spawn(platformX - 100, groundY, playerRadius, steppingStoneType, steppingStoneHeight);
+          }
+
+          // Determine platform type and configuration
+          const spawnDouble = Math.random() < 0.25; // 25% chance for double platforms
+
+          if (spawnDouble) {
+            // Spawn two platforms close together at different heights
+            const type1 = Math.random() > 0.6 ? 'large' : 'small';
+            const type2 = Math.random() > 0.6 ? 'large' : 'small';
+            const height1 = verticalOffset;
+            const height2 = verticalOffset + (Math.random() > 0.5 ? 150 : -150); // +/- 150px
+
+            const id1 = platforms.spawn(platformX, groundY, playerRadius, type1, height1);
+            const id2 = platforms.spawn(platformX + 180, groundY, playerRadius, type2, Math.max(PLATFORM_LEVEL_1_MIN, height2));
+
+            // Track highest platform for enemy spawning
+            const maxHeight = Math.max(height1, height2);
+            if (maxHeight > highestPlatformHeight) {
+              highestPlatformHeight = maxHeight;
+              highestPlatformX = maxHeight === height1 ? platformX : platformX + 180;
+              redEnemyPlatformId = maxHeight === height1 ? id1 : id2;
+            }
+
+            lastPlatformX = platformX + 180;
+          } else {
+            // Single platform - 70% small, 30% large
+            const platformType = Math.random() > 0.3 ? 'small' : 'large';
+
+            const id = platforms.spawn(platformX, groundY, playerRadius, platformType, verticalOffset);
+
+            // Track highest platform for enemy spawning
+            if (verticalOffset > highestPlatformHeight) {
+              highestPlatformHeight = verticalOffset;
+              highestPlatformX = platformX;
+              redEnemyPlatformId = id;
+            }
+
+            lastPlatformX = platformX;
+          }
+
+          spawnCount++;
+        }
+      }
+    }
+
+    // Spawn red enemy on the highest platform once platforms are done spawning
+    if (cometHoleLevelActive && !redEnemyActive && highestPlatformHeight > 0 && !willMoreHolesCome) {
+      const plat = redEnemyPlatformId !== null ? platforms.getPlatformBounds(redEnemyPlatformId) : null;
+      if (plat) {
+        const enemyX = (plat.left + plat.right) / 2;
+        const enemyY = plat.surfaceY + playerRadius; // sit centered on platform
+        enemyBall.position.set(enemyX, enemyY);
+        enemyBall.visible = true;
+        redEnemyActive = true;
+        redEnemyState = 'on_platform';
+        console.log(
+          `[RED ENEMY] Spawned on platform ${plat.id} at x=${enemyX.toFixed(0)} surfaceY=${plat.surfaceY.toFixed(0)}`
+        );
+      } else {
+        // Fallback: place at stored height/X even if we lost the platform id
+        const groundY = computePlayerGround();
+        const enemyY = groundY - highestPlatformHeight - playerRadius;
+        enemyBall.position.set(highestPlatformX, enemyY);
+        enemyBall.visible = true;
+        redEnemyActive = true;
+        redEnemyState = 'on_platform';
+        console.warn('[RED ENEMY] Spawned with fallback position (no platform id)');
+      }
+    }
+
+    // Red enemy collision detection with blue player
+    if (redEnemyActive && redEnemyState === 'on_platform') {
+      // Keep enemy stuck to its platform while it scrolls
+      if (redEnemyPlatformId !== null) {
+        const plat = platforms.getPlatformBounds(redEnemyPlatformId);
+        if (plat) {
+          enemyBall.position.x = (plat.left + plat.right) / 2;
+          enemyBall.position.y = plat.surfaceY + playerRadius;
+        } else {
+          // Platform vanished; fall
+          redEnemyState = 'falling';
+          redEnemyVelocityX = RED_ENEMY_ROLL_SPEED;
+          redEnemyVelocityY = 0;
+        }
+      }
+
+      const playerBounds = {
+        left: state.x - playerRadius,
+        right: state.x + playerRadius,
+        top: state.y - playerRadius,
+        bottom: state.y + playerRadius,
+      };
+      const enemyBounds = {
+        left: enemyBall.position.x - playerRadius,
+        right: enemyBall.position.x + playerRadius,
+        top: enemyBall.position.y - playerRadius,
+        bottom: enemyBall.position.y + playerRadius,
+      };
+
+      // Check AABB collision
+      const overlapsX = playerBounds.right > enemyBounds.left && playerBounds.left < enemyBounds.right;
+      const overlapsY = playerBounds.bottom > enemyBounds.top && playerBounds.top < enemyBounds.bottom;
+
+      if (overlapsX && overlapsY) {
+        // Player hit the enemy - start fall-off animation
+        redEnemyState = 'falling';
+        redEnemyVelocityX = 200; // Push enemy to the right
+        redEnemyVelocityY = -300; // Initial upward velocity from impact
+        redEnemyPlatformId = null;
+        // Impact feedback: sparks + quick screen shake
+        sparkParticles.spawn(enemyBall.position.x, enemyBall.position.y, 'red');
+        shakeActive = true;
+        shakeEndTime = performance.now() + 220;
+        redEnemyFallTime = performance.now();
+        console.log('[RED ENEMY] Hit by player, falling off platform');
+      }
+    }
+
+    // Red enemy falling animation
+    if (redEnemyActive && redEnemyState === 'falling') {
+      const GRAVITY = 2000; // Gravity for falling
+      redEnemyVelocityY += GRAVITY * deltaSeconds;
+      enemyBall.position.x += redEnemyVelocityX * deltaSeconds;
+      enemyBall.position.y += redEnemyVelocityY * deltaSeconds;
+
+      // Check if enemy has fallen far below ground
+      const groundY = computePlayerGround();
+      if (enemyBall.position.y > groundY + 500) {
+        // Enemy has fallen into the hole
+        enemyBall.visible = false;
+        console.log('[RED ENEMY] Fell into hole, hiding');
+      }
+    }
+
+    // Detect when player returns to grassy area to start roll-in animation (even if enemy never fully hid)
+    if (
+      redEnemyActive &&
+      (redEnemyState === 'falling' || redEnemyState === 'on_platform') &&
+      redEnemyState !== 'rolling_in' &&
+      redEnemyState !== 'jumping_intro'
+    ) {
+      const noHolesAhead = !cometHoleLevelActive && !hasActiveHoles && !willMoreHolesCome;
+      const farPastHoles = rightmostHoleX > -Infinity && state.x > rightmostHoleX + window.innerWidth * 0.25;
+      const timeSinceFall = performance.now() - redEnemyFallTime;
+      if ((noHolesAhead || farPastHoles) && timeSinceFall > 400) {
+        const groundY = computePlayerGround();
+        enemyBall.position.set(-120, groundY - playerRadius); // Start off-screen left
+        enemyBall.visible = true;
+        redEnemyState = 'rolling_in';
+        redEnemyVelocityX = RED_ENEMY_ROLL_SPEED;
+        console.log('[RED ENEMY] Player past holes, starting roll-in animation');
+      }
+    }
+
+    // Red enemy rolling in animation
+    if (redEnemyActive && redEnemyState === 'rolling_in') {
+      enemyBall.position.x += redEnemyVelocityX * deltaSeconds;
+
+      // Stop at 90% of screen width (original enemy position)
+      const targetX = app.renderer.width * 0.9;
+      if (enemyBall.position.x >= targetX) {
+        enemyBall.position.x = targetX;
+        redEnemyState = 'jumping_intro';
+        // Trigger the existing enemy intro animation system
+        enemyMode = 'physics';
+        enemyPhysics.startJumpSequence();
+        console.log('[RED ENEMY] Reached position, starting 3-jump intro using enemyPhysics');
+      }
+    }
+
     // Scenario proximity checks
     if (scenarioActive && scenarioSmallId !== null) {
       const smallPlat = platforms.getPlatformBounds(scenarioSmallId);
@@ -751,6 +1165,14 @@ const init = async () => {
       if (hole) {
         triggerFallIntoHole(verticalVelocity);
         activePlatformId = null;
+      }
+
+      // Ground hole collision (comet hole level)
+      const groundHole = groundHoles.getCollidingHole(playerBounds);
+      if (groundHole) {
+        triggerFallIntoHole(verticalVelocity);
+        activePlatformId = null;
+        console.log(`[GROUND HOLE] Player fell into ${groundHole.type} hole`);
       }
     }
 
@@ -877,6 +1299,21 @@ const init = async () => {
         const color = hole.size === 'large' ? 0xffa500 : 0xffff00;
         hitboxOverlay.rect(hole.left, hole.top, hole.width, hole.height).fill({ color, alpha: 0.25 });
       });
+
+      // Ground hole hitboxes (color-coded by type, semi-transparent)
+      const groundHoleHitboxes = groundHoles.getDebugHitboxes();
+      groundHoleHitboxes.forEach(hole => {
+        const width = hole.right - hole.left;
+        const height = hole.bottom - hole.top;
+        // Color code: meteor_transition = orange, full_hole = purple, hole_transition_back = cyan
+        let color = 0x8b00ff; // purple for full_hole
+        if (hole.type === 'meteor_transition') {
+          color = 0xff6600; // orange
+        } else if (hole.type === 'hole_transition_back') {
+          color = 0x00ffff; // cyan
+        }
+        hitboxOverlay.rect(hole.left, hole.top, width, height).fill({ color, alpha: 0.3 });
+      });
     }
 
     // Camera system: locks to platform floors, follows player downward
@@ -919,12 +1356,46 @@ const init = async () => {
     // Smoothly interpolate camera to target position
     cameraY += (targetCameraY - cameraY) * CAMERA_LERP_SPEED;
 
-    // Apply camera position with parallax
-    // Ground and playfield move at 100% camera speed (1.0x)
-    // Backgrounds move at their horizontal parallax rate (0.5x for backgrounds)
-    const BACKGROUND_PARALLAX_FACTOR = 0.5; // Same as horizontal parallax (BASE_BACKGROUND_SPEED / BASE_GROUND_SCROLL_SPEED)
+    // Camera zoom (comet hole level ONLY) - slight zoom out to keep ground visible
+    if (cometHoleLevelActive) {
+      const groundY = computePlayerGround();
+      const playerHeightAboveGround = groundY - state.y;
+      const isOnPlatform = activePlatformId !== null || supportingPlatform !== null;
 
-    backgroundContainer.position.y = cameraY * BACKGROUND_PARALLAX_FACTOR;
+      // Zoom out slightly when player is on platforms to show more vertical space
+      if (isOnPlatform && playerHeightAboveGround > PLATFORM_LEVEL_1_MIN) {
+        const targetZoom = 0.90; // Slight zoom out when on platforms
+        cameraZoom += (targetZoom - cameraZoom) * 0.015;
+      } else {
+        // Return to normal zoom when on ground
+        cameraZoom += (1.0 - cameraZoom) * 0.015;
+      }
+
+      // Apply zoom with parallax depth - background zooms less for realistic parallax
+      const backgroundZoom = 1.0 - (1.0 - cameraZoom) * 0.2; // Only 20% of the zoom
+      backgroundContainer.scale.set(backgroundZoom);
+
+      // Foreground elements (ground, platforms, player) get full zoom
+      groundContainer.scale.set(cameraZoom);
+      platformContainer.scale.set(cameraZoom);
+      playfieldContainer.scale.set(cameraZoom);
+      overlayContainer.scale.set(cameraZoom);
+    } else {
+      // Reset zoom when not in comet hole level
+      if (cameraZoom !== 1.0) {
+        cameraZoom += (1.0 - cameraZoom) * 0.015;
+        backgroundContainer.scale.set(cameraZoom);
+        groundContainer.scale.set(cameraZoom);
+        platformContainer.scale.set(cameraZoom);
+        playfieldContainer.scale.set(cameraZoom);
+        overlayContainer.scale.set(cameraZoom);
+      }
+    }
+
+    // Apply camera position
+    // All layers move at 100% camera speed on Y-axis (no Y parallax)
+    // X-axis parallax is handled separately by the parallax scrollers
+    backgroundContainer.position.y = cameraY;
     overlayContainer.position.y = cameraY; // Gradient moves with ground
     groundContainer.position.y = cameraY;
     platformContainer.position.y = cameraY;
@@ -983,7 +1454,7 @@ const init = async () => {
         enemyMode = 'hover';
         introComplete = true;
       }
-    } else {
+    } else if (enemyMode === 'hover') {
       const enemyState = enemyMovement.update(deltaSeconds);
       enemyBall.position.y = enemyState.y;
       enemyBall.scale.set(enemyState.scaleX, enemyState.scaleY);
@@ -1003,7 +1474,7 @@ const init = async () => {
         scenarioStage !== 'charging' &&
         scenarioStage !== 'firing',
       introComplete,
-      stopSpawning: scenarioStage === 'prep' || scenarioStage === 'charging' || scenarioStage === 'firing',
+      stopSpawning: enemyMode === 'sleep' || scenarioStage === 'prep' || scenarioStage === 'charging' || scenarioStage === 'firing',
     });
     if (laserResult.scoreChange !== 0) {
       laserScore += laserResult.scoreChange;
@@ -1543,6 +2014,70 @@ const init = async () => {
   energyButton.style.top = '230px';
   energyButton.addEventListener('click', fillEnergy);
   document.body.appendChild(energyButton);
+
+  // Comet Hole Level button - now supports variable hole counts
+  const startCometHoleLevel = (holeCount: number = 5) => {
+    grounds.startHoleSequence(holeCount);
+    cometHoleLevelActive = true;
+    groundHoles.clear();
+    processedSegments.clear();
+
+    // Reset platform spawning state
+    isFirstPlatformSpawned = false;
+    lastPlatformX = ball.position.x;
+
+    // Immediately spawn ground holes for ALL segments in the sequence (including off-screen ones)
+    const segments = grounds.getSegments();
+    const groundY = computePlayerGround() + 40;
+    let firstHoleSegmentX = Infinity;
+
+    segments.forEach(seg => {
+      const segmentKey = `${seg.x.toFixed(0)}_${seg.type}`;
+      processedSegments.add(segmentKey);
+
+      if (seg.type === 'meteor_transition') {
+        groundHoles.spawnGroundHole(seg.x, seg.width, groundY, 'meteor_transition');
+        if (seg.x < firstHoleSegmentX) firstHoleSegmentX = seg.x;
+        console.log(`[COMET HOLE LEVEL] Pre-spawned meteor_transition at x=${seg.x.toFixed(0)} width=${seg.width.toFixed(0)}`);
+      } else if (seg.type === 'cloud_hole') {
+        groundHoles.spawnGroundHole(seg.x, seg.width, groundY, 'full_hole');
+        if (seg.x < firstHoleSegmentX) firstHoleSegmentX = seg.x;
+        console.log(`[COMET HOLE LEVEL] Pre-spawned full_hole at x=${seg.x.toFixed(0)} width=${seg.width.toFixed(0)}`);
+      } else if (seg.type === 'hole_transition_back') {
+        groundHoles.spawnGroundHole(seg.x, seg.width, groundY, 'hole_transition_back');
+        if (seg.x < firstHoleSegmentX) firstHoleSegmentX = seg.x;
+        console.log(`[COMET HOLE LEVEL] Pre-spawned hole_transition_back at x=${seg.x.toFixed(0)} width=${seg.width.toFixed(0)}`);
+      }
+    });
+
+    console.log(`[COMET HOLE LEVEL] Started hole sequence with ${holeCount} holes - platforms will spawn dynamically over holes`);
+  };
+
+  const cometHoleLevelButton = document.createElement('button');
+  cometHoleLevelButton.className = 'transition-btn';
+  cometHoleLevelButton.textContent = 'Comet Hole Level (5)';
+  cometHoleLevelButton.type = 'button';
+  cometHoleLevelButton.style.top = '272px';
+  cometHoleLevelButton.addEventListener('click', () => startCometHoleLevel(5));
+  document.body.appendChild(cometHoleLevelButton);
+
+  // Test button with 10 holes
+  const cometHole10Button = document.createElement('button');
+  cometHole10Button.className = 'transition-btn';
+  cometHole10Button.textContent = 'Hole Level (10)';
+  cometHole10Button.type = 'button';
+  cometHole10Button.style.top = '314px';
+  cometHole10Button.addEventListener('click', () => startCometHoleLevel(10));
+  document.body.appendChild(cometHole10Button);
+
+  // Test button with 2 holes
+  const cometHole2Button = document.createElement('button');
+  cometHole2Button.className = 'transition-btn';
+  cometHole2Button.textContent = 'Hole Level (2)';
+  cometHole2Button.type = 'button';
+  cometHole2Button.style.top = '356px';
+  cometHole2Button.addEventListener('click', () => startCometHoleLevel(2));
+  document.body.appendChild(cometHole2Button);
 };
 
 init().catch((err) => {

@@ -12,7 +12,7 @@ const TRANSITION_SPEED_MULTIPLIER = 1.15;
 /**
  * Segment types: biome segments that repeat, or transition segments between biomes
  */
-type SegmentType = BiomeType | 'transition';
+type SegmentType = BiomeType | 'transition' | 'meteor_transition' | 'cloud_hole' | 'hole_transition_back';
 
 interface SegmentTextures {
   [key: string]: Texture; // Dynamic based on loaded biomes
@@ -253,6 +253,115 @@ class SegmentScroller {
 
     this.segments = kept;
   }
+
+  /**
+   * Start the comet hole level sequence
+   * Sequence: meteor_transition → cloud_hole (count times) → hole_transition_back → cloud
+   */
+  startHoleSequence(holeCount: number = 5): void {
+    // Remove all off-screen segments
+    this.trimFutureSegments();
+
+    // Find last visible segment
+    let lastVisibleSegment = null;
+    for (let i = this.segments.length - 1; i >= 0; i--) {
+      if (this.segments[i].sprite.x < this.viewportWidth) {
+        lastVisibleSegment = this.segments[i];
+        break;
+      }
+    }
+
+    let cursor = lastVisibleSegment
+      ? lastVisibleSegment.sprite.x + lastVisibleSegment.width
+      : 0;
+
+    // Manually create the hole sequence
+    // 1. meteor_transition (hole on right 70%)
+    this.createSegment('meteor_transition', cursor);
+    cursor += this.segments[this.segments.length - 1].width;
+
+    // 2. cloud_hole (holeCount repeats, 100% hole)
+    for (let i = 0; i < holeCount; i++) {
+      this.createSegment('cloud_hole', cursor);
+      cursor += this.segments[this.segments.length - 1].width;
+    }
+
+    // 3. hole_transition_back (hole on left 35%)
+    this.createSegment('hole_transition_back', cursor);
+    cursor += this.segments[this.segments.length - 1].width;
+
+    // 4. cloud (return to normal)
+    this.createSegment('cloud', cursor);
+
+    console.log(`[HOLE SEQUENCE] Started: meteor_transition → cloud_hole (${holeCount}x) → hole_transition_back → cloud`);
+  }
+
+  /**
+   * Get segment info for external synchronization (hole spawning)
+   */
+  getSegments(): Array<{ x: number; width: number; type: string }> {
+    return this.segments.map(seg => ({
+      x: seg.sprite.x,
+      width: seg.width,
+      type: seg.type
+    }));
+  }
+
+  /**
+   * Check if there are any hole segments (meteor_transition, cloud_hole, hole_transition_back)
+   * Returns the rightmost X position of all hole segments, or null if no holes exist
+   */
+  getRightmostHolePosition(): number | null {
+    let rightmost = null;
+    for (const seg of this.segments) {
+      if (seg.type === 'meteor_transition' || seg.type === 'cloud_hole' || seg.type === 'hole_transition_back') {
+        const right = seg.sprite.x + seg.width;
+        if (rightmost === null || right > rightmost) {
+          rightmost = right;
+        }
+      }
+    }
+    return rightmost;
+  }
+
+  /**
+   * Check if the next segment to be spawned will be a hole segment
+   * This helps determine if platforms should continue to be generated
+   */
+  willNextSegmentBeHole(): boolean {
+    // Check if there are any pending hole segments
+    if (this.pendingSegments.length > 0) {
+      const nextType = this.pendingSegments[0];
+      return nextType === 'meteor_transition' || nextType === 'cloud_hole' || nextType === 'hole_transition_back';
+    }
+
+    // Check the last few segments to determine the pattern
+    if (this.segments.length > 0) {
+      const lastSeg = this.segments[this.segments.length - 1];
+
+      // If last segment is meteor_transition or cloud_hole, more holes are coming
+      if (lastSeg.type === 'meteor_transition' || lastSeg.type === 'cloud_hole') {
+        return true; // More holes coming (either more cloud_hole or hole_transition_back)
+      }
+
+      // If last segment is hole_transition_back, we need ONE more platform
+      // because the transition back still has a hole on its left side
+      // But after that, regular ground will come
+      if (lastSeg.type === 'hole_transition_back') {
+        // Check if the next-to-last segment exists and is a hole
+        // This means we just added the transition back and need one more platform
+        if (this.segments.length >= 2) {
+          const secondToLast = this.segments[this.segments.length - 2];
+          if (secondToLast.type === 'cloud_hole' || secondToLast.type === 'meteor_transition') {
+            return true; // Just transitioned back, need one more platform
+          }
+        }
+        return false; // Already spawned the final platform
+      }
+    }
+
+    return false;
+  }
 }
 
 const FOREST_TOP_CROP = 2; // pixels to trim from the top of forest/transition images
@@ -278,6 +387,9 @@ export type ParallaxTextures = {
   cloudGround: Texture;
   transitionGround: Texture;
   forestGround: Texture;
+  meteorGroundTransition: Texture;
+  cloudGroundHole: Texture;
+  cloudGroundHoleTransitionBack: Texture;
 };
 
 let bundleRegistered = false;
@@ -291,6 +403,9 @@ export const loadParallaxTextures = async (): Promise<ParallaxTextures> => {
       cloudGround: 'cloud_light_ground.webp',
       transitionGround: 'cloud_light_ground_forest_transition.webp',
       forestGround: 'forest_light_ground.webp',
+      meteorGroundTransition: 'meteor_ground_transition.webp',
+      cloudGroundHole: 'cloud_light_ground_hole.webp',
+      cloudGroundHoleTransitionBack: 'cloud_light_ground_hole_transition_back.webp',
     });
     bundleRegistered = true;
   }
@@ -523,6 +638,9 @@ export class ParallaxGrounds {
       cloud: textures.cloudGround,
       forest: textures.forestGround,
       transition: textures.transitionGround,
+      meteor_transition: textures.meteorGroundTransition,
+      cloud_hole: textures.cloudGroundHole,
+      hole_transition_back: textures.cloudGroundHoleTransitionBack,
     };
 
     this.scroller = new SegmentScroller(
@@ -552,5 +670,36 @@ export class ParallaxGrounds {
 
   getSurfaceY(): number {
     return this.groundTop;
+  }
+
+  /**
+   * Trigger the comet hole level sequence
+   * Sequence: meteor_transition → cloud_hole (count times) → hole_transition_back → cloud
+   * @param holeCount - Number of full hole segments to create (default: 5)
+   */
+  startHoleSequence(holeCount: number = 5): void {
+    this.scroller.startHoleSequence(holeCount);
+  }
+
+  /**
+   * Get all segments for hole spawning synchronization
+   */
+  getSegments(): Array<{ x: number; width: number; type: string }> {
+    return this.scroller.getSegments();
+  }
+
+  /**
+   * Get the rightmost X position of all hole segments
+   * Returns null if no hole segments exist
+   */
+  getRightmostHolePosition(): number | null {
+    return this.scroller.getRightmostHolePosition();
+  }
+
+  /**
+   * Check if the next segment to be spawned will be a hole segment
+   */
+  willNextSegmentBeHole(): boolean {
+    return this.scroller.willNextSegmentBeHole();
   }
 }
