@@ -15,6 +15,7 @@ import { HoleManager } from './holeManager';
 import { SparkParticles } from './sparkParticles';
 import { CometManager } from './cometManager';
 import { WindSpriteSystem } from './windSprites';
+import { ButterflyManager } from './butterflyAnimation';
 import { GroundHoleManager } from './groundHoleManager';
 import {
   calculateResponsiveSizes,
@@ -76,6 +77,7 @@ const init = async () => {
   const holeContainer = new Container();
   const projectileContainer = new Container();
   const playfieldContainer = new Container();
+  const butterflyContainer = new Container();
   const cometContainer = new Container();
 
   scene.addChild(backgroundContainer, overlayContainer, groundContainer, platformContainer, playfieldContainer, cometContainer);
@@ -124,6 +126,20 @@ const init = async () => {
   const jumpDustTexture = Texture.from(jumpDustCanvas);
   const jumpDustSprite = new Sprite(jumpDustTexture);
   jumpDustSprite.blendMode = 'normal';
+
+  // Butterflies (meadow only)
+  const butterflyManager = new ButterflyManager();
+  try {
+    await butterflyManager.loadFrames();
+  } catch (e) {
+    console.error('[BUTTERFLY] Failed to load frames', e);
+  }
+  // Butterfly variant controls: counts and colors (tint)
+  const butterflyVariants: Array<{ count: number; tint?: number }> = [
+    { count: 1 },
+    { count: 1 },
+    { count: 1 },
+  ];
 
   // Initialize wind sprite system (anime-style wind lines)
   const windSprites = new WindSpriteSystem(24);
@@ -274,6 +290,7 @@ const init = async () => {
   let scenarioButton: HTMLButtonElement | null = null;
   let autoScenarioPending = false;
   let autoScenarioTriggered = false;
+  let butterfliesSpawned = false;
 
   // Comet Hole Level state
   let cometHoleLevelActive = false;
@@ -402,6 +419,7 @@ const init = async () => {
   playfieldContainer.addChild(haloSprite);
   playfieldContainer.addChild(enemyChargeSprite);
   playfieldContainer.addChild(projectileContainer);
+  playfieldContainer.addChild(butterflyContainer);
   // Place wind on the sky layer: between sky (index 0) and forest/transition (index 1)
   backgrounds.getRoot().addChildAt(windSprite, 1);
 
@@ -770,6 +788,40 @@ const init = async () => {
     // chargeParticles.render(chargeCtx, chargeCanvas.width, chargeCanvas.height);
     // chargeCtx.restore();
     // chargeTexture.source.update();
+
+    // Butterflies (meadow only, near start)
+    if (butterflyManager && !butterfliesSpawned && biomeManager.getCurrentBiome() === 'cloud') {
+      const groundY = computePlayerGround();
+
+      butterflyVariants.forEach((variant, idx) => {
+        for (let i = 0; i < variant.count; i++) {
+          // Start off-screen left with random offset so arrivals are staggered
+          const startX = -200 - Math.random() * 200 - idx * 40 - i * 25;
+          const jitterY = groundY - playerRadius * (3.5 + Math.random() * 2);
+          const baseScale = 0.14 + Math.random() * 0.04;
+          const extraSize = (idx === 0 && i === 0) ? 1.6 : 1.05; // first one slightly bigger
+          const scale = baseScale * extraSize;
+          const spawnDelay = Math.random() * 1.5; // seconds
+          butterflyManager.spawn({
+            x: startX,
+            y: jitterY,
+            scale,
+            tint: variant.tint,
+            baseSpeed: 70 + Math.random() * 50,
+            amplitude: 30 + Math.random() * 30,
+            frequency: 0.6 + Math.random() * 0.6,
+            spawnDelay,
+          });
+        }
+      });
+
+      butterfliesSpawned = true;
+    }
+    if (butterflyManager) {
+      butterflyManager.update(deltaSeconds);
+      butterflyContainer.removeChildren();
+      butterflyManager.getSprites().forEach((s) => butterflyContainer.addChild(s));
+    }
 
     // Render platforms using PixiJS Sprites
     platforms.renderToContainer(platformContainer, 0); // No camera offset for now
