@@ -287,6 +287,11 @@ const init = async () => {
   let redEnemyPlatformId: number | null = null;
   let redEnemyVelocityY = 0;
   let redEnemyVelocityX = 0;
+  let enemyEverVisible = false; // Track if enemy has ever been shown (for player movement range)
+  let enemyIntroDelayStartTime = 0; // When the 1-second delay before enemy intro started
+  let playerReturnStartTime = 0; // When player started returning to left half
+  let playerReturnStartX = 0; // Player X when return animation started
+  let playerReturnTargetX = 0; // Target X for return animation
   let redEnemyFallTime = 0;
   const RED_ENEMY_ROLL_SPEED = 700; // Faster horizontal roll-in speed
   let highestPlatformHeight = 0; // Track highest platform to spawn enemy on it
@@ -359,6 +364,11 @@ const init = async () => {
     screenWidth: app.renderer.width,
   });
 
+  // Start with full-screen movement range (enemy not visible yet)
+  // Player can move from ~5% to ~95% of screen width
+  // With initialX at 32%, left=350 gives ~5%, right=750 gives ~95%
+  physics.setHorizontalRange(350, 750);
+  console.log('[PLAYER RANGE] Initial: Full screen (5% to 95%)');
 
   // Create enemy at 90% of screen width
   let enemyBaseColor = 0xff0000;
@@ -801,6 +811,26 @@ const init = async () => {
     if (freezePlayer) {
       physics.forceVelocity(0);
     }
+
+    // Smooth player return animation when enemy appears
+    if (playerReturnStartTime > 0) {
+      const RETURN_DURATION = 1000; // 1.0 seconds (increased from 500ms for smoother animation)
+      const elapsed = performance.now() - playerReturnStartTime;
+      const progress = Math.min(elapsed / RETURN_DURATION, 1.0);
+
+      // Ease-out cubic for smooth deceleration
+      const eased = 1 - Math.pow(1 - progress, 3);
+
+      // Lerp player X position
+      state.x = playerReturnStartX + (playerReturnTargetX - playerReturnStartX) * eased;
+
+      // Animation complete
+      if (progress >= 1.0) {
+        playerReturnStartTime = 0;
+        console.log('[PLAYER RANGE] Return animation complete');
+      }
+    }
+
     const verticalVelocity = (state.y - prevState.y) / Math.max(deltaSeconds, 0.0001);
 
     // Dynamic platform spawner for hole ground segments
@@ -1108,14 +1138,45 @@ const init = async () => {
       const noHolesAhead = !cometHoleLevelActive && !hasActiveHoles && !willMoreHolesCome;
       const farPastHoles = rightmostHoleX > -Infinity && state.x > rightmostHoleX + window.innerWidth * 0.25;
       const timeSinceFall = performance.now() - redEnemyFallTime;
+
+      // Start the delay timer when conditions are met
       if ((noHolesAhead || farPastHoles) && timeSinceFall > 400) {
-        const groundY = computePlayerGround();
-        enemyBall.position.set(-120, groundY - playerRadius); // Start off-screen left
-        enemyBall.visible = true;
-        redEnemyState = 'rolling_in';
-        redEnemyVelocityX = RED_ENEMY_ROLL_SPEED;
-        showScoreUI();
-        console.log('[RED ENEMY] Player past holes, starting roll-in animation');
+        if (enemyIntroDelayStartTime === 0) {
+          // First time conditions met - start the 1-second delay
+          enemyIntroDelayStartTime = performance.now();
+          console.log('[RED ENEMY] Hole area cleared, starting 1-second intro delay');
+        }
+
+        // Check if 1-second delay has passed
+        const delayElapsed = performance.now() - enemyIntroDelayStartTime;
+        if (delayElapsed >= 1000) {
+          const groundY = computePlayerGround();
+          enemyBall.position.set(-120, groundY - playerRadius); // Start off-screen left
+          enemyBall.visible = true;
+
+          // First time enemy becomes visible - constrain player to left half
+          if (!enemyEverVisible) {
+            enemyEverVisible = true;
+            physics.resetHorizontalRange(); // Back to default 250 left, 150 right
+
+            // If player is too far right (beyond 45% screen), start smooth return animation
+            const playerScreenPercent = state.x / app.renderer.width;
+            const maxAllowedPercent = 0.45; // 45% of screen (right boundary of left half)
+            if (playerScreenPercent > maxAllowedPercent) {
+              playerReturnStartTime = performance.now();
+              playerReturnStartX = state.x;
+              playerReturnTargetX = app.renderer.width * 0.40; // Move to 40% (safely in left half)
+              console.log(`[PLAYER RANGE] Player at ${(playerScreenPercent * 100).toFixed(0)}%, animating to 40%`);
+            }
+
+            console.log('[PLAYER RANGE] Enemy appearing, constraining to left half');
+          }
+
+          redEnemyState = 'rolling_in';
+          redEnemyVelocityX = RED_ENEMY_ROLL_SPEED;
+          showScoreUI();
+          console.log('[RED ENEMY] 1-second delay complete, starting roll-in animation');
+        }
       }
     }
 
@@ -1384,10 +1445,11 @@ const init = async () => {
       if (isOnPlatform && playerHeightAboveGround > PLATFORM_LEVEL_1_MIN) {
         const targetZoom = 0.90; // Slight zoom out when on platforms
         cameraZoom += (targetZoom - cameraZoom) * 0.015;
-      } else {
-        // Return to normal zoom when on ground
+      } else if (isOnBaselineGround && isGrounded) {
+        // Only zoom back in when ACTUALLY on baseline ground AND grounded (not mid-air)
         cameraZoom += (1.0 - cameraZoom) * 0.015;
       }
+      // Otherwise maintain current zoom (during jumps between platforms)
 
       // Apply zoom with parallax depth - background zooms less for realistic parallax
       const backgroundZoom = 1.0 - (1.0 - cameraZoom) * 0.2; // Only 20% of the zoom

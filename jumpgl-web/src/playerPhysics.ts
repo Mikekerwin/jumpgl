@@ -38,7 +38,12 @@ export class PlayerPhysics {
   private screenWidth: number;
   private horizontalRangeLeft = 250; // Pixels player can move left from initialX (increased for more range)
   private horizontalRangeRight = 150; // Pixels player can move right from initialX (reduced to stop at ~45% screen)
+  private readonly DEFAULT_RANGE_LEFT = 250; // Original left range for reset
+  private readonly DEFAULT_RANGE_RIGHT = 150; // Original right range for reset
   private lastCursorX = 0; // Track the actual cursor position for speed calculation
+  private horizontalVelocity = 0; // Horizontal movement velocity (pixels per second)
+  private targetX = 0; // Target X position from mouse
+  private readonly DECELERATION_ZONE = 100; // Start slowing down 100px from edges
 
   // Jump input state (tracks whether jump button is held)
   private isCharging = false;
@@ -64,6 +69,7 @@ export class PlayerPhysics {
     this.y = this.restCenterY;
     this.initialX = opts.initialX;
     this.x = this.initialX;
+    this.targetX = this.initialX; // Initialize target to starting position
     this.screenWidth = opts.screenWidth;
   }
 
@@ -82,6 +88,56 @@ export class PlayerPhysics {
     }
 
     this.y += this.velocity * deltaSeconds;
+
+    // Update horizontal position with instant tracking except near boundaries
+    const playerMinX = this.initialX - this.horizontalRangeLeft;
+    const playerMaxX = this.initialX + this.horizontalRangeRight;
+    const distanceToTarget = this.targetX - this.x;
+
+    // Calculate current distance from boundaries (based on current player position)
+    const distFromLeft = this.x - playerMinX;
+    const distFromRight = playerMaxX - this.x;
+
+    // Check if we're in a deceleration zone AND moving toward that boundary
+    const approachingLeftBoundary = distFromLeft < this.DECELERATION_ZONE && distanceToTarget < 0;
+    const approachingRightBoundary = distFromRight < this.DECELERATION_ZONE && distanceToTarget > 0;
+
+    if (approachingLeftBoundary || approachingRightBoundary) {
+      // Approaching a boundary - apply smooth deceleration
+      const baseSpeed = 2000; // pixels per second
+      let maxSpeed = baseSpeed;
+
+      // Apply deceleration based on distance from boundary
+      if (approachingLeftBoundary) {
+        // Moving left and close to left boundary
+        const slowFactor = Math.max(0.1, distFromLeft / this.DECELERATION_ZONE);
+        maxSpeed *= slowFactor * slowFactor; // Quadratic slowdown
+      } else if (approachingRightBoundary) {
+        // Moving right and close to right boundary
+        const slowFactor = Math.max(0.1, distFromRight / this.DECELERATION_ZONE);
+        maxSpeed *= slowFactor * slowFactor; // Quadratic slowdown
+      }
+
+      // Smoothly accelerate toward target position
+      const targetVelocity = Math.sign(distanceToTarget) * Math.min(Math.abs(distanceToTarget) * 8, maxSpeed);
+      const acceleration = 12000; // pixels per second squared
+
+      if (Math.abs(targetVelocity - this.horizontalVelocity) < acceleration * deltaSeconds) {
+        this.horizontalVelocity = targetVelocity;
+      } else {
+        this.horizontalVelocity += Math.sign(targetVelocity - this.horizontalVelocity) * acceleration * deltaSeconds;
+      }
+
+      // Apply horizontal velocity
+      this.x += this.horizontalVelocity * deltaSeconds;
+    } else {
+      // Not approaching a boundary - lock to mouse position (instant tracking)
+      this.x = this.targetX;
+      this.horizontalVelocity = 0; // Reset velocity when tracking directly
+    }
+
+    // Clamp to boundaries
+    this.x = Math.max(playerMinX, Math.min(playerMaxX, this.x));
 
     // Determine effective ground (platform override or default ground)
     const effectiveGround = this.surfaceOverrideY ?? this.restCenterY;
@@ -261,27 +317,18 @@ export class PlayerPhysics {
   }
 
   /**
-   * Update player's horizontal position based on mouse/touch input.
-   * Maps a small cursor range (150px - ~middle) to full player range.
-   * This amplifies cursor movement so you move less than the player moves.
+   * Update player's target horizontal position based on mouse/touch input.
+   * Player directly follows mouse with deceleration only near boundaries.
    */
   setMousePosition(clientX: number): void {
     this.lastCursorX = clientX; // Store cursor position for speed calculation
 
-    // Cursor control range: 150px to middle of screen (~screenWidth/2)
-    const cursorMinX = 150;
-    const cursorMaxX = this.screenWidth / 2;
-
-    // Player visual range: far left to far right
+    // Player boundary limits
     const playerMinX = this.initialX - this.horizontalRangeLeft;
     const playerMaxX = this.initialX + this.horizontalRangeRight;
 
-    // Map cursor position to player position
-    // Clamp cursor to control range
-    const clampedCursor = Math.max(cursorMinX, Math.min(cursorMaxX, clientX));
-    const cursorRatio = (clampedCursor - cursorMinX) / (cursorMaxX - cursorMinX);
-
-    this.x = playerMinX + cursorRatio * (playerMaxX - playerMinX);
+    // Set target to cursor position, clamped to boundaries
+    this.targetX = Math.max(playerMinX, Math.min(playerMaxX, clientX));
   }
 
   /**
@@ -289,6 +336,23 @@ export class PlayerPhysics {
    */
   updateScreenWidth(newWidth: number): void {
     this.screenWidth = newWidth;
+  }
+
+  /**
+   * Set horizontal movement range dynamically
+   * Used to expand/contract player movement based on game state (e.g., enemy visibility)
+   */
+  setHorizontalRange(left: number, right: number): void {
+    this.horizontalRangeLeft = left;
+    this.horizontalRangeRight = right;
+  }
+
+  /**
+   * Reset horizontal range to default values
+   */
+  resetHorizontalRange(): void {
+    this.horizontalRangeLeft = this.DEFAULT_RANGE_LEFT;
+    this.horizontalRangeRight = this.DEFAULT_RANGE_RIGHT;
   }
 
   /**
