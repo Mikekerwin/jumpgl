@@ -1410,10 +1410,10 @@ const init = async () => {
       }
     }
 
-    // Apply camera position
-    // All layers move at 100% camera speed on Y-axis (no Y parallax)
-    // X-axis parallax is handled separately by the parallax scrollers
-    backgroundContainer.position.y = cameraY;
+    // Apply camera position with parallax
+    // Background moves less (30% of camera movement) for depth effect
+    // Foreground elements move at 100% camera speed
+    backgroundContainer.position.y = cameraY * 0.3; // Sky parallax - moves slower
     overlayContainer.position.y = cameraY; // Gradient moves with ground
     groundContainer.position.y = cameraY;
     platformContainer.position.y = cameraY;
