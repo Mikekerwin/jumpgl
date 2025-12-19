@@ -706,16 +706,30 @@ export class ParallaxBackgrounds {
     const texture = this.textures.cloudSky;
     const heightMultiplier = 1.5;
     const backgroundHeight = this.viewportHeight * heightMultiplier;
+    // Make sky wider than viewport to account for camera zoom (0.95 scale = ~1.05x wider needed)
+    // Use 0.9x scale to make sky image slightly smaller, and 1.4x width for camera zoom buffer
+    const skyWidthMultiplier = 1.4; // Extra width for camera zoom-out
+    const skyScaleMultiplier = 0.9; // Make sky texture 10% smaller
+    const backgroundWidth = this.viewportWidth * skyWidthMultiplier;
+
     this.skyBackground = new TilingSprite({
       texture,
-      width: this.viewportWidth,
+      width: backgroundWidth,
       height: backgroundHeight,
     });
-    const scale = backgroundHeight / (texture.height || 1);
+    const scale = (backgroundHeight / (texture.height || 1)) * skyScaleMultiplier;
     this.skyBackground.tileScale.set(scale);
     this.skyBackground.tilePosition.set(0, 0);
+    // Position sky with negative offset so more sky is visible when jumping higher
+    // Reduce the offset slightly (multiply by 0.8) to push sky down and align better with bottom
     const extraHeight = Math.max(0, backgroundHeight - this.viewportHeight);
-    this.skyBackground.y = -extraHeight;
+    this.skyBackground.y = -extraHeight * 0.8; // Reduced from full -extraHeight to push sky down
+
+    // Position sky slightly left of center (more buffer on right for camera zoom)
+    // 30% of extra width on left, 70% on right
+    const extraWidth = backgroundWidth - this.viewportWidth;
+    this.skyBackground.x = -extraWidth * 0.3;
+
     this.container.addChildAt(this.skyBackground, 0);
   }
 

@@ -211,14 +211,23 @@ const init = async () => {
   chargeSprite.blendMode = 'normal';
   // Don't center the sprite anchor - keep it at default (0,0) like other canvas-based sprites
 
-  let gradientSprite = createGroundGradientSprite(app.renderer.width, app.renderer.height);
+  // Make ground gradient and ground segments wider to account for camera zoom (0.90 scale)
+  // At 0.90 zoom, we see ~11% more width, so use 1.25x multiplier for extra right-side coverage
+  const groundWidthMultiplier = 1.25;
+  const effectiveGroundWidth = app.renderer.width * groundWidthMultiplier;
+
+  let gradientSprite = createGroundGradientSprite(effectiveGroundWidth, app.renderer.height);
+  // Position gradient with more coverage on the right (30% left, 70% right)
+  const extraWidth = effectiveGroundWidth - app.renderer.width;
+  gradientSprite.x = -extraWidth * 0.3;
+
   overlayContainer.addChild(dustSprite);
   overlayContainer.addChild(gradientSprite);
   const grounds = new ParallaxGrounds(
     groundContainer,
     parallaxTextures,
     biomeManager,
-    app.renderer.width,
+    effectiveGroundWidth,
     app.renderer.height
   );
 
