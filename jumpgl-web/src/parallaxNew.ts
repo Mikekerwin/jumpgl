@@ -43,7 +43,6 @@ class SegmentScroller {
   private fenceButterflyFlaps = 0;
   private fenceButterflyPhase: 'down' | 'up' | 'glide' = 'down'; // Wing animation phase
   private fenceButterflyState: 'on_fence' | 'hold' | 'flying' = 'on_fence'; // Overall state
-  private fenceButterflyHoldTime = 0;
   private fenceButterflyFlightTime = 0; // Time since starting to fly
   private fenceButterflyStartY = 0; // Starting Y position for flight
   private fenceButterflyLastY = 0; // Track last Y for movement direction
@@ -596,7 +595,6 @@ class SegmentScroller {
       this.fenceButterflyFrame = 0;
       this.fenceButterflyTime = 0;
       this.fenceButterflyFlaps = 0;
-      this.fenceButterflyHoldTime = 0;
       console.log('[FENCE BUTTERFLY] Flapping started at position', this.fenceButterflySprite.x, this.fenceButterflySprite.y);
     }
 
