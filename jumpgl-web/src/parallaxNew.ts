@@ -32,6 +32,25 @@ class SegmentScroller {
   private segments: Array<{ sprite: Sprite; width: number; type: SegmentType }> = [];
   private pendingSegments: SegmentType[] = [];
   private maxSegmentWidth = 0;
+  private fenceTexture: Texture;
+  private fenceSprite: Sprite | null = null;
+  private fenceButterflySprite: Sprite | null = null;
+  private fenceButterflyActive = true; // Butterfly is on fence and stationary
+  private fenceButterflyFrames: Texture[] = [];
+  private fenceButterflyAnimating = false;
+  private fenceButterflyFrame = 0;
+  private fenceButterflyTime = 0;
+  private fenceButterflyFlaps = 0;
+  private fenceButterflyPhase: 'down' | 'up' | 'glide' = 'down'; // Wing animation phase
+  private fenceButterflyState: 'on_fence' | 'hold' | 'flying' = 'on_fence'; // Overall state
+  private fenceButterflyHoldTime = 0;
+  private fenceButterflyFlightTime = 0; // Time since starting to fly
+  private fenceButterflyStartY = 0; // Starting Y position for flight
+  private fenceButterflyLastY = 0; // Track last Y for movement direction
+  private fenceButterflyFlapCount = 0; // Track flap count for 3-1-glide pattern
+  private fenceButterflyGlideTime = 0; // Time spent in glide phase
+  private readonly fenceButterflyBaseFrameDuration = 0.045;
+  private fenceButterflyFrameDurationCurrent = 0.045;
 
   constructor(
     parent: Container,
@@ -39,7 +58,8 @@ class SegmentScroller {
     biomeManager: BiomeSequenceManager,
     viewportWidth: number,
     segmentHeight: number,
-    offsetY: number
+    offsetY: number,
+    fenceTexture: Texture
   ) {
     this.container = new Container();
     parent.addChild(this.container);
@@ -48,17 +68,88 @@ class SegmentScroller {
     this.viewportWidth = viewportWidth;
     this.segmentHeight = segmentHeight;
     this.offsetY = offsetY;
+    this.fenceTexture = fenceTexture;
     this.buildInitialSegments();
   }
 
   private buildInitialSegments(): void {
     this.segments.forEach(({ sprite }) => sprite.destroy());
     this.segments = [];
+
+    // Destroy old fence sprite if it exists
+    if (this.fenceSprite) {
+      this.fenceSprite.destroy();
+      this.fenceSprite = null;
+    }
+
+    // Destroy old butterfly sprite if it exists
+    if (this.fenceButterflySprite) {
+      this.fenceButterflySprite.destroy();
+      this.fenceButterflySprite = null;
+    }
+    this.fenceButterflyActive = true;
+
     this.maxSegmentWidth = 0;
     let cursor = 0;
     while (cursor < this.viewportWidth * 2) {
       const next = this.createSegment(this.getNextSegmentType(), cursor);
       cursor += next.width;
+    }
+
+    // Create fence sprite on the second segment
+    if (this.segments.length > 1) {
+      const secondSegment = this.segments[1];
+
+      // Create fence sprite
+      this.fenceSprite = new Sprite(this.fenceTexture);
+
+      // Calculate fence dimensions (scaled to match ground height)
+      const fenceScale = this.segmentHeight / (this.fenceTexture.height || 1);
+      this.fenceSprite.scale.set(fenceScale);
+      const fenceWidth = (this.fenceTexture.width || 1) * fenceScale;
+      const fenceHeight = (this.fenceTexture.height || 1) * fenceScale;
+
+      // Position fence: centered horizontally on second segment
+      this.fenceSprite.x = secondSegment.sprite.x + (secondSegment.width - fenceWidth) / 2;
+
+      // Position fence: bottom-aligned with ground, moved up 20px
+      // Ground sprite.y = top of ground (offsetY)
+      // Bottom of fence should align with bottom of ground segment
+      this.fenceSprite.y = this.offsetY + this.segmentHeight - fenceHeight - 20;
+
+      // Add to container
+      this.container.addChild(this.fenceSprite);
+
+      // Create stationary butterfly on fence pole - load all 7 frames
+      const fenceSpriteRef = this.fenceSprite; // Capture reference for async callback
+      const framePromises: Promise<Texture>[] = [];
+      for (let i = 1; i <= 7; i++) {
+        framePromises.push(Assets.load<Texture>(`blueButterfly/butterfly${i}.png`));
+      }
+
+      Promise.all(framePromises).then((frames) => {
+        if (!this.fenceButterflyActive || !fenceSpriteRef) return; // Already flew away or fence destroyed
+
+        this.fenceButterflyFrames = frames;
+        this.fenceButterflySprite = new Sprite(frames[0]); // Start with wings closed (frame 1)
+        this.fenceButterflySprite.anchor.set(0.5);
+
+        // Scale butterfly to match the largest of the other butterflies
+        this.fenceButterflySprite.scale.set(0.35);
+
+        // Position: 70% to the left of fence, 5px below top (moved up 5px from 10px)
+        const fenceLeft = fenceSpriteRef.x;
+        const fenceTop = fenceSpriteRef.y;
+        this.fenceButterflySprite.x = fenceLeft + (fenceWidth * 0.30) - 2; // 30% from left = 70% to left, moved 2px left
+        this.fenceButterflySprite.y = fenceTop + 5; // moved up 5px from 10px
+
+        // Slight rotation for natural look
+        this.fenceButterflySprite.rotation = Math.PI / 12;
+
+        this.container.addChild(this.fenceButterflySprite);
+      }).catch((err) => {
+        console.error('[FENCE BUTTERFLY] Failed to load butterfly frames', err);
+      });
     }
   }
 
@@ -122,9 +213,132 @@ class SegmentScroller {
     }
 
     const scrollSpeed = this.getCurrentScrollSpeed() * speedMultiplier;
+    const scrollAmount = scrollSpeed * deltaSeconds;
+
     this.segments.forEach(({ sprite }) => {
-      sprite.x -= scrollSpeed * deltaSeconds;
+      sprite.x -= scrollAmount;
     });
+
+    // Scroll fence sprite with ground
+    if (this.fenceSprite) {
+      this.fenceSprite.x -= scrollAmount;
+    }
+
+    // Scroll butterfly sprite with fence (only if not flying)
+    if (this.fenceButterflySprite && this.fenceButterflyState !== 'flying') {
+      this.fenceButterflySprite.x -= scrollAmount;
+    }
+
+    // Animate butterfly if triggered
+    if (this.fenceButterflyAnimating && this.fenceButterflySprite && this.fenceButterflyFrames.length > 0) {
+      if (this.fenceButterflyState === 'flying') {
+        // Flying phase - dramatic upward sine wave motion
+        this.fenceButterflyFlightTime += deltaSeconds;
+
+        const speed = 70; // px/s horizontal
+        const amplitude = 150; // Dramatic vertical swings
+        const frequency = 0.9; // Slower, graceful arcs
+        // Much larger phase offset to ensure starting well into the upward swing
+        const phaseOffset = -Math.PI / frequency; // Start at bottom, moving up (larger offset)
+
+        const x = this.fenceButterflySprite.x + speed * deltaSeconds;
+        const y = this.fenceButterflyStartY + Math.sin((this.fenceButterflyFlightTime + phaseOffset) * frequency) * amplitude;
+
+        // Track if moving up or down for wing speed adjustment
+        const movingUp = y < this.fenceButterflyLastY;
+        this.fenceButterflyLastY = y;
+
+        // Adjust flap speed based on vertical direction: faster when moving up, slower when moving down
+        this.fenceButterflyFrameDurationCurrent = this.fenceButterflyBaseFrameDuration * (movingUp ? 0.7 : 1.25);
+
+        this.fenceButterflySprite.x = x;
+        this.fenceButterflySprite.y = y;
+
+        // Handle glide phase
+        if (this.fenceButterflyPhase === 'glide') {
+          this.fenceButterflyGlideTime += deltaSeconds;
+          const glideDuration = 0.7 + Math.random() * 0.25;
+          if (this.fenceButterflyGlideTime >= glideDuration) {
+            this.fenceButterflyGlideTime = 0;
+            this.fenceButterflyPhase = 'down'; // Go back to flapping
+            this.fenceButterflyFrame = 0;
+          }
+          // Stay on glide frame (frame 3)
+          this.fenceButterflySprite.texture = this.fenceButterflyFrames[3];
+        } else {
+          // Flying phase - use beautiful 3-1-glide flapping pattern
+          this.fenceButterflyTime += deltaSeconds;
+          if (this.fenceButterflyTime < this.fenceButterflyFrameDurationCurrent) {
+            // Not time to advance frame yet
+          } else {
+            this.fenceButterflyTime = 0;
+
+            if (this.fenceButterflyPhase === 'down') {
+              // Wings closing (frames 0→6)
+              this.fenceButterflyFrame++;
+              if (this.fenceButterflyFrame >= this.fenceButterflyFrames.length) {
+                this.fenceButterflyFrame = this.fenceButterflyFrames.length - 2;
+                this.fenceButterflyPhase = 'up'; // Switch to 'up' phase
+              }
+            } else if (this.fenceButterflyPhase === 'up') {
+              // Wings opening (frames 6→0)
+              this.fenceButterflyFrame--;
+              if (this.fenceButterflyFrame < 0) {
+                this.fenceButterflyFlapCount++;
+                this.fenceButterflyFrame = 0;
+                const targetFlaps = this.fenceButterflyFlapCount >= 3 ? 4 : 3; // 3 then 1 (total 4) then glide
+                if (this.fenceButterflyFlapCount >= targetFlaps) {
+                  // Only glide when moving downward; if moving up, keep flapping
+                  if (movingUp) {
+                    this.fenceButterflyFlapCount = 0;
+                    this.fenceButterflyPhase = 'down';
+                    this.fenceButterflyFrame = 0;
+                  } else {
+                    this.fenceButterflyFlapCount = 0;
+                    this.fenceButterflyPhase = 'glide';
+                    this.fenceButterflyFrame = 3;
+                    this.fenceButterflySprite.texture = this.fenceButterflyFrames[3];
+                    return;
+                  }
+                } else {
+                  this.fenceButterflyPhase = 'down'; // Continue flapping
+                }
+              }
+            }
+
+            this.fenceButterflySprite.texture = this.fenceButterflyFrames[this.fenceButterflyFrame];
+          }
+        }
+      } else if (this.fenceButterflyState === 'on_fence') {
+        // Flapping animation (on fence)
+        this.fenceButterflyTime += deltaSeconds;
+        const frameDuration = 0.05; // 50ms per frame
+
+        if (this.fenceButterflyTime >= frameDuration) {
+          this.fenceButterflyTime = 0;
+
+          if (this.fenceButterflyPhase === 'down') {
+            // Wings closing (frame 0 → 6)
+            this.fenceButterflyFrame++;
+            if (this.fenceButterflyFrame >= this.fenceButterflyFrames.length) {
+              this.fenceButterflyFrame = this.fenceButterflyFrames.length - 2;
+              this.fenceButterflyPhase = 'up';
+            }
+          } else if (this.fenceButterflyPhase === 'up') {
+            // Wings opening (frame 6 → 0)
+            this.fenceButterflyFrame--;
+            if (this.fenceButterflyFrame < 0) {
+              // Completed one flap - continue flapping continuously
+              this.fenceButterflyFlaps++;
+              this.fenceButterflyFrame = 0;
+              this.fenceButterflyPhase = 'down';
+            }
+          }
+
+          this.fenceButterflySprite.texture = this.fenceButterflyFrames[this.fenceButterflyFrame];
+        }
+      }
+    }
 
     // Remove segments that scrolled off-screen
     while (this.segments.length && this.segments[0].sprite.x + this.segments[0].width <= 0) {
@@ -362,6 +576,43 @@ class SegmentScroller {
 
     return false;
   }
+
+  /**
+   * Check if player is close to fence butterfly and trigger animation
+   * @param playerX Player's X position
+   */
+  checkButterflyProximity(playerX: number): void {
+    if (!this.fenceButterflyActive || !this.fenceButterflySprite) {
+      return;
+    }
+
+    const butterflyX = this.fenceButterflySprite.x;
+    const distance = butterflyX - playerX;
+
+    // Start flapping when player is 325px away
+    if (distance <= 325 && distance > 0 && !this.fenceButterflyAnimating) {
+      this.fenceButterflyAnimating = true;
+      this.fenceButterflyPhase = 'down';
+      this.fenceButterflyFrame = 0;
+      this.fenceButterflyTime = 0;
+      this.fenceButterflyFlaps = 0;
+      this.fenceButterflyHoldTime = 0;
+      console.log('[FENCE BUTTERFLY] Flapping started at position', this.fenceButterflySprite.x, this.fenceButterflySprite.y);
+    }
+
+    // Trigger flight when player is 50px away
+    if (distance <= 50 && distance > 0 && this.fenceButterflyState === 'on_fence') {
+      this.fenceButterflyState = 'flying';
+      this.fenceButterflyPhase = 'down';
+      this.fenceButterflyStartY = this.fenceButterflySprite.y;
+      this.fenceButterflyLastY = this.fenceButterflySprite.y;
+      this.fenceButterflyFlightTime = 0;
+      this.fenceButterflyFlapCount = 0;
+      this.fenceButterflyFrame = 0;
+      this.fenceButterflyActive = false;
+      console.log('[FENCE BUTTERFLY] Starting flight from', this.fenceButterflySprite.y);
+    }
+  }
 }
 
 const FOREST_TOP_CROP = 2; // pixels to trim from the top of forest/transition images
@@ -390,6 +641,7 @@ export type ParallaxTextures = {
   meteorGroundTransition: Texture;
   cloudGroundHole: Texture;
   cloudGroundHoleTransitionBack: Texture;
+  cloudFence: Texture;
 };
 
 let bundleRegistered = false;
@@ -406,6 +658,7 @@ export const loadParallaxTextures = async (): Promise<ParallaxTextures> => {
       meteorGroundTransition: 'meteor_ground_transition.webp',
       cloudGroundHole: 'cloud_light_ground_hole.webp',
       cloudGroundHoleTransitionBack: 'cloud_light_ground_hole_transition_back.webp',
+      cloudFence: 'cloud_light_fence.webp',
     });
     bundleRegistered = true;
   }
@@ -649,7 +902,8 @@ export class ParallaxGrounds {
       biomeManager,
       width,
       this.groundHeight,
-      this.groundTop
+      this.groundTop,
+      textures.cloudFence
     );
   }
 
@@ -701,5 +955,13 @@ export class ParallaxGrounds {
    */
   willNextSegmentBeHole(): boolean {
     return this.scroller.willNextSegmentBeHole();
+  }
+
+  /**
+   * Check if player is close to fence butterfly and trigger animation
+   * @param playerX Player's X position
+   */
+  checkButterflyProximity(playerX: number): void {
+    this.scroller.checkButterflyProximity(playerX);
   }
 }

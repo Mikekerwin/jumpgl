@@ -817,9 +817,18 @@ const init = async () => {
 
       butterfliesSpawned = true;
     }
+    // Check fence butterfly proximity (butterfly handles its own flight internally)
+    if (grounds) {
+      const playerX = physics.getState().x;
+      grounds.checkButterflyProximity(playerX);
+    }
+
     if (butterflyManager) {
       butterflyManager.update(deltaSeconds);
       butterflyContainer.removeChildren();
+      // Add trail graphics first (so they appear behind butterflies)
+      butterflyManager.getTrailGraphics().forEach((g) => butterflyContainer.addChild(g));
+      // Then add butterfly sprites on top
       butterflyManager.getSprites().forEach((s) => butterflyContainer.addChild(s));
     }
 
