@@ -17,6 +17,7 @@ export type ButterflyOptions = {
   spawnDelay?: number;
   initialPhaseOffset?: number; // Phase offset for sine wave only (doesn't affect horizontal position)
   specialTakeoff?: boolean; // If true, does 3 stationary flaps before flying
+  useOrangeFrames?: boolean; // If true, uses orange butterfly frames instead of blue
 };
 
 interface TrailPoint {
@@ -351,21 +352,30 @@ class Butterfly {
 }
 
 export class ButterflyManager {
-  private frames: Texture[] = [];
+  private blueFrames: Texture[] = [];
+  private orangeFrames: Texture[] = [];
   private butterflies: Butterfly[] = [];
   private loaded = false;
 
   async loadFrames(): Promise<void> {
     if (this.loaded) return;
     try {
-      const loads: Promise<Texture>[] = [];
+      // Load blue butterfly frames
+      const blueLoads: Promise<Texture>[] = [];
       for (let i = 1; i <= 7; i++) {
-        // Use relative path so it respects Vite base (/jumpgl/)
-        loads.push(Assets.load<Texture>(`blueButterfly/butterfly${i}.png`));
+        blueLoads.push(Assets.load<Texture>(`blueButterfly/butterfly${i}.png`));
       }
-      this.frames = await Promise.all(loads);
+      this.blueFrames = await Promise.all(blueLoads);
+
+      // Load orange butterfly frames
+      const orangeLoads: Promise<Texture>[] = [];
+      for (let i = 21; i <= 27; i++) {
+        orangeLoads.push(Assets.load<Texture>(`orangeButterfly/butterfly${i}.png`));
+      }
+      this.orangeFrames = await Promise.all(orangeLoads);
+
       this.loaded = true;
-      console.log('[BUTTERFLY] Loaded frames');
+      console.log('[BUTTERFLY] Loaded blue and orange frames');
     } catch (err) {
       console.error('[BUTTERFLY] Failed to load frames', err);
       this.loaded = false;
@@ -373,8 +383,9 @@ export class ButterflyManager {
   }
 
   spawn(opts: ButterflyOptions): void {
-    if (!this.loaded || this.frames.length === 0) return;
-    this.butterflies.push(new Butterfly(this.frames, opts));
+    if (!this.loaded || (this.blueFrames.length === 0 && this.orangeFrames.length === 0)) return;
+    const frames = opts.useOrangeFrames ? this.orangeFrames : this.blueFrames;
+    this.butterflies.push(new Butterfly(frames, opts));
   }
 
   clear(): void {

@@ -135,10 +135,10 @@ const init = async () => {
     console.error('[BUTTERFLY] Failed to load frames', e);
   }
   // Butterfly variant controls: counts and colors (tint)
-  const butterflyVariants: Array<{ count: number; tint?: number }> = [
-    { count: 1 },
-    { count: 1 },
-    { count: 1 },
+  const butterflyVariants: Array<{ count: number; tint?: number; useOrange?: boolean }> = [
+    { count: 1 }, // First butterfly (larger, blue)
+    { count: 1, useOrange: true }, // Second butterfly (smaller, orange)
+    { count: 1 }, // Third butterfly (smaller, blue)
   ];
 
   // Initialize wind sprite system (anime-style wind lines)
@@ -811,6 +811,7 @@ const init = async () => {
             amplitude: 30 + Math.random() * 30,
             frequency: 0.6 + Math.random() * 0.6,
             spawnDelay,
+            useOrangeFrames: variant.useOrange,
           });
         }
       });

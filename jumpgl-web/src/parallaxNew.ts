@@ -119,11 +119,11 @@ class SegmentScroller {
       // Add to container
       this.container.addChild(this.fenceSprite);
 
-      // Create stationary butterfly on fence pole - load all 7 frames
+      // Create stationary butterfly on fence pole - load all 7 orange butterfly frames
       const fenceSpriteRef = this.fenceSprite; // Capture reference for async callback
       const framePromises: Promise<Texture>[] = [];
-      for (let i = 1; i <= 7; i++) {
-        framePromises.push(Assets.load<Texture>(`blueButterfly/butterfly${i}.png`));
+      for (let i = 21; i <= 27; i++) {
+        framePromises.push(Assets.load<Texture>(`orangeButterfly/butterfly${i}.png`));
       }
 
       Promise.all(framePromises).then((frames) => {
@@ -231,17 +231,20 @@ class SegmentScroller {
     // Animate butterfly if triggered
     if (this.fenceButterflyAnimating && this.fenceButterflySprite && this.fenceButterflyFrames.length > 0) {
       if (this.fenceButterflyState === 'flying') {
-        // Flying phase - dramatic upward sine wave motion
+        // Flying phase - upward trajectory with sine wave oscillations
         this.fenceButterflyFlightTime += deltaSeconds;
 
         const speed = 70; // px/s horizontal
         const amplitude = 150; // Dramatic vertical swings
         const frequency = 0.9; // Slower, graceful arcs
+        const upwardSpeed = -25; // px/s upward drift (negative = up)
         // Much larger phase offset to ensure starting well into the upward swing
         const phaseOffset = -Math.PI / frequency; // Start at bottom, moving up (larger offset)
 
         const x = this.fenceButterflySprite.x + speed * deltaSeconds;
-        const y = this.fenceButterflyStartY + Math.sin((this.fenceButterflyFlightTime + phaseOffset) * frequency) * amplitude;
+        // Add gradual upward movement over time (upwardSpeed * time) to the sine wave
+        const upwardDrift = upwardSpeed * this.fenceButterflyFlightTime;
+        const y = this.fenceButterflyStartY + upwardDrift + Math.sin((this.fenceButterflyFlightTime + phaseOffset) * frequency) * amplitude;
 
         // Track if moving up or down for wing speed adjustment
         const movingUp = y < this.fenceButterflyLastY;
