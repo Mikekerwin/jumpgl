@@ -1,5 +1,5 @@
 import './style.css';
-import { Application, Container, Graphics, Sprite, Texture, Ticker } from 'pixi.js';
+import { Application, Container, Graphics, Sprite, Texture, Ticker, RenderTexture } from 'pixi.js';
 import { PlayerPhysics } from './playerPhysics';
 import { EnemyPhysics } from './enemyPhysics';
 import { EnemyMovement } from './enemyMovement';
@@ -79,8 +79,26 @@ const init = async () => {
   const playfieldContainer = new Container();
   const butterflyContainer = new Container();
   const cometContainer = new Container();
+  const debugPlatformHitboxContainer = new Container(); // Debug visualization for platform hitboxes
 
-  scene.addChild(backgroundContainer, overlayContainer, groundContainer, platformContainer, playfieldContainer, cometContainer);
+  scene.addChild(
+    backgroundContainer,
+    overlayContainer,
+    groundContainer,
+    platformContainer,
+    playfieldContainer,
+    cometContainer
+  );
+  // Attach debug hitboxes to playfield so they follow the same world scroll as platforms/ground
+  playfieldContainer.addChild(debugPlatformHitboxContainer);
+
+  // Spawn point debug indicator (50% opacity magenta overlay)
+  // Add to playfieldContainer so it moves with the world
+  const spawnPointDebug = new Graphics();
+  spawnPointDebug.rect(-50, -300, 100, 600); // 100px wide, 600px tall centered on spawn
+  spawnPointDebug.fill({ color: 0xff00ff, alpha: 0.5 }); // Magenta at 50% opacity
+  spawnPointDebug.visible = false; // Hidden until spawn point is set
+  playfieldContainer.addChild(spawnPointDebug);
 
   // Stars temporarily disabled
   const parallaxTextures = await loadParallaxTextures();
@@ -323,6 +341,19 @@ const init = async () => {
   let highestPlatformHeight = 0; // Track highest platform to spawn enemy on it
   let highestPlatformX = 0;
 
+  const RESPAWN_WAIT_TIME = 0.2; // Shorter wait before animating back
+  const RESPAWN_HEIGHT_ABOVE_SCREEN = -200; // Spawn player this many pixels above top of screen
+  const RESUME_WAIT_TIME = 1.0; // Pause before moving forward after respawn
+  const RESUME_RAMP_DURATION = 0.6; // Ease into forward motion
+  const BASE_GROUND_SCROLL_SPEED = 72; // pixels per second (from parallaxNew.ts)
+  // Respawn system state
+  let respawnState: 'normal' | 'dying' | 'waiting' | 'animating_back' | 'respawning' | 'resume_pause' | 'resume_ramp' = 'normal';
+  let respawnTimer = 0;
+  let spawnPointX = 0; // X position to respawn at (start of meteor transition) - FIXED, set once when meteor spawns
+  let deathPlayerX = 0; // Player's world X position when they died
+  let remainingRewindDistance = 0; // Fixed distance to scroll back to spawn (updated each frame by deltaX)
+  let resumeRampTimer = 0;
+
   // Platform height configuration for 4 levels
   // Level 1: Just above ground (reachable from ground)
   // Level 2: One jump up from Level 1
@@ -476,25 +507,13 @@ const init = async () => {
   const laserSprites: Sprite[] = [];
 
   const triggerFallIntoHole = (currentVelocity: number) => {
+    // Disable ground collision and let player fall through
+    // The respawn state machine will handle the rest when player falls below screen
     fallingIntoHole = true;
     physics.clearSurfaceOverride();
     physics.setGroundCollisionEnabled(false);
     physics.forceVelocity(Math.max(300, Math.abs(currentVelocity) + 150));
-    ball.alpha = 0.65;
-    ball.scale.set(0.92, 0.92);
-
-    // Respawn after short drop and delay, just before the hole sequence
-    window.setTimeout(() => {
-      // Start slightly before the first hole start (one screen back)
-      const fallbackX = initialPlayerX();
-      const restartX =
-        lastHoleStartX !== null ? lastHoleStartX - app.renderer.width * 0.8 : fallbackX;
-      const ground = computePlayerGround();
-      physics.respawn(restartX, ground);
-      fallingIntoHole = false;
-      ball.alpha = 1;
-      ball.scale.set(1, 1);
-    }, 1500);
+    console.log('[HOLE] Player falling into hole, ground collision disabled');
   };
 
   // Debug hitbox overlay
@@ -528,6 +547,40 @@ const init = async () => {
   const CAMERA_FOLLOW_THRESHOLD = 20; // How far below floor before camera starts following down
   const CAMERA_TOP_MARGIN = 100; // Keep player at least this many pixels from top of screen
 
+  // Minimap setup - picture-in-picture zoomed-out view
+  const MINIMAP_WIDTH = 450;
+  const MINIMAP_HEIGHT = 200;
+  const MINIMAP_ZOOM = 0.02; // Show ~8.3x more area
+  const MINIMAP_PADDING = 20;
+
+  // Create render texture for minimap
+  const minimapRenderTexture = RenderTexture.create({
+    width: MINIMAP_WIDTH,
+    height: MINIMAP_HEIGHT,
+  });
+
+  // Create sprite to display the minimap
+  const minimapSprite = new Sprite(minimapRenderTexture);
+  minimapSprite.x = app.renderer.width - MINIMAP_WIDTH - MINIMAP_PADDING;
+  minimapSprite.y = MINIMAP_PADDING;
+
+  // Create border for minimap
+  const minimapBorder = new Graphics();
+  minimapBorder.rect(0, 0, MINIMAP_WIDTH, MINIMAP_HEIGHT);
+  minimapBorder.stroke({ width: 2, color: 0xffffff, alpha: 0.8 });
+  minimapBorder.position.set(minimapSprite.x, minimapSprite.y);
+
+  // Create semi-transparent background for minimap
+  const minimapBackground = new Graphics();
+  minimapBackground.rect(0, 0, MINIMAP_WIDTH, MINIMAP_HEIGHT);
+  minimapBackground.fill({ color: 0x000000, alpha: 0.3 });
+  minimapBackground.position.set(minimapSprite.x, minimapSprite.y);
+
+  // Add minimap to stage (on top of everything)
+  app.stage.addChild(minimapBackground);
+  app.stage.addChild(minimapSprite);
+  app.stage.addChild(minimapBorder);
+
   const ticker = new Ticker();
   ticker.add((tickerInstance) => {
     const deltaSeconds = tickerInstance.deltaMS / 1000;
@@ -543,18 +596,220 @@ const init = async () => {
       }
     }
 
-    // Get scroll speed multiplier from player position (0 = stopped, 1 = normal, 2 = double)
-    const speedMultiplier = physics.getScrollSpeedMultiplier();
+    // Respawn system - smooth animation-based approach
+    let speedMultiplier = 1.0; // Default normal speed
+
+    if (respawnState === 'normal') {
+      // Check if player fell out of bounds (below screen)
+      const playerY = physics.getState().y;
+      if (playerY > app.renderer.height + 100) { // 100px buffer below screen
+        console.log('[RESPAWN] Player fell out of bounds, entering dying state');
+
+        // Capture death position in world coordinates
+        deathPlayerX = physics.getState().x;
+
+        // Find CURRENT position of meteor_transition segment (the pink respawn box)
+        const segments = grounds.getSegments();
+        const meteorSegment = segments.find((seg: { type: string; x: number }) => seg.type === 'meteor_transition');
+        if (meteorSegment) {
+          spawnPointX = meteorSegment.x; // Update to CURRENT position, not initial spawn position
+        }
+
+        remainingRewindDistance = spawnPointX - deathPlayerX;
+        console.log(`[RESPAWN] Death: playerX=${deathPlayerX.toFixed(0)}, spawnX=${spawnPointX.toFixed(0)} (current meteor position), remaining=${remainingRewindDistance.toFixed(0)}px`);
+
+        respawnState = 'dying';
+        respawnTimer = 0;
+        speedMultiplier = 1.0; // Continue at normal speed initially
+
+        // CRITICAL: Disable gravity and freeze player physics immediately
+        physics.setGroundCollisionEnabled(false);
+        physics.forceVelocity(0);
+
+        // Position player above screen at spawn X position (ready for respawn)
+        ball.position.set(spawnPointX, RESPAWN_HEIGHT_ABOVE_SCREEN);
+
+        // Hide player and shadow
+        ball.visible = false;
+        playerShadow.getView().visible = false;
+
+        console.log(`[RESPAWN] Player frozen at spawn X=${spawnPointX.toFixed(0)}, Y=${RESPAWN_HEIGHT_ABOVE_SCREEN}`);
+      } else {
+        // Normal gameplay - use player-based speed multiplier
+        speedMultiplier = physics.getScrollSpeedMultiplier();
+      }
+    }
+
+    if (respawnState === 'dying') {
+      // Smoothly decelerate to stop using easing
+      respawnTimer += deltaSeconds;
+      const decelDuration = 0.4; // Faster ease-out to stop
+      const progress = Math.min(1, respawnTimer / decelDuration);
+      // Ease out cubic: 1 - (1-t)^3
+      const easeOut = 1 - Math.pow(1 - progress, 3);
+      speedMultiplier = 1.0 * (1 - easeOut); // 1.0 → 0.0
+
+      if (progress >= 1) {
+        // Fully stopped - enter waiting state
+        speedMultiplier = 0;
+        respawnState = 'waiting';
+        respawnTimer = 0;
+        console.log('[RESPAWN] Parallax stopped, waiting 1s');
+      }
+    }
+
+    if (respawnState === 'waiting') {
+      // Wait at zero speed
+      speedMultiplier = 0;
+      respawnTimer += deltaSeconds;
+      if (respawnTimer >= RESPAWN_WAIT_TIME) {
+        // Calculate FIXED remaining distance using spawn and death positions
+        remainingRewindDistance = spawnPointX - deathPlayerX;
+
+        console.log(`[RESPAWN] Fixed distance calculation:`);
+        console.log(`  Spawn point: X=${spawnPointX.toFixed(0)}`);
+        console.log(`  Death position: X=${deathPlayerX.toFixed(0)}`);
+        console.log(`  Remaining distance: ${remainingRewindDistance.toFixed(0)}px`);
+        console.log(`  Direction: ${remainingRewindDistance > 0 ? 'RIGHT (backward)' : 'LEFT (forward)'}`);
+
+        respawnState = 'animating_back';
+        respawnTimer = 0;
+        // Disable new segment generation during animation
+        grounds.setAllowNewSegments(false);
+        console.log(`[RESPAWN] Starting scroll back to spawn (distance: ${Math.abs(remainingRewindDistance).toFixed(0)}px)`);
+      }
+    }
+
+    if (respawnState === 'animating_back') {
+      // Fixed distance-based rewind: drive speed from fixed remaining distance counter
+      const RESPAWN_MAX_SPEED_MULTIPLIER = 12; // 5x reverse speed at peak
+      const EASE_DISTANCE = 300; // Distance over which to ease out
+
+      const absRemaining = Math.abs(remainingRewindDistance);
+      const direction = remainingRewindDistance >= 0 ? 1 : -1; // negative remaining = scroll backward (negative speed)
+
+      // Calculate speed multiplier based on remaining distance with easing
+      let targetSpeedMult: number;
+
+      if (absRemaining < EASE_DISTANCE) {
+        // Close to target: ease out (speed proportional to distance)
+        const minSpeedFactor = 0.1;
+        const easeProgress = absRemaining / EASE_DISTANCE; // 1 → 0 as we approach
+        targetSpeedMult = direction * RESPAWN_MAX_SPEED_MULTIPLIER * (minSpeedFactor + easeProgress * (1 - minSpeedFactor));
+      } else {
+        // Far from target: full speed
+        targetSpeedMult = direction * RESPAWN_MAX_SPEED_MULTIPLIER;
+      }
+
+      speedMultiplier = targetSpeedMult;
+
+      // Advance remaining distance by actual scroll this frame
+      // speedMultiplier < 0 moves world backward (deltaX negative)
+      const deltaX = speedMultiplier * BASE_GROUND_SCROLL_SPEED * deltaSeconds;
+      // Count down remaining distance toward zero
+      remainingRewindDistance -= deltaX;
+
+      const absRemainingUpdated = Math.abs(remainingRewindDistance);
+
+      // Debug logging every ~0.2s
+      if (Math.random() < 0.05) {
+        console.log(`[RESPAWN ANIM] remaining=${absRemainingUpdated.toFixed(0)}px, speed=${speedMultiplier.toFixed(2)}x, deltaX=${deltaX.toFixed(1)}`);
+      }
+
+      // Check if we've reached or crossed the target (within 2px tolerance)
+      if (absRemainingUpdated <= 2) {
+        // Animation complete - spawn player
+        respawnState = 'respawning';
+        speedMultiplier = 0; // Stop scrolling
+        // Reset contact state so holes/platforms work after respawn
+        activePlatformId = null;
+        fallingIntoHole = false;
+        physics.clearSurfaceOverride();
+        wasGrounded = false;
+        previousVelocity = 0;
+
+        // Respawn player at original starting X position (NOT spawnPointX)
+        // Keep player's horizontal movement range intact
+        const groundY = computePlayerGround();
+        physics.respawn(initialPlayerX(), groundY); // Use original spawn X, not meteor segment X
+        physics.setGroundCollisionEnabled(true);
+        console.log(`[RESPAWN] Player respawning at original X=${initialPlayerX().toFixed(0)}, final remaining=${remainingRewindDistance.toFixed(1)}px`);
+
+        // Force player Y position above screen
+        physics.forceVelocity(0);
+        const currentState = physics.getState();
+        ball.position.set(currentState.x, RESPAWN_HEIGHT_ABOVE_SCREEN);
+
+        // CRITICAL: Show player and shadow again
+        ball.visible = true;
+        ball.alpha = 1.0;
+        playerShadow.getView().visible = true;
+        playerShadow.getView().alpha = 1.0;
+
+        console.log('[RESPAWN] Animation complete, player spawned above screen at original position');
+      }
+    }
+
+    if (respawnState === 'respawning') {
+      // Wait for player to hit the ground, speed stays at 0
+      speedMultiplier = 0;
+      const playerY = physics.getState().y;
+      const groundY = computePlayerGround();
+
+      // Check if player is on or very close to ground
+      if (playerY >= groundY - playerRadius - 5) {
+        respawnState = 'resume_pause';
+        respawnTimer = 0;
+        // Re-enable segment generation when resuming normal parallax
+        grounds.setAllowNewSegments(true);
+        console.log('[RESPAWN] Player landed, pausing before resume');
+      }
+    }
+
+    if (respawnState === 'resume_pause') {
+      speedMultiplier = 0;
+      respawnTimer += deltaSeconds;
+      if (respawnTimer >= RESUME_WAIT_TIME) {
+        respawnState = 'resume_ramp';
+        resumeRampTimer = 0;
+        console.log('[RESPAWN] Starting forward ease');
+      }
+    }
+
+    if (respawnState === 'resume_ramp') {
+      resumeRampTimer += deltaSeconds;
+      const u = Math.min(1, resumeRampTimer / RESUME_RAMP_DURATION);
+      const ease = u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2;
+      // Ease from 0 back to normal forward multiplier (player-controlled)
+      const forwardMult = physics.getScrollSpeedMultiplier();
+      speedMultiplier = forwardMult * ease;
+      if (u >= 1) {
+        respawnState = 'normal';
+        console.log('[RESPAWN] Forward ease complete');
+      }
+    }
 
     backgrounds.update(deltaSeconds, speedMultiplier);
     grounds.update(deltaSeconds, speedMultiplier);
     dustField.update();
 
+    // Update spawn point debug indicator to track the meteor_transition segment
+    // The pink box shows where the player will respawn (at the meteor_transition segment)
+    if (spawnPointDebug.visible && cometHoleLevelActive) {
+      const segments = grounds.getSegments();
+      const meteorSegment = segments.find(seg => seg.type === 'meteor_transition');
+      if (meteorSegment) {
+        spawnPointDebug.x = meteorSegment.x; // Track meteor segment's current position
+        spawnPointDebug.y = computePlayerGround();
+      }
+    }
+
     // Sync ground holes with ground segments (comet hole level)
     if (cometHoleLevelActive) {
       const segments = grounds.getSegments();
-      segments.forEach(seg => {
-        const segmentKey = `${seg.x.toFixed(0)}_${seg.type}`;
+      segments.forEach((seg, idx) => {
+        // Use stable key (index + type) so we only spawn one hitbox per segment
+        const segmentKey = `${idx}_${seg.type}`;
         if (!processedSegments.has(segmentKey)) {
           processedSegments.add(segmentKey);
 
@@ -581,11 +836,10 @@ const init = async () => {
     cometManager.update(deltaSeconds);
 
     // Update platforms with ground scroll speed (72 px/sec * speedMultiplier)
-    const BASE_GROUND_SCROLL_SPEED = 72; // pixels per second (from parallaxNew.ts)
     const groundScrollSpeed = BASE_GROUND_SCROLL_SPEED * speedMultiplier;
-    platforms.update(deltaSeconds, groundScrollSpeed, app.renderer.width);
-    holes.update(deltaSeconds, groundScrollSpeed, app.renderer.width);
-    groundHoles.update(deltaSeconds, groundScrollSpeed, app.renderer.width);
+    platforms.update(deltaSeconds, groundScrollSpeed);
+    holes.update(deltaSeconds, groundScrollSpeed);
+    groundHoles.update(deltaSeconds, groundScrollSpeed);
     // Keep laser horizontal speed in sync with ground scroll so pace feels consistent
     laserPhysics.setScrollSpeed(groundScrollSpeed);
 
@@ -846,6 +1100,27 @@ const init = async () => {
     platforms.renderToContainer(platformContainer, 0); // No camera offset for now
     holes.renderToContainer(holeContainer, 0);
 
+    // Debug: Render platform and ground hole hitboxes
+    debugPlatformHitboxContainer.removeChildren();
+
+    // Platform hitboxes (semi-transparent green)
+    const platformHitboxes = platforms.getDebugHitboxes(playerDiameter);
+    platformHitboxes.forEach((hitbox) => {
+      const debugRect = new Graphics();
+      debugRect.rect(hitbox.left, hitbox.top, hitbox.width, hitbox.height);
+      debugRect.fill({ color: 0x00ff7f, alpha: 0.35 }); // Spring green at 35% opacity
+      debugPlatformHitboxContainer.addChild(debugRect);
+    });
+
+    // Ground hole hitboxes (semi-transparent red)
+    const debugGroundHoleHitboxes = groundHoles.getDebugHitboxes();
+    debugGroundHoleHitboxes.forEach((hitbox) => {
+      const debugRect = new Graphics();
+      debugRect.rect(hitbox.left, hitbox.top, hitbox.right - hitbox.left, hitbox.bottom - hitbox.top);
+      debugRect.fill({ color: 0xff4444, alpha: 0.35 }); // Red at 35% opacity
+      debugPlatformHitboxContainer.addChild(debugRect);
+    });
+
     megaLaserHeight = playerDiameter * 1.2;
 
     // Render lasers using pooled sprites with custom texture
@@ -910,11 +1185,11 @@ const init = async () => {
     const willMoreHolesCome = grounds.willNextSegmentBeHole();
 
     // Get actual ground hole hitboxes to determine precise spawn boundaries
-    const groundHoleHitboxes = groundHoles.getDebugHitboxes();
+    const groundHoleHitboxesRuntime = groundHoles.getDebugHitboxes();
     let leftmostHoleX = Infinity;
     let rightmostHoleX = -Infinity;
 
-    groundHoleHitboxes.forEach(hole => {
+    groundHoleHitboxesRuntime.forEach(hole => {
       if (hole.left < leftmostHoleX) {
         leftmostHoleX = hole.left;
       }
@@ -923,7 +1198,7 @@ const init = async () => {
       }
     });
 
-    const hasActiveHoles = groundHoleHitboxes.length > 0;
+    const hasActiveHoles = groundHoleHitboxesRuntime.length > 0;
     if (hasActiveHoles && leftmostHoleX !== Infinity) {
       // Track first hole start for respawn positioning
       if (lastHoleStartX === null || leftmostHoleX < lastHoleStartX) {
@@ -1552,9 +1827,14 @@ const init = async () => {
     platformContainer.position.y = cameraY;
     playfieldContainer.position.y = cameraY; // Player and effects move with ground
 
-    ball.position.x = state.x;
-    ball.position.y = state.y;
-    ball.scale.set(state.scaleX, state.scaleY);
+    // Only update ball position from physics during normal gameplay and after respawn
+    // During dying/waiting/animating_back, ball is manually positioned at spawn point above screen
+    if (respawnState === 'normal' || respawnState === 'respawning' || respawnState === 'resume_pause' || respawnState === 'resume_ramp') {
+      ball.position.x = state.x;
+      ball.position.y = state.y;
+      ball.scale.set(state.scaleX, state.scaleY);
+    }
+    // During other respawn states, ball stays frozen at manually set position (spawn X, above screen)
 
     // Update shadow position - project onto platform surface if player is above one
     const shadowSurface = (() => {
@@ -1799,6 +2079,36 @@ const init = async () => {
         drawFadeLayer(rayY, rayHeight, 0xff6060, 1);
       }
     }
+
+    // Render minimap - capture scene at different zoom/position
+    // Save current scene transform
+    const savedSceneX = scene.position.x;
+    const savedSceneY = scene.position.y;
+    const savedSceneScaleX = scene.scale.x;
+    const savedSceneScaleY = scene.scale.y;
+
+    // Calculate minimap camera transform
+    // Center on player position
+    const playerState = physics.getState();
+    const minimapCenterX = MINIMAP_WIDTH / 2;
+    const minimapCenterY = MINIMAP_HEIGHT / 2;
+
+    // Apply minimap transform - zoom out and center on player
+    scene.scale.set(MINIMAP_ZOOM);
+    scene.position.set(
+      minimapCenterX - playerState.x * MINIMAP_ZOOM,
+      minimapCenterY - playerState.y * MINIMAP_ZOOM
+    );
+
+    // Render scene to minimap texture
+    app.renderer.render({
+      container: scene,
+      target: minimapRenderTexture,
+    });
+
+    // Restore original scene transform for main render
+    scene.position.set(savedSceneX, savedSceneY);
+    scene.scale.set(savedSceneScaleX, savedSceneScaleY);
   });
   ticker.start();
 
@@ -2288,8 +2598,8 @@ const init = async () => {
     const groundY = computePlayerGround() + 40;
     let firstHoleSegmentX = Infinity;
 
-    segments.forEach(seg => {
-      const segmentKey = `${seg.x.toFixed(0)}_${seg.type}`;
+    segments.forEach((seg, idx) => {
+      const segmentKey = `${idx}_${seg.type}`;
       processedSegments.add(segmentKey);
 
       if (seg.type === 'meteor_transition') {
@@ -2306,6 +2616,17 @@ const init = async () => {
         console.log(`[COMET HOLE LEVEL] Pre-spawned hole_transition_back at x=${seg.x.toFixed(0)} width=${seg.width.toFixed(0)}`);
       }
     });
+
+    // Record the initial world X position of meteor_transition when first spawned
+    // This is used as reference point for respawn scroll calculations
+    if (firstHoleSegmentX !== Infinity) {
+      spawnPointX = firstHoleSegmentX;
+      // Update debug indicator position and make visible
+      spawnPointDebug.x = firstHoleSegmentX;
+      spawnPointDebug.y = computePlayerGround();
+      spawnPointDebug.visible = true;
+      console.log(`[RESPAWN] Spawn point recorded at meteor_transition initial X=${spawnPointX.toFixed(0)}`);
+    }
 
     console.log(`[COMET HOLE LEVEL] Started hole sequence with ${holeCount} holes - platforms will spawn dynamically over holes`);
   };

@@ -137,8 +137,9 @@ export class FloatingPlatforms {
    * @param groundSpeed Ground scroll speed in pixels/second
    * @param screenWidth Screen width for culling off-screen platforms
    */
-  update(deltaSeconds: number, groundSpeed: number, screenWidth: number): void {
-    const leftCull = -screenWidth * 0.5; // Cull platforms that are well off-screen left
+  update(deltaSeconds: number, groundSpeed: number): void {
+    // DISABLED: Keep all platforms in memory to build permanent assembly
+    // const leftCull = -screenWidth * 0.5; // Cull platforms that are well off-screen left
 
     this.platforms.forEach((platform) => {
       if (!platform.active) return;
@@ -146,11 +147,7 @@ export class FloatingPlatforms {
       // Move platform left at ground speed
       platform.x -= groundSpeed * deltaSeconds;
 
-      // Deactivate platforms that have scrolled off-screen left
-      if (platform.x + platform.imageWidth < leftCull) {
-        platform.active = false;
-        console.log(`[PLATFORM] Culled platform ${platform.id} at X=${platform.x.toFixed(0)}`);
-      }
+      // Keep all platforms active; do not cull when off-screen so collisions persist when rewinding
     });
   }
 

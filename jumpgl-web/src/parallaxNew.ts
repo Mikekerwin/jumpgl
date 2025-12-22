@@ -32,6 +32,7 @@ class SegmentScroller {
   private segments: Array<{ sprite: Sprite; width: number; type: SegmentType }> = [];
   private pendingSegments: SegmentType[] = [];
   private maxSegmentWidth = 0;
+  private allowNewSegments = true; // Control whether to generate new segments
   private fenceTexture: Texture;
   private fenceSprite: Sprite | null = null;
   private fenceButterflySprite: Sprite | null = null;
@@ -343,19 +344,22 @@ class SegmentScroller {
     }
 
     // Remove segments that scrolled off-screen
-    while (this.segments.length && this.segments[0].sprite.x + this.segments[0].width <= 0) {
-      const removed = this.segments.shift();
-      removed?.sprite.destroy();
-    }
+    // DISABLED: Keep all segments in memory to build permanent assembly
+    // while (this.segments.length && this.segments[0].sprite.x + this.segments[0].width <= 0) {
+    //   const removed = this.segments.shift();
+    //   removed?.sprite.destroy();
+    // }
 
-    // Add new segments to fill screen
-    let cursor = this.segments.length
-      ? this.segments[this.segments.length - 1].sprite.x + this.segments[this.segments.length - 1].width
-      : 0;
-    const coverTarget = this.viewportWidth + this.maxSegmentWidth * 1.2;
-    while (cursor < coverTarget) {
-      const next = this.createSegment(this.getNextSegmentType(), cursor);
-      cursor += next.width;
+    // Add new segments to fill screen (only if allowed - disabled during respawn reverse)
+    if (this.allowNewSegments) {
+      let cursor = this.segments.length
+        ? this.segments[this.segments.length - 1].sprite.x + this.segments[this.segments.length - 1].width
+        : 0;
+      const coverTarget = this.viewportWidth + this.maxSegmentWidth * 1.2;
+      while (cursor < coverTarget) {
+        const next = this.createSegment(this.getNextSegmentType(), cursor);
+        cursor += next.width;
+      }
     }
 
     // Check if transition is complete (no more transition segments visible)
@@ -613,6 +617,15 @@ class SegmentScroller {
       this.fenceButterflyActive = false;
       console.log('[FENCE BUTTERFLY] Starting flight from', this.fenceButterflySprite.y);
     }
+  }
+
+  /**
+   * Enable or disable generation of new ground segments
+   * Used during respawn to prevent new segments from being created during reverse parallax
+   */
+  setAllowNewSegments(allow: boolean): void {
+    this.allowNewSegments = allow;
+    console.log(`[SEGMENT GENERATION] ${allow ? 'Enabled' : 'Disabled'}`);
   }
 }
 
@@ -977,5 +990,13 @@ export class ParallaxGrounds {
    */
   checkButterflyProximity(playerX: number): void {
     this.scroller.checkButterflyProximity(playerX);
+  }
+
+  /**
+   * Enable or disable generation of new ground segments
+   * Used during respawn to prevent segments from being created during reverse parallax
+   */
+  setAllowNewSegments(allow: boolean): void {
+    this.scroller.setAllowNewSegments(allow);
   }
 }
