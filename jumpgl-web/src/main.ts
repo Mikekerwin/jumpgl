@@ -435,10 +435,8 @@ const init = async () => {
   // Rest of player intro animation state
   let playerIntroPhase: 'initial' | 'moveout' | 'jump1' | 'jump2' | 'grow' | 'delay' | 'complete' = 'initial';
   let playerIntroStartTime = performance.now();
-  let playerIntroJumpCount = 0;
   const playerIntroNormalSize = playerDiameter; // Normal size
   let playerIntroCurrentSize = playerIntroStartSize;
-  let playerIntroGrowStartX = 0; // X position where jumps landed (set when entering grow phase)
 
   // Post-intro easing state
   let postIntroEaseActive = false;
@@ -447,7 +445,6 @@ const init = async () => {
 
   // Calculate cottage door position in world coordinates
   // Cottage image is 2048x900, player starts at 655px from left (door position)
-  const cottageImageWidth = 2048;
   const cottageImageHeight = 900;
   const playerInCottageX = 655; // X position within cottage image (door location)
 
