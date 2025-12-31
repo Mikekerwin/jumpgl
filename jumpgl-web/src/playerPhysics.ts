@@ -28,6 +28,7 @@ export class PlayerPhysics {
   private y: number;
   private velocity = 0;
   private readonly gravity: number;
+  private currentGravity: number; // Can be temporarily modified for intro animations
   private readonly jumpForce: number;
   private readonly bounceDamping = 0.45;
   private readonly minBounceVelocity = 140;
@@ -44,6 +45,8 @@ export class PlayerPhysics {
   private horizontalVelocity = 0; // Horizontal movement velocity (pixels per second)
   private targetX = 0; // Target X position from mouse
   private readonly DECELERATION_ZONE = 100; // Start slowing down 100px from edges
+  private softFollowMode = false; // If true, lerp to mouse instead of instant snap
+  private softFollowLerp = 0.08; // Lerp factor for soft follow
 
   // Jump input state (tracks whether jump button is held)
   private isCharging = false;
@@ -58,10 +61,12 @@ export class PlayerPhysics {
   private surfaceOverrideY: number | null = null;
   private platformBounceCount: number = 0;
   private groundCollisionEnabled = true;
+  private platformsJumpedThrough: Set<number> = new Set(); // Track platform IDs jumped through from below
 
   constructor(opts: PlayerPhysicsOptions) {
     this.radius = opts.radius;
     this.gravity = opts.gravity ?? 9000; // Increased from 6525 (~38% increase to lower jump height)
+    this.currentGravity = this.gravity; // Start with normal gravity
     this.jumpForce = opts.jumpForce ?? 2250; // Base jump force
     this.holdBoost = this.gravity * HOLD_FORCE_RATIO; // Match original hold/grav ratio
     this.groundSurface = opts.groundSurface;
@@ -74,8 +79,8 @@ export class PlayerPhysics {
   }
 
   update(deltaSeconds: number): PlayerPhysicsState {
-    // Apply gravity
-    this.velocity += this.gravity * deltaSeconds;
+    // Apply gravity (use currentGravity which can be temporarily modified)
+    this.velocity += this.currentGravity * deltaSeconds;
 
     // Apply hold boost (counteracts gravity to extend jump)
     if (this.isHolding) {
@@ -131,9 +136,16 @@ export class PlayerPhysics {
       // Apply horizontal velocity
       this.x += this.horizontalVelocity * deltaSeconds;
     } else {
-      // Not approaching a boundary - lock to mouse position (instant tracking)
-      this.x = this.targetX;
-      this.horizontalVelocity = 0; // Reset velocity when tracking directly
+      // Not approaching a boundary - use soft follow if enabled, otherwise instant tracking
+      if (this.softFollowMode) {
+        // Lerp to mouse position instead of instant snap
+        this.x += (this.targetX - this.x) * this.softFollowLerp;
+        this.horizontalVelocity = 0;
+      } else {
+        // Normal instant tracking
+        this.x = this.targetX;
+        this.horizontalVelocity = 0;
+      }
     }
 
     // Clamp to boundaries
@@ -147,6 +159,7 @@ export class PlayerPhysics {
       this.y = effectiveGround;
       this.jumpCount = 0; // Reset jump count when touching ground/platform
       this.hasJumpedFlag = false;
+      this.platformsJumpedThrough.clear(); // Clear tracked platforms when touching ground
       if (this.velocity > 0) {
         if (isOnPlatform) {
           // Platform collision: allow 3 bounces then stop
@@ -262,8 +275,9 @@ export class PlayerPhysics {
   /**
    * Land the player on a platform surface (allows bouncing with limit)
    * @param surfaceY Y position where player's top should be
+   * @param platformId Platform ID to clear from jumped-through list
    */
-  landOnSurface(surfaceY: number): void {
+  landOnSurface(surfaceY: number, platformId?: number): void {
     // Only set override if it's a new platform or first landing
     const isNewPlatform = this.surfaceOverrideY !== surfaceY;
     this.surfaceOverrideY = surfaceY;
@@ -271,6 +285,10 @@ export class PlayerPhysics {
     // Reset bounce counter when landing on a new platform
     if (isNewPlatform) {
       this.platformBounceCount = 0;
+    }
+    // Clear this platform from the jumped-through list when we land on it
+    if (platformId !== undefined) {
+      this.platformsJumpedThrough.delete(platformId);
     }
     // Don't force position or velocity - let physics handle bouncing naturally
   }
@@ -283,6 +301,75 @@ export class PlayerPhysics {
     this.platformBounceCount = 0; // Reset bounce counter when leaving platform
   }
 
+  /**
+   * Mark a platform as jumped through from below
+   * @param platformId Platform ID that player jumped through
+   */
+  markPlatformJumpedThrough(platformId: number): void {
+    this.platformsJumpedThrough.add(platformId);
+  }
+
+  /**
+   * Check if a specific platform was jumped through
+   * @param platformId Platform ID to check
+   */
+  wasPlatformJumpedThrough(platformId: number): boolean {
+    return this.platformsJumpedThrough.has(platformId);
+  }
+
+  /**
+   * Clear all jumped-through platforms
+   */
+  clearJumpedThroughPlatforms(): void {
+    this.platformsJumpedThrough.clear();
+  }
+
+  /**
+   * Get the set of platforms jumped through (for collision detection)
+   */
+  getJumpedThroughPlatforms(): Set<number> {
+    return this.platformsJumpedThrough;
+  }
+
+  /**
+   * Set player position (for intro animations, respawn, etc.)
+   */
+  setPosition(x: number, y: number): void {
+    this.x = x;
+    this.y = y;
+    this.targetX = x; // Also reset target to prevent drift
+  }
+
+  /**
+   * Temporarily increase gravity (for intro animations)
+   * @param multiplier Gravity multiplier (e.g., 3.0 for 3x gravity)
+   */
+  setGravityMultiplier(multiplier: number): void {
+    this.currentGravity = this.gravity * multiplier;
+  }
+
+  /**
+   * Restore gravity to normal
+   */
+  restoreNormalGravity(): void {
+    this.currentGravity = this.gravity;
+  }
+
+  /**
+   * Reset scale to normal (1.0, 1.0)
+   */
+  resetScale(): void {
+    this.scaleX = 1.0;
+    this.scaleY = 1.0;
+  }
+
+  /**
+   * Enable soft mouse following (lerp to mouse instead of instant snap)
+   */
+  setSoftFollowMode(enabled: boolean): void {
+    this.softFollowMode = enabled;
+  }
+
   getState() {
     return {
       x: this.x,
@@ -290,6 +377,10 @@ export class PlayerPhysics {
       scaleX: this.scaleX,
       scaleY: this.scaleY,
     };
+  }
+
+  getRadius(): number {
+    return this.radius;
   }
 
   setGroundCollisionEnabled(enabled: boolean): void {
@@ -314,6 +405,7 @@ export class PlayerPhysics {
     this.isHolding = false;
     this.holdStartTime = 0;
     this.groundCollisionEnabled = true;
+    this.platformsJumpedThrough.clear();
   }
 
   /**

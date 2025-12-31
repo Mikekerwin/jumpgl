@@ -225,12 +225,14 @@ export class FloatingPlatforms {
    * @param currentBounds Player bounds this frame
    * @param previousBounds Player bounds last frame
    * @param playerVelocity Player's vertical velocity
+   * @param platformsJumpedThrough Set of platform IDs that player jumped through from below
    * @returns Platform collision info or null
    */
   getSupportingPlatform(
     currentBounds: PlayerBounds,
     previousBounds: PlayerBounds,
-    playerVelocity: number
+    playerVelocity: number,
+    platformsJumpedThrough: Set<number> = new Set()
   ): PlatformCollision | null {
     const playerHeight = currentBounds.bottom - currentBounds.top;
     const tolerance = Math.max(2, playerHeight * 0.05);
@@ -258,10 +260,17 @@ export class FloatingPlatforms {
       // Check if approaching from above (previous position was above platform)
       const approachingFromAbove = previousBounds.top + tolerance <= platform.surfaceY;
 
-      // Check if player crossed the platform surface this frame
+      // Check if this specific platform was jumped through from below
+      // If so, allow landing on it regardless of previous position
+      const wasJumpedThrough = platformsJumpedThrough.has(platform.id);
+
+      // Treat platforms that were jumped through as if approaching from above
+      const effectiveApproachingFromAbove = approachingFromAbove || wasJumpedThrough;
+
+      // Check if player crossed the platform surface this frame (descending from above)
       const crossedThisFrame =
         descending &&
-        approachingFromAbove &&
+        effectiveApproachingFromAbove &&
         previousBounds.bottom <= platformBottomCollision + tolerance &&
         currentBounds.bottom >= platformBottomCollision - tolerance;
 
@@ -270,7 +279,7 @@ export class FloatingPlatforms {
         Math.abs(currentBounds.bottom - platformBottomCollision) <= tolerance &&
         Math.abs(playerVelocity) < 0.8;
 
-      // Return platform collision if either condition is met
+      // Return platform collision if any landing condition is met
       if (crossedThisFrame || resting) {
         return {
           id: platform.id,
@@ -282,6 +291,99 @@ export class FloatingPlatforms {
     }
 
     return null;
+  }
+
+  /**
+   * Get platforms that player is currently passing through while ascending
+   * Used to mark platforms as "jumped through" so player can land on them later
+   *
+   * @param currentBounds Player bounds this frame
+   * @param previousBounds Player bounds last frame
+   * @param playerVelocity Player's vertical velocity
+   * @returns Array of platform IDs being passed through or overlapping
+   */
+  getPlatformsPassedThrough(
+    currentBounds: PlayerBounds,
+    previousBounds: PlayerBounds,
+    playerVelocity: number
+  ): number[] {
+    const platformsPassed: number[] = [];
+
+    // Only detect when ascending (moving upward with negative velocity)
+    if (playerVelocity >= 0) return platformsPassed;
+
+    const playerHeight = currentBounds.bottom - currentBounds.top;
+    const tolerance = Math.max(2, playerHeight * 0.05);
+
+    // When jumping, mark ALL platforms above the player within a generous range
+    // This ensures platforms are marked even when jumping from far below
+    const DETECTION_RANGE = 800; // pixels - mark platforms up to this distance horizontally
+
+    for (const platform of this.platforms) {
+      if (!platform.active) continue;
+
+      const platformLeft = platform.x;
+      const platformRight = platform.x + platform.width;
+      const platformCenterX = platformLeft + (platformRight - platformLeft) / 2;
+      const playerCenterX = (currentBounds.left + currentBounds.right) / 2;
+
+      // Check if platform is within detection range horizontally
+      const horizontalDistance = Math.abs(platformCenterX - playerCenterX);
+      const withinRange = horizontalDistance < DETECTION_RANGE;
+
+      // Also check if there's current horizontal overlap
+      const horizontalOverlap = !(
+        currentBounds.right < platformLeft ||
+        currentBounds.left > platformRight
+      );
+
+      // Skip if platform is too far away horizontally
+      if (!withinRange && !horizontalOverlap) continue;
+
+      // Mark platform if ANY of these conditions are true while ascending:
+
+      // Case 1: Player is currently below the platform and moving upward toward it
+      // This catches jumping from far below - mark it immediately so it's ready when we reach it
+      const isBelowAndAscending = currentBounds.top > platform.surfaceY;
+
+      // Case 2: Player passed through the platform surface this frame
+      const wasBelow = previousBounds.top > platform.surfaceY;
+      const isNowAbove = currentBounds.bottom <= platform.surfaceY + playerHeight;
+      const crossedThisFrame = wasBelow && isNowAbove;
+
+      // Case 3: Player is jumping while already at platform level (overlapping vertically)
+      const verticallyOverlapping =
+        currentBounds.top <= platform.surfaceY + tolerance &&
+        currentBounds.bottom >= platform.surfaceY - tolerance;
+
+      if (isBelowAndAscending || crossedThisFrame || verticallyOverlapping) {
+        platformsPassed.push(platform.id);
+      }
+    }
+
+    return platformsPassed;
+  }
+
+  /**
+   * Get all platform IDs that are currently above the player
+   * Used to mark platforms when player jumps in the air
+   *
+   * @param playerTop Top Y position of player
+   * @returns Array of platform IDs above the player
+   */
+  getPlatformsAbovePlayer(playerTop: number): number[] {
+    const platformsAbove: number[] = [];
+
+    for (const platform of this.platforms) {
+      if (!platform.active) continue;
+
+      // Platform is above player if its surface Y is less than player's top
+      if (platform.surfaceY < playerTop) {
+        platformsAbove.push(platform.id);
+      }
+    }
+
+    return platformsAbove;
   }
 
   /**

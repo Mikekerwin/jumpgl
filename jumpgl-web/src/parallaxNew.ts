@@ -12,7 +12,7 @@ const TRANSITION_SPEED_MULTIPLIER = 1.15;
 /**
  * Segment types: biome segments that repeat, or transition segments between biomes
  */
-type SegmentType = BiomeType | 'transition' | 'meteor_transition' | 'cloud_hole' | 'hole_transition_back';
+type SegmentType = BiomeType | 'transition' | 'meteor_transition' | 'cloud_hole' | 'hole_transition_back' | 'cottage_start';
 
 interface SegmentTextures {
   [key: string]: Texture; // Dynamic based on loaded biomes
@@ -24,6 +24,7 @@ interface SegmentTextures {
  */
 class SegmentScroller {
   private container: Container;
+  private foregroundContainer: Container; // For elements that render above the player
   private textures: SegmentTextures;
   private biomeManager: BiomeSequenceManager;
   private viewportWidth: number;
@@ -35,6 +36,8 @@ class SegmentScroller {
   private allowNewSegments = true; // Control whether to generate new segments
   private fenceTexture: Texture;
   private fenceSprite: Sprite | null = null;
+  private cottageOverlayTexture: Texture;
+  private cottageOverlaySprite: Sprite | null = null;
   private fenceButterflySprite: Sprite | null = null;
   private fenceButterflyActive = true; // Butterfly is on fence and stationary
   private fenceButterflyFrames: Texture[] = [];
@@ -59,16 +62,22 @@ class SegmentScroller {
     viewportWidth: number,
     segmentHeight: number,
     offsetY: number,
-    fenceTexture: Texture
+    fenceTexture: Texture,
+    cottageOverlayTexture: Texture
   ) {
     this.container = new Container();
     parent.addChild(this.container);
+
+    // Create separate foreground container (will be added to parent later, above player)
+    this.foregroundContainer = new Container();
+
     this.textures = textures;
     this.biomeManager = biomeManager;
     this.viewportWidth = viewportWidth;
     this.segmentHeight = segmentHeight;
     this.offsetY = offsetY;
     this.fenceTexture = fenceTexture;
+    this.cottageOverlayTexture = cottageOverlayTexture;
     this.buildInitialSegments();
   }
 
@@ -82,6 +91,12 @@ class SegmentScroller {
       this.fenceSprite = null;
     }
 
+    // Destroy old cottage overlay sprite if it exists
+    if (this.cottageOverlaySprite) {
+      this.cottageOverlaySprite.destroy();
+      this.cottageOverlaySprite = null;
+    }
+
     // Destroy old butterfly sprite if it exists
     if (this.fenceButterflySprite) {
       this.fenceButterflySprite.destroy();
@@ -91,9 +106,37 @@ class SegmentScroller {
 
     this.maxSegmentWidth = 0;
     let cursor = 0;
+    let segmentCount = 0;
     while (cursor < this.viewportWidth * 2) {
-      const next = this.createSegment(this.getNextSegmentType(), cursor);
+      // Insert cottage_start as the first segment (index 0)
+      const segmentType = segmentCount === 0 ? 'cottage_start' : this.getNextSegmentType();
+      const next = this.createSegment(segmentType, cursor);
       cursor += next.width;
+      segmentCount++;
+    }
+
+    // Create cottage overlay on the first segment (on top of cottage_start)
+    if (this.segments.length > 0) {
+      const firstSegment = this.segments[0];
+
+      // Only create overlay if first segment is cottage_start
+      if (firstSegment.type === 'cottage_start') {
+        this.cottageOverlaySprite = new Sprite(this.cottageOverlayTexture);
+
+        // Get the cottage_start segment's actual rendered dimensions
+        const cottageSprite = firstSegment.sprite;
+        const cottageScale = cottageSprite.scale.x;
+
+        // Scale overlay to match cottage height (same scale as cottage)
+        this.cottageOverlaySprite.scale.set(cottageScale);
+
+        // Position overlay at same left-bottom point as cottage
+        this.cottageOverlaySprite.x = cottageSprite.x;
+        this.cottageOverlaySprite.y = cottageSprite.y;
+
+        // Add overlay to foreground container (renders above player)
+        this.foregroundContainer.addChild(this.cottageOverlaySprite);
+      }
     }
 
     // Create fence sprite on the second segment
@@ -155,13 +198,38 @@ class SegmentScroller {
 
   private createSegment(type: SegmentType, x: number): { sprite: Sprite; width: number; type: SegmentType } {
     const sprite = new Sprite(this.textures[type]);
+    const textureWidth = sprite.texture.width || 1;
     const textureHeight = sprite.texture.height || 1;
-    const scale = this.segmentHeight / textureHeight;
+
+    let scale: number;
+    let width: number;
+
+    // Cottage texture needs special handling - scale by width to match other ground segments
+    if (type === 'cottage_start') {
+      // Get reference width from cloudGround texture
+      const cloudGroundTexture = this.textures['cloud'];
+      const cloudGroundWidth = cloudGroundTexture.width || 1;
+      const cloudGroundHeight = cloudGroundTexture.height || 1;
+      const cloudGroundScale = this.segmentHeight / cloudGroundHeight;
+      const targetWidth = cloudGroundWidth * cloudGroundScale;
+
+      // Scale cottage to match target width
+      scale = targetWidth / textureWidth;
+      width = targetWidth;
+
+      // Position cottage bottom-aligned with ground (offsetY is top of ground)
+      sprite.x = x;
+      sprite.y = this.offsetY + this.segmentHeight - (textureHeight * scale);
+    } else {
+      // Normal scaling based on height for all other segments
+      scale = this.segmentHeight / textureHeight;
+      width = textureWidth * scale;
+      sprite.x = x;
+      sprite.y = this.offsetY;
+    }
+
     sprite.scale.set(scale);
-    sprite.x = x;
-    sprite.y = this.offsetY;
     this.container.addChild(sprite);
-    const width = (sprite.texture.width || 1) * scale;
     this.maxSegmentWidth = Math.max(this.maxSegmentWidth, width);
     const segment = { sprite, width, type };
     this.segments.push(segment);
@@ -218,6 +286,11 @@ class SegmentScroller {
     this.segments.forEach(({ sprite }) => {
       sprite.x -= scrollAmount;
     });
+
+    // Scroll cottage overlay sprite with ground
+    if (this.cottageOverlaySprite) {
+      this.cottageOverlaySprite.x -= scrollAmount;
+    }
 
     // Scroll fence sprite with ground
     if (this.fenceSprite) {
@@ -627,6 +700,13 @@ class SegmentScroller {
     this.allowNewSegments = allow;
     console.log(`[SEGMENT GENERATION] ${allow ? 'Enabled' : 'Disabled'}`);
   }
+
+  /**
+   * Get the foreground container (for elements that render above the player)
+   */
+  getForegroundContainer(): Container {
+    return this.foregroundContainer;
+  }
 }
 
 const FOREST_TOP_CROP = 2; // pixels to trim from the top of forest/transition images
@@ -650,6 +730,8 @@ export type ParallaxTextures = {
   forestTrees: Texture;
   forestTransition: Texture;
   cloudGround: Texture;
+  cloudCottageStart: Texture;
+  cloudCottageStartOverlay: Texture;
   transitionGround: Texture;
   forestGround: Texture;
   meteorGroundTransition: Texture;
@@ -667,6 +749,8 @@ export const loadParallaxTextures = async (): Promise<ParallaxTextures> => {
       forestTrees: 'RepeatTreeLineWithTop.webp',
       forestTransition: 'TransitionTreeLineWithTop.webp',
       cloudGround: 'cloud_light_ground.webp',
+      cloudCottageStart: 'cloud_light_cottage_start_open.webp',
+      cloudCottageStartOverlay: 'cloud_light_cottage_start_overlay.webp',
       transitionGround: 'cloud_light_ground_forest_transition.webp',
       forestGround: 'forest_light_ground.webp',
       meteorGroundTransition: 'meteor_ground_transition.webp',
@@ -921,6 +1005,7 @@ export class ParallaxGrounds {
       meteor_transition: textures.meteorGroundTransition,
       cloud_hole: textures.cloudGroundHole,
       hole_transition_back: textures.cloudGroundHoleTransitionBack,
+      cottage_start: textures.cloudCottageStart,
     };
 
     this.scroller = new SegmentScroller(
@@ -930,7 +1015,8 @@ export class ParallaxGrounds {
       width,
       this.groundHeight,
       this.groundTop,
-      textures.cloudFence
+      textures.cloudFence,
+      textures.cloudCottageStartOverlay
     );
   }
 
@@ -951,6 +1037,13 @@ export class ParallaxGrounds {
 
   getSurfaceY(): number {
     return this.groundTop;
+  }
+
+  /**
+   * Get the foreground container (for elements that render above the player)
+   */
+  getForegroundContainer(): Container {
+    return this.scroller.getForegroundContainer();
   }
 
   /**

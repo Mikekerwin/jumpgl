@@ -400,16 +400,27 @@ const init = async () => {
   // Add charge particle sprite (same layer as jump dust)
   playfieldContainer.addChild(chargeSprite);
 
+  // Player intro animation state - declare before ball setup
+  let playerIntroActive = true;
+  const playerIntroStartSize = playerDiameter * 0.75; // 75% of normal size (25% smaller)
+
   const ballBaseColor = 0x4fc3f7;
   const ballHitColor = 0xff2020;
   let currentBallColor = ballBaseColor;
   const ball = new Graphics();
   const setBallColor = (color: number) => {
     currentBallColor = color;
+    // During intro, don't redraw - size is managed by intro animation
+    if (playerIntroActive) return;
     ball.clear();
     ball.circle(0, 0, playerRadius).fill({ color });
   };
-  setBallColor(ballBaseColor);
+
+  // Draw ball initially at intro size (don't call setBallColor since intro is active)
+  const initialRadius = playerIntroActive ? playerIntroStartSize / 2 : playerRadius;
+  ball.clear();
+  ball.circle(0, 0, initialRadius).fill({ color: ballBaseColor });
+
   const initialGround = computePlayerGround();
   ball.position.set(initialPlayerX(), initialGround - playerRadius);
   playfieldContainer.addChild(ball);
@@ -420,6 +431,35 @@ const init = async () => {
     initialX: initialPlayerX(),
     screenWidth: app.renderer.width,
   });
+
+  // Rest of player intro animation state
+  let playerIntroPhase: 'initial' | 'moveout' | 'jump1' | 'jump2' | 'grow' | 'delay' | 'complete' = 'initial';
+  let playerIntroStartTime = performance.now();
+  let playerIntroJumpCount = 0;
+  const playerIntroNormalSize = playerDiameter; // Normal size
+  let playerIntroCurrentSize = playerIntroStartSize;
+  let playerIntroGrowStartX = 0; // X position where jumps landed (set when entering grow phase)
+
+  // Post-intro easing state
+  let postIntroEaseActive = false;
+  let postIntroEaseStartTime = 0;
+  const postIntroEaseDuration = 1.5; // 1.5 seconds to ease into full speed
+
+  // Calculate cottage door position in world coordinates
+  // Cottage image is 2048x900, player starts at 655px from left (door position)
+  const cottageImageWidth = 2048;
+  const cottageImageHeight = 900;
+  const playerInCottageX = 655; // X position within cottage image (door location)
+
+  // Get actual cottage scale and position from parallax system
+  const groundHeight = grounds.getSurfaceY();
+  const cottageScale = groundHeight / cottageImageHeight;
+
+  // Convert cottage-relative position to world position
+  const playerIntroStartX = playerInCottageX * cottageScale;
+
+  // Slow parallax during intro
+  let introParallaxSpeed = 0.2; // 20% of normal speed
 
   // Start with full-screen movement range (enemy not visible yet)
   // Player can move from ~5% to ~95% of screen width
@@ -460,6 +500,10 @@ const init = async () => {
   playfieldContainer.addChild(enemyChargeSprite);
   playfieldContainer.addChild(projectileContainer);
   playfieldContainer.addChild(butterflyContainer);
+
+  // Add ground foreground container (cottage overlay, etc.) above player
+  playfieldContainer.addChild(grounds.getForegroundContainer());
+
   // Place wind on the sky layer: between sky (index 0) and forest/transition (index 1)
   backgrounds.getRoot().addChildAt(windSprite, 1);
 
@@ -789,6 +833,244 @@ const init = async () => {
       }
     }
 
+    // Player intro animation - starts small behind cottage door, jumps out and grows
+    if (playerIntroActive) {
+      const now = performance.now();
+      const elapsed = (now - playerIntroStartTime) / 1000; // seconds
+
+      if (playerIntroPhase === 'initial') {
+        // Phase 1: Small player behind door, slow parallax - wait 0.5s
+        speedMultiplier = introParallaxSpeed;
+
+        // Position player at cottage door at ground level
+        const startRadius = playerIntroStartSize / 2;
+        const cottageGroundY = groundSurface() + playerIntroStartSize * GROUND_PLAYER_DEPTH - startRadius;
+
+        ball.position.x = playerIntroStartX;
+        ball.position.y = cottageGroundY;
+
+        // Set small size
+        playerIntroCurrentSize = playerIntroStartSize;
+        ball.clear();
+        ball.circle(0, 0, startRadius).fill({ color: currentBallColor });
+
+        // Wait 0.5s then start moving out
+        if (elapsed > 0.5) {
+          playerIntroPhase = 'moveout';
+          playerIntroStartTime = now;
+          console.log('[PLAYER INTRO] Moving out of door');
+        }
+      } else if (playerIntroPhase === 'moveout') {
+        // Phase 2: Move out of door slowly to the right for 0.5s before jumping
+        speedMultiplier = introParallaxSpeed;
+
+        const moveoutDuration = 0.5;
+        const moveoutSpeed = 80; // Slower movement out of door
+
+        // Keep small size during moveout
+        const radius = playerIntroStartSize / 2;
+        ball.clear();
+        ball.circle(0, 0, radius).fill({ color: currentBallColor });
+
+        // Move right slowly
+        ball.position.x += moveoutSpeed * deltaSeconds;
+
+        // Keep at ground level
+        const groundY = groundSurface() + playerIntroStartSize * GROUND_PLAYER_DEPTH - radius;
+        ball.position.y = groundY;
+
+        // After 0.5s, start first jump
+        if (elapsed > moveoutDuration) {
+          playerIntroPhase = 'jump1';
+          playerIntroStartTime = now;
+
+          // Increase gravity for smaller jumps (2x gravity = shorter jumps)
+          physics.setGravityMultiplier(2.0);
+
+          // Sync physics and trigger first jump
+          physics.setPosition(ball.position.x, ball.position.y);
+          physics.startJump();
+          physics.endJump();
+
+          // Spawn butterflies from cottage door - timing starts from first jump
+          if (butterflyManager && !butterfliesSpawned && biomeManager.getCurrentBiome() === 'cloud') {
+            const groundY = computePlayerGround();
+            const doorX = playerIntroStartX; // Cottage door X position
+
+            butterflyVariants.forEach((variant, idx) => {
+              for (let i = 0; i < variant.count; i++) {
+                // Spawn delays from when player jumps: 0.70s, 1.75s, 2.5s
+                let spawnDelay;
+                if (idx === 0) spawnDelay = 0.70;
+                else if (idx === 1) spawnDelay = 1.75;
+                else spawnDelay = 2.5;
+
+                // Start LEFT of cottage door to account for parallax scrolling them right during spawn delay
+                const parallaxOffset = spawnDelay * 50; // ~50px/sec parallax movement during delay
+                const startX = doorX - 100 - parallaxOffset; // Base 100px left + delay compensation
+
+                const jitterY = groundY - playerRadius * (3.5 + Math.random() * 2);
+                const baseScale = 0.14 + Math.random() * 0.04;
+                const extraSize = (idx === 0 && i === 0) ? 1.6 : 1.05; // first one slightly bigger
+                const scale = baseScale * extraSize;
+
+                butterflyManager.spawn({
+                  x: startX,
+                  y: jitterY,
+                  scale,
+                  tint: variant.tint,
+                  baseSpeed: 70 + Math.random() * 50,
+                  amplitude: 30 + Math.random() * 30,
+                  frequency: 0.6 + Math.random() * 0.6,
+                  spawnDelay,
+                  useOrangeFrames: variant.useOrange,
+                });
+              }
+            });
+
+            butterfliesSpawned = true;
+            console.log('[PLAYER INTRO] Butterflies queued from first jump at X=' + doorX);
+          }
+
+          console.log('[PLAYER INTRO] First jump at X=' + ball.position.x + ' with 2x gravity');
+        }
+      } else if (playerIntroPhase === 'jump1') {
+        // Phase 3: First jump - move right while jumping and growing
+        speedMultiplier = introParallaxSpeed;
+
+        const jumpHorizontalSpeed = 400; // Much faster to cover 200px total
+        ball.position.x += jumpHorizontalSpeed * deltaSeconds;
+
+        // Grow from 75% to 87.5% during first jump (halfway to normal)
+        const jumpProgress = Math.min(elapsed / 0.4, 1.0); // 0.4s jump duration
+        const midSize = playerIntroStartSize + (playerIntroNormalSize - playerIntroStartSize) * 0.5;
+        playerIntroCurrentSize = playerIntroStartSize + (midSize - playerIntroStartSize) * jumpProgress;
+        const radius = playerIntroCurrentSize / 2;
+
+        ball.clear();
+        ball.circle(0, 0, radius).fill({ color: currentBallColor });
+
+        // Check if first jump landed
+        const groundY = groundSurface() + playerIntroCurrentSize * GROUND_PLAYER_DEPTH - radius;
+        if (elapsed > 0.2 && Math.abs(ball.position.y - groundY) < 5) {
+          playerIntroPhase = 'jump2';
+          playerIntroStartTime = now;
+
+          // Trigger second jump
+          physics.setPosition(ball.position.x, ball.position.y);
+          physics.startJump();
+          physics.endJump();
+          console.log('[PLAYER INTRO] Second jump at X=' + ball.position.x);
+        }
+      } else if (playerIntroPhase === 'jump2') {
+        // Phase 4: Second jump - continue moving right and finish growing
+        speedMultiplier = introParallaxSpeed;
+
+        const jumpHorizontalSpeed = 400; // Same speed to reach 200px total
+        ball.position.x += jumpHorizontalSpeed * deltaSeconds;
+
+        // Grow from 87.5% to 100% during second jump
+        const jumpProgress = Math.min(elapsed / 0.4, 1.0);
+        const midSize = playerIntroStartSize + (playerIntroNormalSize - playerIntroStartSize) * 0.5;
+        playerIntroCurrentSize = midSize + (playerIntroNormalSize - midSize) * jumpProgress;
+        const radius = playerIntroCurrentSize / 2;
+
+        ball.clear();
+        ball.circle(0, 0, radius).fill({ color: currentBallColor });
+
+        // Check if second jump landed
+        const groundY = groundSurface() + playerIntroCurrentSize * GROUND_PLAYER_DEPTH - radius;
+        if (elapsed > 0.25 && Math.abs(ball.position.y - groundY) < 5) {
+          playerIntroPhase = 'delay';
+          playerIntroStartTime = now;
+          playerIntroCurrentSize = playerIntroNormalSize; // Ensure final size
+
+          // STOP all movement - lock position where we landed
+          physics.setPosition(ball.position.x, ball.position.y);
+          physics.forceVelocity(0);
+          physics.restoreNormalGravity();
+
+          console.log('[PLAYER INTRO] Jumps complete at X=' + ball.position.x + ', stopped for 2s delay');
+        }
+      } else if (playerIntroPhase === 'delay') {
+        // Phase 5: Wait at landed position with normal size before giving control
+        speedMultiplier = 1.0;
+
+        // Keep at normal size and stay at landed position
+        ball.clear();
+        ball.circle(0, 0, playerRadius).fill({ color: currentBallColor });
+
+        // Keep position locked where we landed (don't move to center)
+        const groundY = computePlayerGround() - playerRadius;
+        ball.position.y = groundY;
+        // X position stays where we landed from jumps
+        physics.setPosition(ball.position.x, ball.position.y);
+        physics.forceVelocity(0);
+
+        // Wait 2 seconds before giving control
+        if (elapsed > 2.0) {
+          playerIntroPhase = 'complete';
+          playerIntroStartTime = now;
+
+          console.log('[PLAYER INTRO] Entering complete phase - will enable control next frame');
+        }
+      } else if (playerIntroPhase === 'complete') {
+        // Phase 6: 0.5s delay before enabling player control
+        speedMultiplier = 1.0;
+        ball.clear();
+        ball.circle(0, 0, playerRadius).fill({ color: currentBallColor });
+
+        const groundY = computePlayerGround() - playerRadius;
+        ball.position.y = groundY;
+        // Keep X where we are (already landed from jumps)
+
+        // Lock physics at current position
+        physics.setPosition(ball.position.x, ball.position.y);
+        physics.forceVelocity(0);
+        physics.resetScale();
+        ball.scale.set(1, 1);
+
+        // Wait 0.5s before enabling control
+        if (elapsed > 0.5) {
+          // Now safe to enable player control
+          playerIntroActive = false;
+
+          // Activate post-intro easing
+          postIntroEaseActive = true;
+          postIntroEaseStartTime = now;
+
+          // Enable soft mouse following for smooth easing
+          physics.setSoftFollowMode(true);
+
+          // Set mouse position to player position to prevent immediate drift toward mouse
+          physics.setMousePosition(ball.position.x);
+
+          console.log('[PLAYER INTRO] Complete - player control enabled with easing at X=' + ball.position.x);
+        }
+      }
+    }
+
+    // Post-intro easing: gradually increase parallax speed from 1.0 to full speed
+    if (postIntroEaseActive) {
+      const currentTime = performance.now();
+      const elapsed = (currentTime - postIntroEaseStartTime) / 1000;
+      if (elapsed < postIntroEaseDuration) {
+        // Ease out: start at 1.0, ramp to full speed over 1.5s
+        const t = elapsed / postIntroEaseDuration;
+        const easeOut = 1 - Math.pow(1 - t, 2); // Quadratic ease out
+        // Start at base speed (1.0), allow it to go higher as player moves
+        // We'll modify speedMultiplier only if it's trying to go faster
+        if (speedMultiplier > 1.0) {
+          speedMultiplier = 1.0 + (speedMultiplier - 1.0) * easeOut;
+        }
+      } else {
+        // Easing complete - disable soft follow and return to instant tracking
+        postIntroEaseActive = false;
+        physics.setSoftFollowMode(false);
+        console.log('[POST-INTRO] Easing complete - full speed enabled');
+      }
+    }
+
     backgrounds.update(deltaSeconds, speedMultiplier);
     grounds.update(deltaSeconds, speedMultiplier);
     dustField.update();
@@ -1052,35 +1334,9 @@ const init = async () => {
     // chargeCtx.restore();
     // chargeTexture.source.update();
 
-    // Butterflies (meadow only, near start)
-    if (butterflyManager && !butterfliesSpawned && biomeManager.getCurrentBiome() === 'cloud') {
-      const groundY = computePlayerGround();
-
-      butterflyVariants.forEach((variant, idx) => {
-        for (let i = 0; i < variant.count; i++) {
-          // Start off-screen left with random offset so arrivals are staggered
-          const startX = -200 - Math.random() * 200 - idx * 40 - i * 25;
-          const jitterY = groundY - playerRadius * (3.5 + Math.random() * 2);
-          const baseScale = 0.14 + Math.random() * 0.04;
-          const extraSize = (idx === 0 && i === 0) ? 1.6 : 1.05; // first one slightly bigger
-          const scale = baseScale * extraSize;
-          const spawnDelay = Math.random() * 1.5; // seconds
-          butterflyManager.spawn({
-            x: startX,
-            y: jitterY,
-            scale,
-            tint: variant.tint,
-            baseSpeed: 70 + Math.random() * 50,
-            amplitude: 30 + Math.random() * 30,
-            frequency: 0.6 + Math.random() * 0.6,
-            spawnDelay,
-            useOrangeFrames: variant.useOrange,
-          });
-        }
-      });
-
-      butterfliesSpawned = true;
-    }
+    // Butterflies - spawn from cottage door when player jumps (triggered in intro animation)
+    // Spawning is now handled during player intro jump1 phase
+    // (No automatic spawning here)
     // Check fence butterfly proximity (butterfly handles its own flight internally)
     if (grounds) {
       const playerX = physics.getState().x;
@@ -1100,26 +1356,26 @@ const init = async () => {
     platforms.renderToContainer(platformContainer, 0); // No camera offset for now
     holes.renderToContainer(holeContainer, 0);
 
-    // Debug: Render platform and ground hole hitboxes
-    debugPlatformHitboxContainer.removeChildren();
+    // Debug: Render platform and ground hole hitboxes (DISABLED)
+    // debugPlatformHitboxContainer.removeChildren();
 
-    // Platform hitboxes (semi-transparent green)
-    const platformHitboxes = platforms.getDebugHitboxes(playerDiameter);
-    platformHitboxes.forEach((hitbox) => {
-      const debugRect = new Graphics();
-      debugRect.rect(hitbox.left, hitbox.top, hitbox.width, hitbox.height);
-      debugRect.fill({ color: 0x00ff7f, alpha: 0.35 }); // Spring green at 35% opacity
-      debugPlatformHitboxContainer.addChild(debugRect);
-    });
+    // Platform hitboxes (semi-transparent green) - DISABLED
+    // const platformHitboxes = platforms.getDebugHitboxes(playerDiameter);
+    // platformHitboxes.forEach((hitbox) => {
+    //   const debugRect = new Graphics();
+    //   debugRect.rect(hitbox.left, hitbox.top, hitbox.width, hitbox.height);
+    //   debugRect.fill({ color: 0x00ff7f, alpha: 0.35 }); // Spring green at 35% opacity
+    //   debugPlatformHitboxContainer.addChild(debugRect);
+    // });
 
-    // Ground hole hitboxes (semi-transparent red)
-    const debugGroundHoleHitboxes = groundHoles.getDebugHitboxes();
-    debugGroundHoleHitboxes.forEach((hitbox) => {
-      const debugRect = new Graphics();
-      debugRect.rect(hitbox.left, hitbox.top, hitbox.right - hitbox.left, hitbox.bottom - hitbox.top);
-      debugRect.fill({ color: 0xff4444, alpha: 0.35 }); // Red at 35% opacity
-      debugPlatformHitboxContainer.addChild(debugRect);
-    });
+    // Ground hole hitboxes (semi-transparent red) - DISABLED
+    // const debugGroundHoleHitboxes = groundHoles.getDebugHitboxes();
+    // debugGroundHoleHitboxes.forEach((hitbox) => {
+    //   const debugRect = new Graphics();
+    //   debugRect.rect(hitbox.left, hitbox.top, hitbox.right - hitbox.left, hitbox.bottom - hitbox.top);
+    //   debugRect.fill({ color: 0xff4444, alpha: 0.35 }); // Red at 35% opacity
+    //   debugPlatformHitboxContainer.addChild(debugRect);
+    // });
 
     megaLaserHeight = playerDiameter * 1.2;
 
@@ -1153,7 +1409,9 @@ const init = async () => {
     // Store previous position for frame-by-frame tracking
     const prevState = { x: ball.position.x, y: ball.position.y };
 
-    const state = freezePlayer ? physics.getState() : physics.update(deltaSeconds);
+    // Skip physics update during initial, delay, and complete phases (only run physics during moveout and jump)
+    const skipPhysics = freezePlayer || (playerIntroActive && (playerIntroPhase === 'initial' || playerIntroPhase === 'delay' || playerIntroPhase === 'complete'));
+    const state = skipPhysics ? physics.getState() : physics.update(deltaSeconds);
     if (freezePlayer) {
       physics.forceVelocity(0);
     }
@@ -1576,12 +1834,25 @@ const init = async () => {
       bottom: prevState.y + playerRadius,
     };
 
+    // Detect platforms being passed through while ascending (jumping up)
+    const platformsPassedThrough = platforms.getPlatformsPassedThrough(
+      playerBounds,
+      prevBounds,
+      verticalVelocity
+    );
+
+    // Mark each platform that was jumped through
+    platformsPassedThrough.forEach(platformId => {
+      physics.markPlatformJumpedThrough(platformId);
+    });
+
     // Check for platform collision (ignore small movements during charge to prevent falling through)
     const isCharging = physics.isChargingJump();
     const supportingPlatform = platforms.getSupportingPlatform(
       playerBounds,
       prevBounds,
-      verticalVelocity
+      verticalVelocity,
+      physics.getJumpedThroughPlatforms() // Pass Set of platforms jumped through
     );
 
     // Hole collision: if we're not on a platform and overlap a hole, fall and respawn
@@ -1607,7 +1878,7 @@ const init = async () => {
         activePlatformId = supportingPlatform.id;
         // Convert stored platform surface (player top) to the center y the physics uses, and sink slightly for visuals
         const landingY = supportingPlatform.surfaceY + playerRadius + PLATFORM_LANDING_OFFSET;
-        physics.landOnSurface(landingY);
+        physics.landOnSurface(landingY, supportingPlatform.id); // Pass platform ID to clear from jumped-through list
 
         // Lock camera floor to this platform if it's higher than current floor
         if (supportingPlatform.surfaceY < cameraFloorY) {
@@ -1829,10 +2100,19 @@ const init = async () => {
 
     // Only update ball position from physics during normal gameplay and after respawn
     // During dying/waiting/animating_back, ball is manually positioned at spawn point above screen
+    // During intro jump phase, position is partially controlled by intro animation
     if (respawnState === 'normal' || respawnState === 'respawning' || respawnState === 'resume_pause' || respawnState === 'resume_ramp') {
-      ball.position.x = state.x;
-      ball.position.y = state.y;
-      ball.scale.set(state.scaleX, state.scaleY);
+      // During intro jumps, use physics Y but manual X (for horizontal jump movement)
+      if (playerIntroActive && (playerIntroPhase === 'jump1' || playerIntroPhase === 'jump2')) {
+        ball.position.y = state.y;
+        // X position is controlled by intro animation (jumping to the right)
+      } else if (!playerIntroActive) {
+        // Normal gameplay - use physics position
+        ball.position.x = state.x;
+        ball.position.y = state.y;
+        ball.scale.set(state.scaleX, state.scaleY);
+      }
+      // During other intro phases, position is fully controlled by intro animation
     }
     // During other respawn states, ball stays frozen at manually set position (spawn X, above screen)
 
@@ -2113,17 +2393,38 @@ const init = async () => {
   ticker.start();
 
   const triggerJump = () => {
+    // Disable input during intro
+    if (playerIntroActive) return;
+
     const jumpExecuted = physics.startJump();
     if (jumpExecuted) {
       lastJumpTime = performance.now();
+
+      // ALWAYS mark platforms above when jumping, unless firmly on baseline ground
+      // This catches ALL cases: double jumps, rolling off platforms, falling and jumping
+      // Even if activePlatformId is set, we might be in the process of rolling off
+      if (!isOnBaselineGround) {
+        const state = physics.getState();
+        const playerRadius = physics.getRadius();
+        const playerTop = state.y - playerRadius;
+
+        const platformsAbove = platforms.getPlatformsAbovePlayer(playerTop);
+        platformsAbove.forEach(platformId => {
+          physics.markPlatformJumpedThrough(platformId);
+        });
+      }
     }
   };
   const releaseJump = () => {
+    // Disable input during intro
+    if (playerIntroActive) return;
     physics.endJump();
   };
 
   // Track mouse/pointer movement for horizontal player position
   const handlePointerMove = (event: PointerEvent) => {
+    // Disable input during intro
+    if (playerIntroActive) return;
     physics.setMousePosition(event.clientX);
   };
 
@@ -2621,10 +2922,10 @@ const init = async () => {
     // This is used as reference point for respawn scroll calculations
     if (firstHoleSegmentX !== Infinity) {
       spawnPointX = firstHoleSegmentX;
-      // Update debug indicator position and make visible
+      // Update debug indicator position (keep hidden)
       spawnPointDebug.x = firstHoleSegmentX;
       spawnPointDebug.y = computePlayerGround();
-      spawnPointDebug.visible = true;
+      spawnPointDebug.visible = false; // Debug indicator disabled
       console.log(`[RESPAWN] Spawn point recorded at meteor_transition initial X=${spawnPointX.toFixed(0)}`);
     }
 
