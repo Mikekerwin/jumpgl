@@ -435,8 +435,10 @@ const init = async () => {
   // Rest of player intro animation state
   let playerIntroPhase: 'initial' | 'moveout' | 'jump1' | 'jump2' | 'grow' | 'delay' | 'complete' = 'initial';
   let playerIntroStartTime = performance.now();
+  let playerIntroJumpCount = 0;
   const playerIntroNormalSize = playerDiameter; // Normal size
   let playerIntroCurrentSize = playerIntroStartSize;
+  let playerIntroGrowStartX = 0; // X position where jumps landed (set when entering grow phase)
 
   // Post-intro easing state
   let postIntroEaseActive = false;
@@ -445,6 +447,7 @@ const init = async () => {
 
   // Calculate cottage door position in world coordinates
   // Cottage image is 2048x900, player starts at 655px from left (door position)
+  const cottageImageWidth = 2048;
   const cottageImageHeight = 900;
   const playerInCottageX = 655; // X position within cottage image (door location)
 
@@ -839,6 +842,9 @@ const init = async () => {
         // Phase 1: Small player behind door, slow parallax - wait 0.5s
         speedMultiplier = introParallaxSpeed;
 
+        // Hide shadow during initial phase
+        playerShadow.getView().alpha = 0;
+
         // Position player at cottage door at ground level
         const startRadius = playerIntroStartSize / 2;
         const cottageGroundY = groundSurface() + playerIntroStartSize * GROUND_PLAYER_DEPTH - startRadius;
@@ -863,6 +869,9 @@ const init = async () => {
 
         const moveoutDuration = 0.5;
         const moveoutSpeed = 80; // Slower movement out of door
+
+        // Keep shadow hidden during moveout
+        playerShadow.getView().alpha = 0;
 
         // Keep small size during moveout
         const radius = playerIntroStartSize / 2;
@@ -889,18 +898,99 @@ const init = async () => {
           physics.startJump();
           physics.endJump();
 
-          // Spawn butterflies from cottage door - timing starts from first jump
+          console.log('[PLAYER INTRO] First jump at X=' + ball.position.x + ' with 2x gravity');
+        }
+      } else if (playerIntroPhase === 'jump1') {
+        // Phase 3: First jump - move right while jumping and growing
+        speedMultiplier = introParallaxSpeed;
+
+        const jumpHorizontalSpeed = 400; // Much faster to cover 200px total
+        ball.position.x += jumpHorizontalSpeed * deltaSeconds;
+
+        // Grow from 75% to 87.5% during first jump (halfway to normal)
+        const jumpProgress = Math.min(elapsed / 0.4, 1.0); // 0.4s jump duration
+        const midSize = playerIntroStartSize + (playerIntroNormalSize - playerIntroStartSize) * 0.5;
+        playerIntroCurrentSize = playerIntroStartSize + (midSize - playerIntroStartSize) * jumpProgress;
+        const radius = playerIntroCurrentSize / 2;
+
+        ball.clear();
+        ball.circle(0, 0, radius).fill({ color: currentBallColor });
+
+        // Apply squash/stretch from physics
+        const physicsState = physics.getState();
+        ball.scale.set(physicsState.scaleX, physicsState.scaleY);
+
+        // Fade in shadow as player is falling down (velocity > 0 means falling)
+        // Shadow fades from 0 to 0.85 during the descent
+        if (physicsState.velocity > 0) {
+          // Player is falling - fade in shadow based on velocity
+          const fadeProgress = Math.min(physicsState.velocity / 400, 1.0); // Fade in as velocity increases
+          playerShadow.getView().alpha = fadeProgress * 0.85;
+        } else {
+          // Player is ascending - keep shadow hidden
+          playerShadow.getView().alpha = 0;
+        }
+
+        // Check if first jump landed
+        const groundY = groundSurface() + playerIntroCurrentSize * GROUND_PLAYER_DEPTH - radius;
+        if (elapsed > 0.2 && Math.abs(ball.position.y - groundY) < 5) {
+          playerIntroPhase = 'jump2';
+          playerIntroStartTime = now;
+
+          // Trigger second jump
+          physics.setPosition(ball.position.x, ball.position.y);
+          physics.startJump();
+          physics.endJump();
+          console.log('[PLAYER INTRO] Second jump at X=' + ball.position.x);
+        }
+      } else if (playerIntroPhase === 'jump2') {
+        // Phase 4: Second jump - continue moving right and finish growing
+        speedMultiplier = introParallaxSpeed;
+
+        // Shadow should be at 0.85 opacity now
+        playerShadow.getView().alpha = 0.85;
+
+        const jumpHorizontalSpeed = 400; // Same speed to reach 200px total
+        ball.position.x += jumpHorizontalSpeed * deltaSeconds;
+
+        // Grow from 87.5% to 100% during second jump
+        const jumpProgress = Math.min(elapsed / 0.4, 1.0);
+        const midSize = playerIntroStartSize + (playerIntroNormalSize - playerIntroStartSize) * 0.5;
+        playerIntroCurrentSize = midSize + (playerIntroNormalSize - midSize) * jumpProgress;
+        const radius = playerIntroCurrentSize / 2;
+
+        ball.clear();
+        ball.circle(0, 0, radius).fill({ color: currentBallColor });
+
+        // Apply squash/stretch from physics
+        const physicsState = physics.getState();
+        ball.scale.set(physicsState.scaleX, physicsState.scaleY);
+
+        // Check if second jump landed
+        const groundY = groundSurface() + playerIntroCurrentSize * GROUND_PLAYER_DEPTH - radius;
+        if (elapsed > 0.25 && Math.abs(ball.position.y - groundY) < 5) {
+          playerIntroPhase = 'delay';
+          playerIntroStartTime = now;
+          playerIntroCurrentSize = playerIntroNormalSize; // Ensure final size
+
+          // STOP all movement - lock position where we landed
+          physics.setPosition(ball.position.x, ball.position.y);
+          physics.forceVelocity(0);
+          physics.restoreNormalGravity();
+          physics.resetScale(); // Reset squash/stretch to normal
+
+          // Spawn butterflies from cottage door - they'll appear during delay phase
           if (butterflyManager && !butterfliesSpawned && biomeManager.getCurrentBiome() === 'cloud') {
             const groundY = computePlayerGround();
             const doorX = playerIntroStartX; // Cottage door X position
 
             butterflyVariants.forEach((variant, idx) => {
               for (let i = 0; i < variant.count; i++) {
-                // Spawn delays from when player jumps: 0.70s, 1.75s, 2.5s
+                // Custom spawn delays: 0.8s, 1.5s, 3.0s
                 let spawnDelay;
-                if (idx === 0) spawnDelay = 0.70;
-                else if (idx === 1) spawnDelay = 1.75;
-                else spawnDelay = 2.5;
+                if (idx === 0) spawnDelay = 0.8;
+                else if (idx === 1) spawnDelay = 1.5;
+                else spawnDelay = 3.0;
 
                 // Start LEFT of cottage door to account for parallax scrolling them right during spawn delay
                 const parallaxOffset = spawnDelay * 50; // ~50px/sec parallax movement during delay
@@ -926,66 +1016,8 @@ const init = async () => {
             });
 
             butterfliesSpawned = true;
-            console.log('[PLAYER INTRO] Butterflies queued from first jump at X=' + doorX);
+            console.log('[PLAYER INTRO] Butterflies queued to spawn from cottage door at X=' + doorX);
           }
-
-          console.log('[PLAYER INTRO] First jump at X=' + ball.position.x + ' with 2x gravity');
-        }
-      } else if (playerIntroPhase === 'jump1') {
-        // Phase 3: First jump - move right while jumping and growing
-        speedMultiplier = introParallaxSpeed;
-
-        const jumpHorizontalSpeed = 400; // Much faster to cover 200px total
-        ball.position.x += jumpHorizontalSpeed * deltaSeconds;
-
-        // Grow from 75% to 87.5% during first jump (halfway to normal)
-        const jumpProgress = Math.min(elapsed / 0.4, 1.0); // 0.4s jump duration
-        const midSize = playerIntroStartSize + (playerIntroNormalSize - playerIntroStartSize) * 0.5;
-        playerIntroCurrentSize = playerIntroStartSize + (midSize - playerIntroStartSize) * jumpProgress;
-        const radius = playerIntroCurrentSize / 2;
-
-        ball.clear();
-        ball.circle(0, 0, radius).fill({ color: currentBallColor });
-
-        // Check if first jump landed
-        const groundY = groundSurface() + playerIntroCurrentSize * GROUND_PLAYER_DEPTH - radius;
-        if (elapsed > 0.2 && Math.abs(ball.position.y - groundY) < 5) {
-          playerIntroPhase = 'jump2';
-          playerIntroStartTime = now;
-
-          // Trigger second jump
-          physics.setPosition(ball.position.x, ball.position.y);
-          physics.startJump();
-          physics.endJump();
-          console.log('[PLAYER INTRO] Second jump at X=' + ball.position.x);
-        }
-      } else if (playerIntroPhase === 'jump2') {
-        // Phase 4: Second jump - continue moving right and finish growing
-        speedMultiplier = introParallaxSpeed;
-
-        const jumpHorizontalSpeed = 400; // Same speed to reach 200px total
-        ball.position.x += jumpHorizontalSpeed * deltaSeconds;
-
-        // Grow from 87.5% to 100% during second jump
-        const jumpProgress = Math.min(elapsed / 0.4, 1.0);
-        const midSize = playerIntroStartSize + (playerIntroNormalSize - playerIntroStartSize) * 0.5;
-        playerIntroCurrentSize = midSize + (playerIntroNormalSize - midSize) * jumpProgress;
-        const radius = playerIntroCurrentSize / 2;
-
-        ball.clear();
-        ball.circle(0, 0, radius).fill({ color: currentBallColor });
-
-        // Check if second jump landed
-        const groundY = groundSurface() + playerIntroCurrentSize * GROUND_PLAYER_DEPTH - radius;
-        if (elapsed > 0.25 && Math.abs(ball.position.y - groundY) < 5) {
-          playerIntroPhase = 'delay';
-          playerIntroStartTime = now;
-          playerIntroCurrentSize = playerIntroNormalSize; // Ensure final size
-
-          // STOP all movement - lock position where we landed
-          physics.setPosition(ball.position.x, ball.position.y);
-          physics.forceVelocity(0);
-          physics.restoreNormalGravity();
 
           console.log('[PLAYER INTRO] Jumps complete at X=' + ball.position.x + ', stopped for 2s delay');
         }
