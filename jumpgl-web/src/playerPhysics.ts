@@ -376,6 +376,7 @@ export class PlayerPhysics {
       y: this.y,
       scaleX: this.scaleX,
       scaleY: this.scaleY,
+      velocity: this.velocity,
     };
   }
 

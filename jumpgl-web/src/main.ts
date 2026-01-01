@@ -444,6 +444,8 @@ const init = async () => {
   let postIntroEaseActive = false;
   let postIntroEaseStartTime = 0;
   const postIntroEaseDuration = 1.5; // 1.5 seconds to ease into full speed
+  let postIntroInitialMouseX = 0; // Store initial mouse X when control is enabled
+  let postIntroPlayerStartX = 0; // Store player X when control is enabled
 
   // Calculate cottage door position in world coordinates
   // Cottage image is 2048x900, player starts at 655px from left (door position)
@@ -1067,11 +1069,13 @@ const init = async () => {
           // Activate post-intro easing
           postIntroEaseActive = true;
           postIntroEaseStartTime = now;
+          postIntroPlayerStartX = ball.position.x; // Store where player is now
+          postIntroInitialMouseX = app.renderer.events.pointer.global.x; // Store actual mouse position
 
           // Enable soft mouse following for smooth easing
           physics.setSoftFollowMode(true);
 
-          // Set mouse position to player position to prevent immediate drift toward mouse
+          // Start with mouse at player position, we'll ease it toward actual mouse
           physics.setMousePosition(ball.position.x);
 
           console.log('[PLAYER INTRO] Complete - player control enabled with easing at X=' + ball.position.x);
@@ -1083,6 +1087,17 @@ const init = async () => {
     if (postIntroEaseActive) {
       const currentTime = performance.now();
       const elapsed = (currentTime - postIntroEaseStartTime) / 1000;
+
+      // First 1 second: ease mouse target from player position to actual mouse position
+      const mouseEaseDuration = 1.0;
+      if (elapsed < mouseEaseDuration) {
+        const t = elapsed / mouseEaseDuration;
+        const easeOut = 1 - Math.pow(1 - t, 2); // Quadratic ease out
+        // Lerp from player start position to actual mouse position
+        const easedMouseX = postIntroPlayerStartX + (postIntroInitialMouseX - postIntroPlayerStartX) * easeOut;
+        physics.setMousePosition(easedMouseX);
+      }
+
       if (elapsed < postIntroEaseDuration) {
         // Ease out: start at 1.0, ramp to full speed over 1.5s
         const t = elapsed / postIntroEaseDuration;

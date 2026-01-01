@@ -152,8 +152,8 @@ class SegmentScroller {
       const fenceWidth = (this.fenceTexture.width || 1) * fenceScale;
       const fenceHeight = (this.fenceTexture.height || 1) * fenceScale;
 
-      // Position fence: centered horizontally on second segment
-      this.fenceSprite.x = secondSegment.sprite.x + (secondSegment.width - fenceWidth) / 2;
+      // Position fence: half a segment width to the right of second segment's right edge
+      this.fenceSprite.x = secondSegment.sprite.x + secondSegment.width + (secondSegment.width / 2) - fenceWidth;
 
       // Position fence: bottom-aligned with ground, moved up 20px
       // Ground sprite.y = top of ground (offsetY)
