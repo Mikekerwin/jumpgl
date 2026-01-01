@@ -1919,10 +1919,20 @@ const init = async () => {
     if (!fallingIntoHole) {
       if (supportingPlatform) {
         // Player is on a platform - set surface override
+        const isNewLanding = activePlatformId !== supportingPlatform.id;
         activePlatformId = supportingPlatform.id;
         // Convert stored platform surface (player top) to the center y the physics uses, and sink slightly for visuals
         const landingY = supportingPlatform.surfaceY + playerRadius + PLATFORM_LANDING_OFFSET;
         physics.landOnSurface(landingY, supportingPlatform.id); // Pass platform ID to clear from jumped-through list
+
+        // Trigger landing compression on first landing
+        if (isNewLanding) {
+          // Get fall height (distance from highest point to landing platform)
+          const fallHeight = physics.getFallHeight();
+          platforms.triggerLandingCompression(supportingPlatform.id, fallHeight);
+          // Reset fall height tracking now that we've landed
+          physics.resetFallHeight();
+        }
 
         // Lock camera floor to this platform if it's higher than current floor
         if (supportingPlatform.surfaceY < cameraFloorY) {

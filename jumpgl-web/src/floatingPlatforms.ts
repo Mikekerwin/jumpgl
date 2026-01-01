@@ -26,7 +26,21 @@ interface PlatformInstance {
   active: boolean;
   platformType: 'large' | 'small';
   sprite?: Sprite; // PixiJS sprite for rendering
-   spriteType?: 'large' | 'small';
+  spriteType?: 'large' | 'small';
+
+  // Oscillation state
+  baseSurfaceY: number; // Original surface Y (before oscillation)
+  baseRenderY: number; // Original render Y (before oscillation)
+  oscillationPhase: number; // Random starting phase for variety
+  oscillationSpeed: number; // Speed of oscillation (radians per second)
+  oscillationAmplitudeY: number; // Vertical amplitude (pixels)
+  oscillationAmplitudeX: number; // Horizontal amplitude (pixels)
+  shouldOscillate: boolean; // Not all platforms oscillate
+
+  // Landing compression state
+  compressionOffset: number; // Current downward compression offset
+  compressionProgress: number; // Animation progress (0 to 1)
+  compressionAmount: number; // Max compression for this landing (velocity-based)
 }
 
 export class FloatingPlatforms {
@@ -36,6 +50,7 @@ export class FloatingPlatforms {
   private smallImage: HTMLImageElement | null = null;
   private largeImageLoaded: boolean = false;
   private smallImageLoaded: boolean = false;
+  private elapsedTime: number = 0; // For oscillation timing
 
   constructor(largeImagePath: string, smallImagePath: string) {
     // Load large platform image
@@ -123,6 +138,47 @@ export class FloatingPlatforms {
     plat.platformType = platformType;
     plat.active = true;
 
+    // Initialize oscillation properties
+    plat.baseSurfaceY = surfaceY;
+    plat.baseRenderY = renderY;
+
+    // 80% of platforms oscillate (20% stay static for variety)
+    plat.shouldOscillate = Math.random() < 0.8;
+
+    if (plat.shouldOscillate) {
+      // Random starting phase so platforms aren't synchronized
+      plat.oscillationPhase = Math.random() * Math.PI * 2;
+
+      // Random speed - slower for large platforms, faster for small
+      if (isLarge) {
+        plat.oscillationSpeed = 0.2 + Math.random() * 0.3; // 0.2-0.5 rad/sec
+      } else {
+        plat.oscillationSpeed = 0.4 + Math.random() * 0.6; // 0.4-1.0 rad/sec
+      }
+
+      // Most platforms favor vertical movement (70%), some favor horizontal (30%)
+      if (Math.random() < 0.7) {
+        // 70% primarily vertical - much more visible
+        plat.oscillationAmplitudeY = 8 + Math.random() * 12; // 8-20 pixels
+        plat.oscillationAmplitudeX = 3 + Math.random() * 5; // 3-8 pixels
+      } else {
+        // 30% more horizontal drift
+        plat.oscillationAmplitudeY = 6 + Math.random() * 8; // 6-14 pixels
+        plat.oscillationAmplitudeX = 8 + Math.random() * 10; // 8-18 pixels
+      }
+    } else {
+      // Static platform - no oscillation
+      plat.oscillationPhase = 0;
+      plat.oscillationSpeed = 0;
+      plat.oscillationAmplitudeY = 0;
+      plat.oscillationAmplitudeX = 0;
+    }
+
+    // Initialize compression state
+    plat.compressionOffset = 0;
+    plat.compressionProgress = 0;
+    plat.compressionAmount = 0;
+
     console.log(
       `[PLATFORM SPAWN] Type=${platformType} X=${worldX.toFixed(0)} SurfaceY=${surfaceY.toFixed(0)} ` +
       `PlatformMiddle=${surfaceCenterY.toFixed(0)} RenderY=${renderY.toFixed(0)} GroundY=${groundCenterY.toFixed(0)}`
@@ -138,6 +194,9 @@ export class FloatingPlatforms {
    * @param screenWidth Screen width for culling off-screen platforms
    */
   update(deltaSeconds: number, groundSpeed: number): void {
+    // Update elapsed time for oscillation
+    this.elapsedTime += deltaSeconds;
+
     // DISABLED: Keep all platforms in memory to build permanent assembly
     // const leftCull = -screenWidth * 0.5; // Cull platforms that are well off-screen left
 
@@ -146,6 +205,50 @@ export class FloatingPlatforms {
 
       // Move platform left at ground speed
       platform.x -= groundSpeed * deltaSeconds;
+
+      // Apply oscillation if enabled (both visual and collision move together)
+      if (platform.shouldOscillate) {
+        const time = this.elapsedTime;
+        const phase = platform.oscillationPhase;
+        const speed = platform.oscillationSpeed;
+
+        // Sine wave oscillation for smooth vertical movement
+        const offsetY = Math.sin(time * speed + phase) * platform.oscillationAmplitudeY;
+
+        // Apply oscillation to both collision surface and visual position
+        // This makes the player ride the platform as it floats up and down
+        platform.surfaceY = platform.baseSurfaceY + offsetY;
+        platform.renderY = platform.baseRenderY + offsetY;
+      } else {
+        // Static platforms stay at their base positions
+        platform.surfaceY = platform.baseSurfaceY;
+        platform.renderY = platform.baseRenderY;
+      }
+
+      // Apply landing compression animation (visual squash effect)
+      if (platform.compressionProgress > 0) {
+        const COMPRESSION_SPEED = 4.0; // How fast the animation plays
+
+        // Advance animation progress
+        platform.compressionProgress += deltaSeconds * COMPRESSION_SPEED;
+
+        // Animation completes when progress >= 1
+        if (platform.compressionProgress >= 1.0) {
+          platform.compressionProgress = 0;
+          platform.compressionOffset = 0;
+          platform.compressionAmount = 0;
+        } else {
+          // Use sine wave for smooth down-and-back motion
+          const t = platform.compressionProgress;
+          const compressionCurve = Math.sin(t * Math.PI);
+          // Use the velocity-based compressionAmount instead of fixed value
+          platform.compressionOffset = compressionCurve * platform.compressionAmount;
+        }
+
+        // Apply compression ONLY to visual position (renderY)
+        // Player stays locked to surfaceY (collision) which has oscillation only
+        platform.renderY += platform.compressionOffset;
+      }
 
       // Keep all platforms active; do not cull when off-screen so collisions persist when rewinding
     });
@@ -181,9 +284,22 @@ export class FloatingPlatforms {
         platform.sprite.height = image.height;
       }
 
-      // Update sprite position
-      const screenX = platform.x - cameraX;
-      platform.sprite.position.set(screenX, platform.renderY);
+      // Calculate visual position with horizontal oscillation
+      let visualX = platform.x - cameraX;
+
+      if (platform.shouldOscillate) {
+        const time = this.elapsedTime;
+        const phase = platform.oscillationPhase;
+        const speed = platform.oscillationSpeed;
+
+        // Add horizontal oscillation offset (visual only, doesn't affect collision)
+        // Use cosine with slightly different frequency for natural movement
+        const offsetX = Math.cos(time * speed * 0.7 + phase) * platform.oscillationAmplitudeX;
+        visualX += offsetX;
+      }
+
+      // Update sprite position (renderY already includes oscillation and compression from update())
+      platform.sprite.position.set(visualX, platform.renderY);
       platform.sprite.width = image.width;
       platform.sprite.height = image.height;
 
@@ -387,12 +503,57 @@ export class FloatingPlatforms {
   }
 
   /**
+   * Trigger landing compression on a platform
+   * @param platformId Platform ID to compress
+   * @param fallHeight Distance player fell from highest point (positive = fell down)
+   */
+  triggerLandingCompression(platformId: number, fallHeight: number = 0): void {
+    const platform = this.platforms.find(p => p.id === platformId && p.active);
+    if (!platform) return;
+
+    // Calculate compression amount based on fall height (distance from peak to landing)
+    // Short falls (jumping up to platform): 8-10 pixels
+    // Medium falls (normal jumps): 12-16 pixels
+    // Long falls (falling down to platform): 18-22 pixels
+    const MIN_COMPRESSION = 8;   // Gentle landing (short fall)
+    const MAX_COMPRESSION = 22;  // Hard landing (long fall)
+
+    // Define fall height thresholds
+    const SHORT_FALL = 50;   // 0-50px fall = minimal compression
+    const LONG_FALL = 300;   // 300+ px fall = maximum compression
+
+    // Calculate compression based on fall height with smooth curve
+    let compressionFactor: number;
+    if (fallHeight <= SHORT_FALL) {
+      // Short falls: 0-50px → 0.0-0.2 factor (gentle compression)
+      compressionFactor = (fallHeight / SHORT_FALL) * 0.2;
+    } else if (fallHeight >= LONG_FALL) {
+      // Long falls: 300+ px → 1.0 factor (max compression)
+      compressionFactor = 1.0;
+    } else {
+      // Medium falls: 50-300px → 0.2-1.0 factor (interpolated)
+      const range = LONG_FALL - SHORT_FALL;
+      const progress = (fallHeight - SHORT_FALL) / range;
+      compressionFactor = 0.2 + (progress * 0.8); // Lerp from 0.2 to 1.0
+    }
+
+    platform.compressionAmount = MIN_COMPRESSION + (MAX_COMPRESSION - MIN_COMPRESSION) * compressionFactor;
+
+    console.log(`[COMPRESSION] Fall height: ${fallHeight.toFixed(1)}px → Compression: ${platform.compressionAmount.toFixed(1)}px (factor: ${compressionFactor.toFixed(2)})`);
+
+    // Start compression animation from the beginning
+    platform.compressionProgress = 0.001; // Small value > 0 to start animation
+    platform.compressionOffset = 0;
+  }
+
+  /**
    * Reset all platforms (deactivate)
    */
   reset(): void {
     this.platforms.forEach(p => {
       p.active = false;
     });
+    this.elapsedTime = 0; // Reset oscillation time
   }
 
   /**
@@ -462,6 +623,16 @@ export class FloatingPlatforms {
       imageHeight: 0,
       active: false,
       platformType: 'large',
+      baseSurfaceY: 0,
+      baseRenderY: 0,
+      oscillationPhase: 0,
+      oscillationSpeed: 0,
+      oscillationAmplitudeY: 0,
+      oscillationAmplitudeX: 0,
+      shouldOscillate: false,
+      compressionOffset: 0,
+      compressionProgress: 0,
+      compressionAmount: 0,
     };
     this.platforms.push(platform);
     return platform;

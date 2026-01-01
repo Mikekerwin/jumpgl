@@ -63,6 +63,10 @@ export class PlayerPhysics {
   private groundCollisionEnabled = true;
   private platformsJumpedThrough: Set<number> = new Set(); // Track platform IDs jumped through from below
 
+  // Height tracking for fall-based compression
+  private highestYSinceLastPlatform: number = 0; // Track peak height for fall distance calculation
+  private wasOnPlatformLastFrame: boolean = false; // Track if we just left a platform
+
   constructor(opts: PlayerPhysicsOptions) {
     this.radius = opts.radius;
     this.gravity = opts.gravity ?? 9000; // Increased from 6525 (~38% increase to lower jump height)
@@ -154,6 +158,19 @@ export class PlayerPhysics {
     // Determine effective ground (platform override or default ground)
     const effectiveGround = this.surfaceOverrideY ?? this.restCenterY;
     const isOnPlatform = this.surfaceOverrideY !== null;
+
+    // Track highest Y position when in air (for fall distance calculation)
+    if (!isOnPlatform || this.velocity < 0) {
+      // Not on platform or jumping up - track the highest point
+      if (!this.wasOnPlatformLastFrame) {
+        // Just left platform - start tracking from current position
+        this.highestYSinceLastPlatform = this.y;
+      } else {
+        // In air - track the highest point reached (remember: lower Y = higher position)
+        this.highestYSinceLastPlatform = Math.min(this.highestYSinceLastPlatform, this.y);
+      }
+    }
+    this.wasOnPlatformLastFrame = isOnPlatform;
 
     if (this.groundCollisionEnabled && this.y > effectiveGround) {
       this.y = effectiveGround;
@@ -332,6 +349,31 @@ export class PlayerPhysics {
   }
 
   /**
+   * Get current vertical velocity (positive = falling down, negative = moving up)
+   */
+  getVerticalVelocity(): number {
+    return this.velocity;
+  }
+
+  /**
+   * Get the fall height (distance from highest point to current position)
+   * Used for calculating landing compression based on fall distance
+   * @returns Fall height in pixels (positive = fell down from higher position)
+   */
+  getFallHeight(): number {
+    // Remember: lower Y = higher position in screen coordinates
+    // So fall height = current Y - highest Y (which is the minimum Y value)
+    return this.y - this.highestYSinceLastPlatform;
+  }
+
+  /**
+   * Reset fall height tracking (called when landing on a platform)
+   */
+  resetFallHeight(): void {
+    this.highestYSinceLastPlatform = this.y;
+  }
+
+  /**
    * Set player position (for intro animations, respawn, etc.)
    */
   setPosition(x: number, y: number): void {
@@ -407,6 +449,8 @@ export class PlayerPhysics {
     this.holdStartTime = 0;
     this.groundCollisionEnabled = true;
     this.platformsJumpedThrough.clear();
+    this.highestYSinceLastPlatform = this.y;
+    this.wasOnPlatformLastFrame = false;
   }
 
   /**
