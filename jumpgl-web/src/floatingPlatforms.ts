@@ -191,20 +191,25 @@ export class FloatingPlatforms {
    * Update platform positions (scrolling left with ground speed)
    * @param deltaSeconds Time elapsed in seconds
    * @param groundSpeed Ground scroll speed in pixels/second
-   * @param screenWidth Screen width for culling off-screen platforms
+   * @param shouldCull Optional callback to determine if platform should be culled
    */
-  update(deltaSeconds: number, groundSpeed: number): void {
+  update(deltaSeconds: number, groundSpeed: number, shouldCull?: (x: number, w: number) => boolean): void {
     // Update elapsed time for oscillation
     this.elapsedTime += deltaSeconds;
-
-    // DISABLED: Keep all platforms in memory to build permanent assembly
-    // const leftCull = -screenWidth * 0.5; // Cull platforms that are well off-screen left
 
     this.platforms.forEach((platform) => {
       if (!platform.active) return;
 
       // Move platform left at ground speed
       platform.x -= groundSpeed * deltaSeconds;
+
+      // Cull platform if needed
+      if (shouldCull && shouldCull(platform.x, platform.width)) {
+        platform.active = false;
+        platform.sprite?.destroy();
+        platform.sprite = undefined;
+        return;
+      }
 
       // Apply oscillation if enabled (both visual and collision move together)
       if (platform.shouldOscillate) {

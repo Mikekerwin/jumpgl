@@ -73,19 +73,16 @@ export class HoleManager {
   /**
    * Scroll holes with the ground.
    */
-  update(deltaSeconds: number, groundSpeed: number): void {
-    // DISABLED: Keep all holes in memory to build permanent assembly
-    // const leftCull = -screenWidth * 0.5;
-
+  update(deltaSeconds: number, groundSpeed: number, shouldCull?: (x: number, w: number) => boolean): void {
     this.holes.forEach((hole) => {
       if (!hole.active) return;
 
       hole.x -= groundSpeed * deltaSeconds;
 
-      // DISABLED: Keep all holes in memory
-      // if (hole.x + hole.width < leftCull) {
-      //   hole.active = false;
-      // }
+      // Cull if needed
+      if (shouldCull && shouldCull(hole.x, hole.width)) {
+        hole.active = false;
+      }
     });
   }
 

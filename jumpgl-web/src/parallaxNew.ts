@@ -275,7 +275,7 @@ class SegmentScroller {
     return baseSpeed;
   }
 
-  update(deltaSeconds: number, speedMultiplier: number = 1): void {
+  update(deltaSeconds: number, speedMultiplier: number = 1, shouldCull?: (x: number, w: number) => boolean): void {
     if (this.segments.length === 0) {
       this.buildInitialSegments();
     }
@@ -416,12 +416,46 @@ class SegmentScroller {
       }
     }
 
-    // Remove segments that scrolled off-screen
-    // DISABLED: Keep all segments in memory to build permanent assembly
-    // while (this.segments.length && this.segments[0].sprite.x + this.segments[0].width <= 0) {
-    //   const removed = this.segments.shift();
-    //   removed?.sprite.destroy();
-    // }
+    // Remove segments that should be culled
+    if (shouldCull) {
+      while (this.segments.length > 0) {
+        const segment = this.segments[0];
+        if (shouldCull(segment.sprite.x, segment.width)) {
+          this.segments.shift();
+          segment.sprite.destroy();
+        } else {
+          break; // Segments are ordered, so stop when we hit one to keep
+        }
+      }
+
+      // Cull cottage overlay if off-screen
+      if (this.cottageOverlaySprite) {
+        const overlayWidth = this.cottageOverlaySprite.width;
+        if (shouldCull(this.cottageOverlaySprite.x, overlayWidth)) {
+          this.cottageOverlaySprite.destroy();
+          this.cottageOverlaySprite = null;
+        }
+      }
+
+      // Cull fence if off-screen
+      if (this.fenceSprite) {
+        const fenceWidth = this.fenceSprite.width;
+        if (shouldCull(this.fenceSprite.x, fenceWidth)) {
+          this.fenceSprite.destroy();
+          this.fenceSprite = null;
+        }
+      }
+
+      // Cull butterfly if off-screen (and not flying away)
+      if (this.fenceButterflySprite && this.fenceButterflyState !== 'flying') {
+        const butterflyWidth = this.fenceButterflySprite.width;
+        if (shouldCull(this.fenceButterflySprite.x, butterflyWidth)) {
+          this.fenceButterflySprite.destroy();
+          this.fenceButterflySprite = null;
+          this.fenceButterflyActive = false;
+        }
+      }
+    }
 
     // Add new segments to fill screen (only if allowed - disabled during respawn reverse)
     if (this.allowNewSegments) {
@@ -1020,8 +1054,8 @@ export class ParallaxGrounds {
     );
   }
 
-  update(deltaSeconds: number, speedMultiplier: number = 1): void {
-    this.scroller.update(deltaSeconds, speedMultiplier);
+  update(deltaSeconds: number, speedMultiplier: number = 1, shouldCull?: (x: number, w: number) => boolean): void {
+    this.scroller.update(deltaSeconds, speedMultiplier, shouldCull);
   }
 
   resize(width: number, height: number): void {

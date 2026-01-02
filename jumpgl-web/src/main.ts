@@ -324,6 +324,8 @@ const init = async () => {
   let lastPlatformX = 0; // Track last platform X position
   const PLATFORM_MIN_SPACING = 250; // Minimum pixels between platforms
   const PLATFORM_MAX_SPACING = 450; // Maximum pixels between platforms
+  let leftmostHoleX = Infinity; // Track hole area boundaries for culling
+  let rightmostHoleX = -Infinity;
 
   // Red enemy state for hole level
   let redEnemyActive = false;
@@ -349,6 +351,10 @@ const init = async () => {
   // Respawn system state
   let respawnState: 'normal' | 'dying' | 'waiting' | 'animating_back' | 'respawning' | 'resume_pause' | 'resume_ramp' = 'normal';
   let respawnTimer = 0;
+  // Spawn point tracking for smart culling system
+  let spawnPoints: number[] = []; // Array of spawn X positions (sorted left to right)
+  let currentSpawnIndex = -1; // Which spawn player is "after" (-1 means before first spawn)
+  let nextSpawnIndex = 0; // Next spawn ahead
   let spawnPointX = 0; // X position to respawn at (start of meteor transition) - FIXED, set once when meteor spawns
   let deathPlayerX = 0; // Player's world X position when they died
   let remainingRewindDistance = 0; // Fixed distance to scroll back to spawn (updated each frame by deltaX)
@@ -623,6 +629,79 @@ const init = async () => {
   app.stage.addChild(minimapBackground);
   app.stage.addChild(minimapSprite);
   app.stage.addChild(minimapBorder);
+
+  /**
+   * Update spawn indices based on player position
+   * Determines which spawn point is "current" (player passed it) and "next" (ahead of player)
+   */
+  const updateSpawnIndices = () => {
+    const playerX = physics.getState().x;
+
+    // Find which spawn we're "after" (most recent spawn behind us)
+    currentSpawnIndex = -1;
+    for (let i = spawnPoints.length - 1; i >= 0; i--) {
+      if (playerX >= spawnPoints[i]) {
+        currentSpawnIndex = i;
+        break;
+      }
+    }
+
+    // Next spawn is the one ahead
+    nextSpawnIndex = currentSpawnIndex + 1;
+  };
+
+  /**
+   * Determine if an object should be culled based on spawn points
+   * @param objectX Object's world X position
+   * @param objectWidth Object's width
+   * @returns true if should be culled (removed), false if should be kept
+   */
+  const shouldCullObject = (objectX: number, objectWidth: number): boolean => {
+    const screenWidth = app.renderer.width;
+    const playerX = physics.getState().x;
+    const objectRight = objectX + objectWidth;
+
+    // Add buffer to ensure objects are COMPLETELY off-screen before culling
+    // Wait for one full ground segment width past the left edge of screen
+    const CULL_BUFFER = screenWidth * 1.5; // Extra buffer to ensure object is fully invisible
+
+    // NEVER cull during respawn (player rewinding to spawn)
+    if (respawnState !== 'normal') return false;
+
+    // NEVER cull hole area while hole level is active
+    if (cometHoleLevelActive && leftmostHoleX !== Infinity) {
+      const inHoleArea = objectRight >= leftmostHoleX && objectX <= rightmostHoleX;
+      if (inHoleArea) return false;
+    }
+
+    // Case 1: No spawn points yet (start of game)
+    // Use normal culling - remove when off-screen to the left with buffer
+    if (spawnPoints.length === 0) {
+      const cullBoundary = playerX - CULL_BUFFER;
+      return objectRight < cullBoundary;
+    }
+
+    // Case 2: We have spawn points
+    const currentSpawn = currentSpawnIndex >= 0 ? spawnPoints[currentSpawnIndex] : -Infinity;
+    const nextSpawn = nextSpawnIndex < spawnPoints.length ? spawnPoints[nextSpawnIndex] : Infinity;
+
+    // Check if next spawn is fully visible (well past left edge of screen)
+    const nextSpawnVisible = nextSpawn !== Infinity && nextSpawn < playerX - screenWidth * 0.5;
+
+    if (nextSpawnVisible) {
+      // Next spawn is well off-screen left - cull everything BEFORE it (with buffer)
+      // This ensures we keep everything until next spawn is fully out of view to the left
+      return objectRight < nextSpawn - CULL_BUFFER;
+    } else {
+      // Next spawn not visible yet - preserve everything between current and next spawn
+      // Only cull if before current spawn AND well off-screen
+      if (objectRight < currentSpawn) {
+        const cullBoundary = playerX - CULL_BUFFER;
+        return objectRight < cullBoundary;
+      }
+      return false; // Between spawns - don't cull
+    }
+  };
 
   const ticker = new Ticker();
   ticker.add((tickerInstance) => {
@@ -1118,8 +1197,11 @@ const init = async () => {
       }
     }
 
+    // Update spawn indices based on player position (for smart culling)
+    updateSpawnIndices();
+
     backgrounds.update(deltaSeconds, speedMultiplier);
-    grounds.update(deltaSeconds, speedMultiplier);
+    grounds.update(deltaSeconds, speedMultiplier, shouldCullObject);
     dustField.update();
 
     // Update spawn point debug indicator to track the meteor_transition segment
@@ -1166,9 +1248,9 @@ const init = async () => {
 
     // Update platforms with ground scroll speed (72 px/sec * speedMultiplier)
     const groundScrollSpeed = BASE_GROUND_SCROLL_SPEED * speedMultiplier;
-    platforms.update(deltaSeconds, groundScrollSpeed);
-    holes.update(deltaSeconds, groundScrollSpeed);
-    groundHoles.update(deltaSeconds, groundScrollSpeed);
+    platforms.update(deltaSeconds, groundScrollSpeed, shouldCullObject);
+    holes.update(deltaSeconds, groundScrollSpeed, shouldCullObject);
+    groundHoles.update(deltaSeconds, groundScrollSpeed, shouldCullObject);
     // Keep laser horizontal speed in sync with ground scroll so pace feels consistent
     laserPhysics.setScrollSpeed(groundScrollSpeed);
 
@@ -1491,8 +1573,8 @@ const init = async () => {
 
     // Get actual ground hole hitboxes to determine precise spawn boundaries
     const groundHoleHitboxesRuntime = groundHoles.getDebugHitboxes();
-    let leftmostHoleX = Infinity;
-    let rightmostHoleX = -Infinity;
+    leftmostHoleX = Infinity;
+    rightmostHoleX = -Infinity;
 
     groundHoleHitboxesRuntime.forEach(hole => {
       if (hole.left < leftmostHoleX) {
@@ -3016,6 +3098,14 @@ const init = async () => {
     // This is used as reference point for respawn scroll calculations
     if (firstHoleSegmentX !== Infinity) {
       spawnPointX = firstHoleSegmentX;
+
+      // Add to spawn points array for culling system (avoid duplicates)
+      if (!spawnPoints.includes(firstHoleSegmentX)) {
+        spawnPoints.push(firstHoleSegmentX);
+        spawnPoints.sort((a, b) => a - b); // Keep sorted left to right
+        console.log(`[CULLING] Spawn point added at x=${firstHoleSegmentX.toFixed(0)} (total: ${spawnPoints.length})`);
+      }
+
       // Update debug indicator position (keep hidden)
       spawnPointDebug.x = firstHoleSegmentX;
       spawnPointDebug.y = computePlayerGround();

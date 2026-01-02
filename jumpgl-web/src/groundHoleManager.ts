@@ -107,7 +107,7 @@ export class GroundHoleManager {
   /**
    * Update holes - scroll left and cull off-screen
    */
-  public update(deltaSeconds: number, groundSpeed: number): void {
+  public update(deltaSeconds: number, groundSpeed: number, shouldCull?: (x: number, w: number) => boolean): void {
     const scrollAmount = groundSpeed * deltaSeconds;
 
     // Scroll all holes left
@@ -115,9 +115,13 @@ export class GroundHoleManager {
       hole.x -= scrollAmount;
     }
 
-    // Cull holes that scrolled far off-screen left
-    // DISABLED: Keep all holes in memory to build permanent assembly
-    // this.holes = this.holes.filter((hole) => hole.x + hole.width > -screenWidth * 0.5);
+    // Cull holes if culling function provided
+    if (shouldCull) {
+      this.holes = this.holes.filter((hole) => {
+        if (!hole.active) return false;
+        return !shouldCull(hole.x, hole.width);
+      });
+    }
   }
 
   /**
