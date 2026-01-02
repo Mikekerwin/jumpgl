@@ -596,39 +596,50 @@ const init = async () => {
   const CAMERA_FOLLOW_THRESHOLD = 20; // How far below floor before camera starts following down
   const CAMERA_TOP_MARGIN = 100; // Keep player at least this many pixels from top of screen
 
-  // Minimap setup - picture-in-picture zoomed-out view
+  // Check if debug UI should be shown (development only)
+  const SHOW_DEBUG_UI = import.meta.env.VITE_SHOW_DEBUG_UI === 'true';
+
+  // Minimap setup - picture-in-picture zoomed-out view (dev only)
   const MINIMAP_WIDTH = 450;
   const MINIMAP_HEIGHT = 200;
   const MINIMAP_ZOOM = 0.02; // Show ~8.3x more area
   const MINIMAP_PADDING = 20;
 
-  // Create render texture for minimap
-  const minimapRenderTexture = RenderTexture.create({
+  // Create render texture for minimap (only if debug UI enabled)
+  const minimapRenderTexture = SHOW_DEBUG_UI ? RenderTexture.create({
     width: MINIMAP_WIDTH,
     height: MINIMAP_HEIGHT,
-  });
+  }) : null;
 
   // Create sprite to display the minimap
-  const minimapSprite = new Sprite(minimapRenderTexture);
-  minimapSprite.x = app.renderer.width - MINIMAP_WIDTH - MINIMAP_PADDING;
-  minimapSprite.y = MINIMAP_PADDING;
+  const minimapSprite = SHOW_DEBUG_UI ? new Sprite(minimapRenderTexture!) : null;
+  if (minimapSprite) {
+    minimapSprite.x = app.renderer.width - MINIMAP_WIDTH - MINIMAP_PADDING;
+    minimapSprite.y = MINIMAP_PADDING;
+  }
 
   // Create border for minimap
-  const minimapBorder = new Graphics();
-  minimapBorder.rect(0, 0, MINIMAP_WIDTH, MINIMAP_HEIGHT);
-  minimapBorder.stroke({ width: 2, color: 0xffffff, alpha: 0.8 });
-  minimapBorder.position.set(minimapSprite.x, minimapSprite.y);
+  const minimapBorder = SHOW_DEBUG_UI ? new Graphics() : null;
+  if (minimapBorder) {
+    minimapBorder.rect(0, 0, MINIMAP_WIDTH, MINIMAP_HEIGHT);
+    minimapBorder.stroke({ width: 2, color: 0xffffff, alpha: 0.8 });
+    minimapBorder.position.set(minimapSprite!.x, minimapSprite!.y);
+  }
 
   // Create semi-transparent background for minimap
-  const minimapBackground = new Graphics();
-  minimapBackground.rect(0, 0, MINIMAP_WIDTH, MINIMAP_HEIGHT);
-  minimapBackground.fill({ color: 0x000000, alpha: 0.3 });
-  minimapBackground.position.set(minimapSprite.x, minimapSprite.y);
+  const minimapBackground = SHOW_DEBUG_UI ? new Graphics() : null;
+  if (minimapBackground) {
+    minimapBackground.rect(0, 0, MINIMAP_WIDTH, MINIMAP_HEIGHT);
+    minimapBackground.fill({ color: 0x000000, alpha: 0.3 });
+    minimapBackground.position.set(minimapSprite!.x, minimapSprite!.y);
+  }
 
-  // Add minimap to stage (on top of everything)
-  app.stage.addChild(minimapBackground);
-  app.stage.addChild(minimapSprite);
-  app.stage.addChild(minimapBorder);
+  // Add minimap to stage (on top of everything) - only if debug UI enabled
+  if (SHOW_DEBUG_UI && minimapBackground && minimapSprite && minimapBorder) {
+    app.stage.addChild(minimapBackground);
+    app.stage.addChild(minimapSprite);
+    app.stage.addChild(minimapBorder);
+  }
 
   /**
    * Update spawn indices based on player position
@@ -2499,35 +2510,37 @@ const init = async () => {
       }
     }
 
-    // Render minimap - capture scene at different zoom/position
-    // Save current scene transform
-    const savedSceneX = scene.position.x;
-    const savedSceneY = scene.position.y;
-    const savedSceneScaleX = scene.scale.x;
-    const savedSceneScaleY = scene.scale.y;
+    // Render minimap - capture scene at different zoom/position (dev only)
+    if (SHOW_DEBUG_UI && minimapRenderTexture) {
+      // Save current scene transform
+      const savedSceneX = scene.position.x;
+      const savedSceneY = scene.position.y;
+      const savedSceneScaleX = scene.scale.x;
+      const savedSceneScaleY = scene.scale.y;
 
-    // Calculate minimap camera transform
-    // Center on player position
-    const playerState = physics.getState();
-    const minimapCenterX = MINIMAP_WIDTH / 2;
-    const minimapCenterY = MINIMAP_HEIGHT / 2;
+      // Calculate minimap camera transform
+      // Center on player position
+      const playerState = physics.getState();
+      const minimapCenterX = MINIMAP_WIDTH / 2;
+      const minimapCenterY = MINIMAP_HEIGHT / 2;
 
-    // Apply minimap transform - zoom out and center on player
-    scene.scale.set(MINIMAP_ZOOM);
-    scene.position.set(
-      minimapCenterX - playerState.x * MINIMAP_ZOOM,
-      minimapCenterY - playerState.y * MINIMAP_ZOOM
-    );
+      // Apply minimap transform - zoom out and center on player
+      scene.scale.set(MINIMAP_ZOOM);
+      scene.position.set(
+        minimapCenterX - playerState.x * MINIMAP_ZOOM,
+        minimapCenterY - playerState.y * MINIMAP_ZOOM
+      );
 
-    // Render scene to minimap texture
-    app.renderer.render({
-      container: scene,
-      target: minimapRenderTexture,
-    });
+      // Render scene to minimap texture
+      app.renderer.render({
+        container: scene,
+        target: minimapRenderTexture,
+      });
 
-    // Restore original scene transform for main render
-    scene.position.set(savedSceneX, savedSceneY);
-    scene.scale.set(savedSceneScaleX, savedSceneScaleY);
+      // Restore original scene transform for main render
+      scene.position.set(savedSceneX, savedSceneY);
+      scene.scale.set(savedSceneScaleX, savedSceneScaleY);
+    }
   });
   ticker.start();
 
@@ -2946,8 +2959,13 @@ const init = async () => {
     // Alternate between large and small platforms
     platformSpawnType = platformSpawnType === 'large' ? 'small' : 'large';
 
-    // Update button text to show next platform type
-    platformButton.textContent = `Spawn ${platformSpawnType === 'large' ? 'Large' : 'Small'} Platform`;
+    // Update button text to show next platform type (dev only)
+    if (SHOW_DEBUG_UI) {
+      const platformButton = document.getElementById('platformButton') as HTMLButtonElement;
+      if (platformButton) {
+        platformButton.textContent = `Spawn ${platformSpawnType === 'large' ? 'Large' : 'Small'} Platform`;
+      }
+    }
   };
 
   // Platform + hole spawn button
@@ -2971,24 +2989,34 @@ const init = async () => {
     console.log(`[PLATFORM+HOLE SPAWN] Spawned ${holeType} platform with hole at X=${spawnX}`);
 
     holePlatformSpawnType = holePlatformSpawnType === 'large' ? 'small' : 'large';
-    platformHoleButton.textContent = `Spawn ${holePlatformSpawnType === 'large' ? 'Large' : 'Small'} Platform + Hole`;
+    if (SHOW_DEBUG_UI) {
+      const platformHoleButton = document.getElementById('platformHoleButton') as HTMLButtonElement;
+      if (platformHoleButton) {
+        platformHoleButton.textContent = `Spawn ${holePlatformSpawnType === 'large' ? 'Large' : 'Small'} Platform + Hole`;
+      }
+    }
   };
 
-  const platformButton = document.createElement('button');
-  platformButton.className = 'transition-btn';
-  platformButton.textContent = 'Spawn Large Platform';
-  platformButton.type = 'button';
-  platformButton.style.top = '62px'; // Position below transition button
-  platformButton.addEventListener('click', spawnPlatform);
-  document.body.appendChild(platformButton);
+  // Create debug buttons (dev only)
+  if (SHOW_DEBUG_UI) {
+    const platformButton = document.createElement('button');
+    platformButton.id = 'platformButton';
+    platformButton.className = 'transition-btn';
+    platformButton.textContent = 'Spawn Large Platform';
+    platformButton.type = 'button';
+    platformButton.style.top = '62px'; // Position below transition button
+    platformButton.addEventListener('click', spawnPlatform);
+    document.body.appendChild(platformButton);
 
-  const platformHoleButton = document.createElement('button');
-  platformHoleButton.className = 'transition-btn';
-  platformHoleButton.textContent = 'Spawn Small Platform + Hole';
-  platformHoleButton.type = 'button';
-  platformHoleButton.style.top = '104px'; // Stack below the regular platform button
-  platformHoleButton.addEventListener('click', spawnPlatformWithHole);
-  document.body.appendChild(platformHoleButton);
+    const platformHoleButton = document.createElement('button');
+    platformHoleButton.id = 'platformHoleButton';
+    platformHoleButton.className = 'transition-btn';
+    platformHoleButton.textContent = 'Spawn Small Platform + Hole';
+    platformHoleButton.type = 'button';
+    platformHoleButton.style.top = '104px'; // Stack below the regular platform button
+    platformHoleButton.addEventListener('click', spawnPlatformWithHole);
+    document.body.appendChild(platformHoleButton);
+  }
 
   // Scenario button: small platform + hole, then large platform, trigger mega laser
   const startScenario = () => {
@@ -3009,14 +3037,16 @@ const init = async () => {
     console.log('[SCENARIO] Small+hole then large spawned; awaiting jump range');
   };
 
-  scenarioButton = document.createElement('button');
-  scenarioButton.className = 'transition-btn';
-  scenarioButton.textContent = 'Run Mega Laser Scenario';
-  scenarioButton.type = 'button';
-  scenarioButton.style.top = '146px';
-  scenarioButton.addEventListener('click', startScenario);
-  scenarioButton.disabled = true; // enable after first out
-  document.body.appendChild(scenarioButton);
+  if (SHOW_DEBUG_UI) {
+    scenarioButton = document.createElement('button');
+    scenarioButton.className = 'transition-btn';
+    scenarioButton.textContent = 'Run Mega Laser Scenario';
+    scenarioButton.type = 'button';
+    scenarioButton.style.top = '146px';
+    scenarioButton.addEventListener('click', startScenario);
+    scenarioButton.disabled = true; // enable after first out
+    document.body.appendChild(scenarioButton);
+  }
 
   // Auto trigger scenario when pending (e.g., after first red out)
   ticker.add(() => {
@@ -3026,21 +3056,23 @@ const init = async () => {
     }
   });
 
-  // Comet button
+  // Comet button (dev only)
   const spawnComet = () => {
     cometManager.spawn();
     console.log('[COMET] Spawned comet animation');
   };
 
-  const cometButton = document.createElement('button');
-  cometButton.className = 'transition-btn';
-  cometButton.textContent = 'Comet';
-  cometButton.type = 'button';
-  cometButton.style.top = '188px';
-  cometButton.addEventListener('click', spawnComet);
-  document.body.appendChild(cometButton);
+  if (SHOW_DEBUG_UI) {
+    const cometButton = document.createElement('button');
+    cometButton.className = 'transition-btn';
+    cometButton.textContent = 'Comet';
+    cometButton.type = 'button';
+    cometButton.style.top = '188px';
+    cometButton.addEventListener('click', spawnComet);
+    document.body.appendChild(cometButton);
+  }
 
-  // 100% Energy button
+  // 100% Energy button (dev only)
   const fillEnergy = () => {
     energy = 100;
     // Also unlock shooting if not already unlocked
@@ -3051,13 +3083,15 @@ const init = async () => {
     console.log('[ENERGY] Set to 100%');
   };
 
-  const energyButton = document.createElement('button');
-  energyButton.className = 'transition-btn';
-  energyButton.textContent = '100% Energy';
-  energyButton.type = 'button';
-  energyButton.style.top = '230px';
-  energyButton.addEventListener('click', fillEnergy);
-  document.body.appendChild(energyButton);
+  if (SHOW_DEBUG_UI) {
+    const energyButton = document.createElement('button');
+    energyButton.className = 'transition-btn';
+    energyButton.textContent = '100% Energy';
+    energyButton.type = 'button';
+    energyButton.style.top = '230px';
+    energyButton.addEventListener('click', fillEnergy);
+    document.body.appendChild(energyButton);
+  }
 
   // Comet Hole Level button - now supports variable hole counts
   const startCometHoleLevel = (holeCount: number = 5) => {
@@ -3116,31 +3150,34 @@ const init = async () => {
     console.log(`[COMET HOLE LEVEL] Started hole sequence with ${holeCount} holes - platforms will spawn dynamically over holes`);
   };
 
-  const cometHoleLevelButton = document.createElement('button');
-  cometHoleLevelButton.className = 'transition-btn';
-  cometHoleLevelButton.textContent = 'Comet Hole Level (5)';
-  cometHoleLevelButton.type = 'button';
-  cometHoleLevelButton.style.top = '272px';
-  cometHoleLevelButton.addEventListener('click', () => startCometHoleLevel(5));
-  document.body.appendChild(cometHoleLevelButton);
+  // Create debug buttons (dev only)
+  if (SHOW_DEBUG_UI) {
+    const cometHoleLevelButton = document.createElement('button');
+    cometHoleLevelButton.className = 'transition-btn';
+    cometHoleLevelButton.textContent = 'Comet Hole Level (5)';
+    cometHoleLevelButton.type = 'button';
+    cometHoleLevelButton.style.top = '272px';
+    cometHoleLevelButton.addEventListener('click', () => startCometHoleLevel(5));
+    document.body.appendChild(cometHoleLevelButton);
 
-  // Test button with 10 holes
-  const cometHole10Button = document.createElement('button');
-  cometHole10Button.className = 'transition-btn';
-  cometHole10Button.textContent = 'Hole Level (10)';
-  cometHole10Button.type = 'button';
-  cometHole10Button.style.top = '314px';
-  cometHole10Button.addEventListener('click', () => startCometHoleLevel(10));
-  document.body.appendChild(cometHole10Button);
+    // Test button with 10 holes
+    const cometHole10Button = document.createElement('button');
+    cometHole10Button.className = 'transition-btn';
+    cometHole10Button.textContent = 'Hole Level (10)';
+    cometHole10Button.type = 'button';
+    cometHole10Button.style.top = '314px';
+    cometHole10Button.addEventListener('click', () => startCometHoleLevel(10));
+    document.body.appendChild(cometHole10Button);
 
-  // Test button with 2 holes
-  const cometHole2Button = document.createElement('button');
-  cometHole2Button.className = 'transition-btn';
-  cometHole2Button.textContent = 'Hole Level (2)';
-  cometHole2Button.type = 'button';
-  cometHole2Button.style.top = '356px';
-  cometHole2Button.addEventListener('click', () => startCometHoleLevel(2));
-  document.body.appendChild(cometHole2Button);
+    // Test button with 2 holes
+    const cometHole2Button = document.createElement('button');
+    cometHole2Button.className = 'transition-btn';
+    cometHole2Button.textContent = 'Hole Level (2)';
+    cometHole2Button.type = 'button';
+    cometHole2Button.style.top = '356px';
+    cometHole2Button.addEventListener('click', () => startCometHoleLevel(2));
+    document.body.appendChild(cometHole2Button);
+  }
 };
 
 init().catch((err) => {
