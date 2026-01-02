@@ -162,7 +162,7 @@ export class PlayerPhysics {
     // Track highest Y position when in air (for fall distance calculation)
     if (!isOnPlatform || this.velocity < 0) {
       // Not on platform or jumping up - track the highest point
-      if (!this.wasOnPlatformLastFrame) {
+      if (this.wasOnPlatformLastFrame) {
         // Just left platform - start tracking from current position
         this.highestYSinceLastPlatform = this.y;
       } else {

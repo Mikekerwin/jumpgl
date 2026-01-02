@@ -1105,10 +1105,16 @@ const init = async () => {
           speedMultiplier = 1.0 + (speedMultiplier - 1.0) * easeOut;
         }
       } else {
-        // Easing complete - disable soft follow and return to instant tracking
+        // Easing complete - disable soft follow only if not using touch input
         postIntroEaseActive = false;
-        physics.setSoftFollowMode(false);
-        console.log('[POST-INTRO] Easing complete - full speed enabled');
+
+        // Only disable soft follow if not using touch input
+        if (currentInputType !== 'touch') {
+          physics.setSoftFollowMode(false);
+          console.log('[POST-INTRO] Easing complete - full speed enabled (mouse mode)');
+        } else {
+          console.log('[POST-INTRO] Easing complete - keeping soft follow enabled (touch mode)');
+        }
       }
     }
 
@@ -2443,9 +2449,26 @@ const init = async () => {
   });
   ticker.start();
 
-  const triggerJump = () => {
+  const triggerJump = (event?: PointerEvent | KeyboardEvent) => {
     // Disable input during intro
     if (playerIntroActive) return;
+
+    // Detect input type on pointer events (touch, mouse, pen)
+    if (event && 'pointerType' in event) {
+      const newInputType = event.pointerType as 'mouse' | 'touch' | 'pen';
+
+      if (newInputType !== currentInputType) {
+        currentInputType = newInputType;
+
+        if (currentInputType === 'touch') {
+          physics.setSoftFollowMode(true);
+          console.log('[INPUT] Touch detected on jump - enabling soft follow mode');
+        } else {
+          physics.setSoftFollowMode(false);
+          console.log('[INPUT] Mouse/pen detected on jump - disabling soft follow mode');
+        }
+      }
+    }
 
     const jumpExecuted = physics.startJump();
     if (jumpExecuted) {
@@ -2472,10 +2495,30 @@ const init = async () => {
     physics.endJump();
   };
 
+  // Track input type for touch vs mouse detection
+  let currentInputType: 'mouse' | 'touch' | 'pen' = 'mouse'; // Default to mouse
+
   // Track mouse/pointer movement for horizontal player position
   const handlePointerMove = (event: PointerEvent) => {
     // Disable input during intro
     if (playerIntroActive) return;
+
+    // Detect input type change
+    const newInputType = event.pointerType as 'mouse' | 'touch' | 'pen';
+
+    if (newInputType !== currentInputType) {
+      currentInputType = newInputType;
+
+      // Enable soft follow for touch, disable for mouse/pen
+      if (currentInputType === 'touch') {
+        physics.setSoftFollowMode(true);
+        console.log('[INPUT] Touch detected - enabling soft follow mode');
+      } else {
+        physics.setSoftFollowMode(false);
+        console.log('[INPUT] Mouse/pen detected - disabling soft follow mode');
+      }
+    }
+
     physics.setMousePosition(event.clientX);
   };
 
