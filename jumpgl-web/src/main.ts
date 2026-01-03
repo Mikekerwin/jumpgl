@@ -2740,19 +2740,26 @@ const init = async () => {
 
   window.addEventListener('resize', handleResize);
 
-  const triggerTransition = () => {
-    grounds.triggerTransition();
-    backgrounds.triggerTransition();
-    transitionButton.disabled = true;
-    transitionButton.textContent = 'Forest Active';
-  };
+  // Enter Forest button (debug UI only)
+  if (SHOW_DEBUG_UI) {
+    const triggerTransition = () => {
+      grounds.triggerTransition();
+      backgrounds.triggerTransition();
+      const transitionButton = document.getElementById('transitionButton') as HTMLButtonElement;
+      if (transitionButton) {
+        transitionButton.disabled = true;
+        transitionButton.textContent = 'Forest Active';
+      }
+    };
 
-  const transitionButton = document.createElement('button');
-  transitionButton.className = 'transition-btn';
-  transitionButton.textContent = 'Enter Forest';
-  transitionButton.type = 'button';
-  transitionButton.addEventListener('click', triggerTransition);
-  document.body.appendChild(transitionButton);
+    const transitionButton = document.createElement('button');
+    transitionButton.id = 'transitionButton';
+    transitionButton.className = 'transition-btn';
+    transitionButton.textContent = 'Enter Forest';
+    transitionButton.type = 'button';
+    transitionButton.addEventListener('click', triggerTransition);
+    document.body.appendChild(transitionButton);
+  }
 
   // Energy bar UI
   const energyContainer = document.createElement('div');
