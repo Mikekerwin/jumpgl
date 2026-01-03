@@ -741,6 +741,13 @@ class SegmentScroller {
   getForegroundContainer(): Container {
     return this.foregroundContainer;
   }
+
+  /**
+   * Get fence X position (null if fence hasn't spawned or has been destroyed)
+   */
+  getFenceX(): number | null {
+    return this.fenceSprite ? this.fenceSprite.x : null;
+  }
 }
 
 const FOREST_TOP_CROP = 2; // pixels to trim from the top of forest/transition images
@@ -1102,6 +1109,13 @@ export class ParallaxGrounds {
    */
   getRightmostHolePosition(): number | null {
     return this.scroller.getRightmostHolePosition();
+  }
+
+  /**
+   * Get fence X position (null if fence hasn't spawned or has been destroyed)
+   */
+  getFenceX(): number | null {
+    return this.scroller.getFenceX();
   }
 
   /**

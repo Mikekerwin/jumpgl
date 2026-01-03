@@ -360,6 +360,9 @@ const init = async () => {
   let remainingRewindDistance = 0; // Fixed distance to scroll back to spawn (updated each frame by deltaX)
   let resumeRampTimer = 0;
 
+  // Automatic hole level trigger tracking
+  let fencePassedTriggered = false; // Track if we've already triggered hole level after fence
+
   // Platform height configuration for 4 levels
   // Level 1: Just above ground (reachable from ground)
   // Level 2: One jump up from Level 1
@@ -1481,6 +1484,20 @@ const init = async () => {
     if (grounds) {
       const playerX = physics.getState().x;
       grounds.checkButterflyProximity(playerX);
+
+      // Automatic hole level trigger: When player passes the fence, start comet hole level 5
+      if (!fencePassedTriggered && !cometHoleLevelActive) {
+        const fenceX = grounds.getFenceX();
+        if (fenceX !== null) {
+          // Trigger when player has passed the fence by at least 500 pixels
+          const FENCE_BUFFER = 500;
+          if (playerX > fenceX + FENCE_BUFFER) {
+            fencePassedTriggered = true;
+            startCometHoleLevel(5);
+            console.log('[AUTO TRIGGER] Comet hole level 5 started after passing fence');
+          }
+        }
+      }
     }
 
     if (butterflyManager) {
