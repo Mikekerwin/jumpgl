@@ -2261,7 +2261,29 @@ const init = async () => {
     // Foreground elements move at 100% camera speed
     backgroundContainer.position.y = cameraY * 0.3; // Sky parallax - moves slower
     overlayContainer.position.y = cameraY; // Gradient moves with ground
-    groundContainer.position.y = cameraY;
+
+    // Ground container needs special handling to prevent exposing bottom edge
+    // When zoomed out and camera moves down (or when falling into holes), clamp ground
+    // so its bottom edge never rises above the screen bottom
+    const groundSurfaceY = grounds.getSurfaceY(); // Top of ground in world space
+    const viewportHeight = app.renderer.height;
+
+    // The ground texture extends from groundSurfaceY down to the bottom of the viewport
+    // When scaled and positioned, calculate where the ground's bottom edge appears
+    // Ground's bottom in screen space = (groundSurfaceY + viewportHeight) * cameraZoom + cameraY
+    const groundBottomInScreenSpace = (groundSurfaceY + viewportHeight) * cameraZoom + cameraY;
+
+    // If ground's bottom would be above screen bottom (viewportHeight), clamp it
+    let clampedGroundCameraY = cameraY;
+    if (groundBottomInScreenSpace < viewportHeight) {
+      // Calculate the cameraY that would put ground's bottom exactly at screen bottom
+      // viewportHeight = (groundSurfaceY + viewportHeight) * cameraZoom + clampedY
+      // clampedY = viewportHeight - (groundSurfaceY + viewportHeight) * cameraZoom
+      clampedGroundCameraY = viewportHeight - (groundSurfaceY + viewportHeight) * cameraZoom;
+      console.log(`[GROUND CLAMP] Bottom would be at ${groundBottomInScreenSpace.toFixed(1)}, clamping to ${clampedGroundCameraY.toFixed(1)}`);
+    }
+
+    groundContainer.position.y = clampedGroundCameraY;
     platformContainer.position.y = cameraY;
     playfieldContainer.position.y = cameraY; // Player and effects move with ground
 
