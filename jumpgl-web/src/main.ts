@@ -2260,32 +2260,32 @@ const init = async () => {
     // Background moves less (30% of camera movement) for depth effect
     // Foreground elements move at 100% camera speed
     backgroundContainer.position.y = cameraY * 0.3; // Sky parallax - moves slower
-    overlayContainer.position.y = cameraY; // Gradient moves with ground
 
     // Ground container needs special handling to prevent exposing bottom edge
     // When zoomed out and camera moves down (or when falling into holes), clamp ground
     // so its bottom edge never rises above the screen bottom
-    const groundSurfaceY = grounds.getSurfaceY(); // Top of ground in world space
     const viewportHeight = app.renderer.height;
 
-    // The ground texture extends from groundSurfaceY down to the bottom of the viewport
-    // When scaled and positioned, calculate where the ground's bottom edge appears
-    // Ground's bottom in screen space = (groundSurfaceY + viewportHeight) * cameraZoom + cameraY
-    const groundBottomInScreenSpace = (groundSurfaceY + viewportHeight) * cameraZoom + cameraY;
+    // Ground segments are positioned at y=groundTop within the container and extend to y=viewportHeight
+    // When container is scaled and positioned, calculate where ground's bottom edge appears:
+    // Ground bottom in screen space = viewportHeight * cameraZoom + cameraY
+    const groundBottomInScreenSpace = viewportHeight * cameraZoom + cameraY;
 
     // If ground's bottom would be above screen bottom (viewportHeight), clamp it
     let clampedGroundCameraY = cameraY;
     if (groundBottomInScreenSpace < viewportHeight) {
       // Calculate the cameraY that would put ground's bottom exactly at screen bottom
-      // viewportHeight = (groundSurfaceY + viewportHeight) * cameraZoom + clampedY
-      // clampedY = viewportHeight - (groundSurfaceY + viewportHeight) * cameraZoom
-      clampedGroundCameraY = viewportHeight - (groundSurfaceY + viewportHeight) * cameraZoom;
+      // viewportHeight = viewportHeight * cameraZoom + clampedY
+      // clampedY = viewportHeight - viewportHeight * cameraZoom
+      // clampedY = viewportHeight * (1 - cameraZoom)
+      clampedGroundCameraY = viewportHeight * (1 - cameraZoom);
       console.log(`[GROUND CLAMP] Bottom would be at ${groundBottomInScreenSpace.toFixed(1)}, clamping to ${clampedGroundCameraY.toFixed(1)}`);
     }
 
     groundContainer.position.y = clampedGroundCameraY;
-    platformContainer.position.y = cameraY;
-    playfieldContainer.position.y = cameraY; // Player and effects move with ground
+    platformContainer.position.y = clampedGroundCameraY; // Platforms move with ground (use same clamp)
+    playfieldContainer.position.y = clampedGroundCameraY; // Player and effects move with ground (use same clamp)
+    overlayContainer.position.y = clampedGroundCameraY; // Gradient/dust move with ground (use same clamp)
 
     // Only update ball position from physics during normal gameplay and after respawn
     // During dying/waiting/animating_back, ball is manually positioned at spawn point above screen

@@ -903,7 +903,7 @@ export class ParallaxBackgrounds {
     return this.container;
   }
 
-  update(deltaSeconds: number, speedMultiplier: number = 1): void {
+  update(deltaSeconds: number, speedMultiplier: number = 1, shouldCull?: (x: number, w: number) => boolean): void {
     const currentBiome = this.biomeManager.getCurrentBiome();
     const config = BIOME_CONFIGS[currentBiome];
     const scrollSpeed = BASE_BACKGROUND_SPEED * config.backgroundSpeedMultiplier * speedMultiplier;
@@ -914,11 +914,15 @@ export class ParallaxBackgrounds {
       // Scroll transition group
       this.transitionGroup.x -= scrollSpeed * deltaSeconds;
 
-      // Check if transition is done scrolling
+      // Check if transition is done scrolling (or should be culled)
       const transitionSprite = this.transitionGroup.children[0] as Sprite;
-      const transitionRight = this.transitionGroup.x + (transitionSprite?.width || 0);
+      const transitionWidth = transitionSprite?.width || 0;
+      const transitionRight = this.transitionGroup.x + transitionWidth;
 
-      if (transitionRight <= 0) {
+      // Check if we should cull this transition group
+      const shouldCullTransition = shouldCull && shouldCull(this.transitionGroup.x, transitionWidth);
+
+      if (transitionRight <= 0 || shouldCullTransition) {
         // Transition visual complete, switch to current biome (not next!)
         // Because ground already completed transition and updated biome manager
         const currentBiome = this.biomeManager.getCurrentBiome();
