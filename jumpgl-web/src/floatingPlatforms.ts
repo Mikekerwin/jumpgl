@@ -14,6 +14,8 @@ export interface PlayerBounds {
   bottom: number;
 }
 
+export type PlatformType = 'large' | 'small' | 'smallfire1' | 'smallfire2' | 'largefire1' | 'largefire2' | 'largefire3';
+
 interface PlatformInstance {
   id: number;
   x: number; // world coordinate
@@ -24,9 +26,9 @@ interface PlatformInstance {
   imageWidth: number; // actual image width for rendering
   imageHeight: number; // actual image height for rendering
   active: boolean;
-  platformType: 'large' | 'small';
+  platformType: PlatformType;
   sprite?: Sprite; // PixiJS sprite for rendering
-  spriteType?: 'large' | 'small';
+  spriteType?: PlatformType;
 
   // Oscillation state
   baseSurfaceY: number; // Original surface Y (before oscillation)
@@ -46,36 +48,52 @@ interface PlatformInstance {
 export class FloatingPlatforms {
   private platforms: PlatformInstance[] = [];
   private nextId: number = 0;
-  private largeImage: HTMLImageElement | null = null;
-  private smallImage: HTMLImageElement | null = null;
-  private largeImageLoaded: boolean = false;
-  private smallImageLoaded: boolean = false;
+  private images: Map<PlatformType, HTMLImageElement> = new Map();
+  private imagesLoaded: Map<PlatformType, boolean> = new Map();
   private elapsedTime: number = 0; // For oscillation timing
 
-  constructor(largeImagePath: string, smallImagePath: string) {
-    // Load large platform image
-    this.largeImage = new Image();
-    this.largeImage.onload = () => {
-      this.largeImageLoaded = true;
-      console.log('[PLATFORM] Large platform image loaded:', this.largeImage!.width, 'x', this.largeImage!.height);
-    };
-    this.largeImage.onerror = () => {
-      console.error('[PLATFORM] Failed to load large platform image');
-      this.largeImageLoaded = false;
-    };
-    this.largeImage.src = largeImagePath;
+  // Backwards compatibility
+  private get largeImage() { return this.images.get('large') || null; }
+  private get smallImage() { return this.images.get('small') || null; }
+  private get largeImageLoaded() { return this.imagesLoaded.get('large') || false; }
+  private get smallImageLoaded() { return this.imagesLoaded.get('small') || false; }
 
-    // Load small platform image
-    this.smallImage = new Image();
-    this.smallImage.onload = () => {
-      this.smallImageLoaded = true;
-      console.log('[PLATFORM] Small platform image loaded:', this.smallImage!.width, 'x', this.smallImage!.height);
+  constructor(
+    largeImagePath: string,
+    smallImagePath: string,
+    smallFire1Path?: string,
+    smallFire2Path?: string,
+    largeFire1Path?: string,
+    largeFire2Path?: string,
+    largeFire3Path?: string
+  ) {
+    // Load all platform images
+    const imagePaths: Record<PlatformType, string | undefined> = {
+      large: largeImagePath,
+      small: smallImagePath,
+      smallfire1: smallFire1Path,
+      smallfire2: smallFire2Path,
+      largefire1: largeFire1Path,
+      largefire2: largeFire2Path,
+      largefire3: largeFire3Path,
     };
-    this.smallImage.onerror = () => {
-      console.error('[PLATFORM] Failed to load small platform image');
-      this.smallImageLoaded = false;
-    };
-    this.smallImage.src = smallImagePath;
+
+    Object.entries(imagePaths).forEach(([type, path]) => {
+      if (path) {
+        const platformType = type as PlatformType;
+        const img = new Image();
+        img.onload = () => {
+          this.imagesLoaded.set(platformType, true);
+          console.log(`[PLATFORM] ${type} platform image loaded:`, img.width, 'x', img.height);
+        };
+        img.onerror = () => {
+          console.error(`[PLATFORM] Failed to load ${type} platform image`);
+          this.imagesLoaded.set(platformType, false);
+        };
+        img.src = path;
+        this.images.set(platformType, img);
+      }
+    });
   }
 
   /**
@@ -90,17 +108,19 @@ export class FloatingPlatforms {
     worldX: number,
     groundCenterY: number,
     playerRadius: number,
-    platformType: 'large' | 'small',
+    platformType: PlatformType,
     verticalOffset: number = 200
   ): number | null {
-    const isLarge = platformType === 'large';
-    const image = isLarge ? this.largeImage : this.smallImage;
-    const imageLoaded = isLarge ? this.largeImageLoaded : this.smallImageLoaded;
+    const image = this.images.get(platformType);
+    const imageLoaded = this.imagesLoaded.get(platformType);
 
     if (!imageLoaded || !image) {
-      console.warn('[PLATFORM] Cannot spawn - image not loaded yet');
+      console.warn(`[PLATFORM] Cannot spawn ${platformType} - image not loaded yet`);
       return null;
     }
+
+    // Determine if this is a "large" type platform for sizing
+    const isLarge = platformType === 'large' || platformType.startsWith('largefire');
 
     // Reuse inactive platform or create new one
     const plat = this.platforms.find(p => !p.active) || this.createPlatform();
@@ -271,8 +291,8 @@ export class FloatingPlatforms {
     this.platforms.forEach((platform) => {
       if (!platform.active) return;
 
-      const image = platform.platformType === 'large' ? this.largeImage : this.smallImage;
-      const imageLoaded = platform.platformType === 'large' ? this.largeImageLoaded : this.smallImageLoaded;
+      const image = this.images.get(platform.platformType);
+      const imageLoaded = this.imagesLoaded.get(platform.platformType);
 
       if (!image || !imageLoaded) return;
 
@@ -564,9 +584,9 @@ export class FloatingPlatforms {
   /**
    * Get the loaded image dimensions for a platform type (null if not loaded yet)
    */
-  getImageDimensions(type: 'large' | 'small'): { width: number; height: number } | null {
-    const image = type === 'large' ? this.largeImage : this.smallImage;
-    const loaded = type === 'large' ? this.largeImageLoaded : this.smallImageLoaded;
+  getImageDimensions(type: PlatformType): { width: number; height: number } | null {
+    const image = this.images.get(type);
+    const loaded = this.imagesLoaded.get(type);
     if (!image || !loaded) return null;
     return { width: image.width, height: image.height };
   }
@@ -581,7 +601,7 @@ export class FloatingPlatforms {
   /**
    * Debug helper: return simple hitbox data for active platforms
    */
-  getDebugHitboxes(playerDiameter: number): Array<{ id: number; type: 'large' | 'small'; left: number; top: number; width: number; height: number }> {
+  getDebugHitboxes(playerDiameter: number): Array<{ id: number; type: PlatformType; left: number; top: number; width: number; height: number }> {
     return this.platforms
       .filter(p => p.active)
       .map(p => ({

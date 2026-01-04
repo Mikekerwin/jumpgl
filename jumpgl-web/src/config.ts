@@ -57,6 +57,11 @@ export const FOREST_DUST_SMALL_CLUSTER_RADIUS = 140;
 // Platform configuration
 export const PLATFORM_LARGE_IMAGE_PATH = '/jumpgl/grassPlatform_Large.png';
 export const PLATFORM_SMALL_IMAGE_PATH = '/jumpgl/smallPlatform.png';
+export const PLATFORM_SMALL_FIRE_1_IMAGE_PATH = '/jumpgl/smallPlatformfire1.webp';
+export const PLATFORM_SMALL_FIRE_2_IMAGE_PATH = '/jumpgl/smallPlatformfire2.webp';
+export const PLATFORM_LARGE_FIRE_1_IMAGE_PATH = '/jumpgl/largePlatformfire1.webp';
+export const PLATFORM_LARGE_FIRE_2_IMAGE_PATH = '/jumpgl/largePlatformfire2.webp';
+export const PLATFORM_LARGE_FIRE_3_IMAGE_PATH = '/jumpgl/largePlatformfire3.webp';
 export const PLATFORM_VERTICAL_OFFSET = 200; // Pixels above ground center
 export const HOLE_SMALL_IMAGE_PATH = '/jumpgl/holeSmall.png';
 export const HOLE_LARGE_IMAGE_PATH = '/jumpgl/holeLarge.png';

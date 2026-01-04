@@ -2,6 +2,7 @@ import { Assets, Container, Sprite, Texture, TilingSprite } from 'pixi.js';
 import { calculateResponsiveSizes } from './config';
 import { BiomeSequenceManager, BIOME_CONFIGS } from './biomeSystem';
 import type { BiomeType } from './biomeSystem';
+// import { AnimatedSkyBackground } from './animatedSkyBackground'; // Disabled - will re-enable with better quality images
 
 const FRAMES_PER_SECOND = 60;
 const SPEED_MULTIPLIER = 1.2; // 20% faster overall
@@ -204,8 +205,9 @@ class SegmentScroller {
     let scale: number;
     let width: number;
 
-    // Cottage texture needs special handling - scale by width to match other ground segments
-    if (type === 'cottage_start') {
+    // Special handling for tall textures (cottage, hole_transition_back with meteor)
+    // These need to be bottom-aligned and scaled by width to match other ground segments
+    if (type === 'cottage_start' || type === 'hole_transition_back') {
       // Get reference width from cloudGround texture
       const cloudGroundTexture = this.textures['cloud'];
       const cloudGroundWidth = cloudGroundTexture.width || 1;
@@ -213,11 +215,11 @@ class SegmentScroller {
       const cloudGroundScale = this.segmentHeight / cloudGroundHeight;
       const targetWidth = cloudGroundWidth * cloudGroundScale;
 
-      // Scale cottage to match target width
+      // Scale to match target width (allows tall textures to extend upward)
       scale = targetWidth / textureWidth;
       width = targetWidth;
 
-      // Position cottage bottom-aligned with ground (offsetY is top of ground)
+      // Position bottom-aligned with ground (offsetY is top of ground)
       sprite.x = x;
       sprite.y = this.offsetY + this.segmentHeight - (textureHeight * scale);
     } else {
@@ -776,8 +778,11 @@ export type ParallaxTextures = {
   transitionGround: Texture;
   forestGround: Texture;
   meteorGroundTransition: Texture;
+  meteorGroundTransitionFire: Texture;
   cloudGroundHole: Texture;
+  cloudGroundHoleFire: Texture;
   cloudGroundHoleTransitionBack: Texture;
+  cloudGroundHoleTransitionBackFire: Texture;
   cloudFence: Texture;
 };
 
@@ -795,8 +800,11 @@ export const loadParallaxTextures = async (): Promise<ParallaxTextures> => {
       transitionGround: 'cloud_light_ground_forest_transition.webp',
       forestGround: 'forest_light_ground.webp',
       meteorGroundTransition: 'meteor_ground_transition.webp',
+      meteorGroundTransitionFire: 'meteor_ground_transition_fire.webp',
       cloudGroundHole: 'cloud_light_ground_hole.webp',
+      cloudGroundHoleFire: 'cloud_light_ground_hole_fire.webp',
       cloudGroundHoleTransitionBack: 'cloud_light_ground_hole_transition_back.webp',
+      cloudGroundHoleTransitionBackFire: 'cloud_light_ground_hole_transition_back_fire.webp',
       cloudFence: 'cloud_light_fence.webp',
     });
     bundleRegistered = true;
@@ -811,6 +819,7 @@ export class ParallaxBackgrounds {
   private container: Container;
   private biomeManager: BiomeSequenceManager;
   private skyBackground: TilingSprite | null = null;
+  // private animatedSky: AnimatedSkyBackground | null = null; // Disabled for now - will re-enable with better quality images
   private currentBackground: TilingSprite | null = null;
   private transitionGroup: Container | null = null;
   private textures: ParallaxTextures;
@@ -861,7 +870,7 @@ export class ParallaxBackgrounds {
     // Position sky with negative offset so more sky is visible when jumping higher
     // Reduce the offset slightly (multiply by 0.85) to push sky down with a tiny bit more upward
     const extraHeight = Math.max(0, backgroundHeight - this.viewportHeight);
-    this.skyBackground.y = -extraHeight * .88; // Increased from 0.8 to push up slightly
+    this.skyBackground.y = -extraHeight * 0.88; // Increased from 0.8 to push up slightly
 
     // Position sky more to the right (20% left, 80% right for more right-side coverage)
     const extraWidth = backgroundWidth - this.viewportWidth;
@@ -875,11 +884,14 @@ export class ParallaxBackgrounds {
       this.currentBackground.destroy();
       this.currentBackground = null;
     }
-    const textureName = BIOME_CONFIGS[biome].backgroundTexture as keyof ParallaxTextures;
+    const textureName = BIOME_CONFIGS[biome].backgroundTexture;
+
+    // Cloud biome uses the persistent static sky background, so don't create a scrolling background
     if (textureName === 'cloudSky') {
-      return; // rely on persistent sky
+      return;
     }
-    const texture = this.textures[textureName];
+
+    const texture = this.textures[textureName as keyof ParallaxTextures];
     const scale = this.viewportWidth / (texture.width || 1);
     const scaledHeight = (texture.height || 1) * scale;
     const visibleHeight = scaledHeight - FOREST_TOP_CROP;
@@ -904,6 +916,11 @@ export class ParallaxBackgrounds {
   }
 
   update(deltaSeconds: number, speedMultiplier: number = 1, shouldCull?: (x: number, w: number) => boolean): void {
+    // Animated sky update disabled - using static sky background for now
+    // if (this.animatedSky) {
+    //   this.animatedSky.update(deltaSeconds);
+    // }
+
     const currentBiome = this.biomeManager.getCurrentBiome();
     const config = BIOME_CONFIGS[currentBiome];
     const scrollSpeed = BASE_BACKGROUND_SPEED * config.backgroundSpeedMultiplier * speedMultiplier;
@@ -945,16 +962,9 @@ export class ParallaxBackgrounds {
     this.viewportWidth = width;
     this.viewportHeight = height;
 
+    // Recreate sky background with new dimensions
     if (this.skyBackground) {
-      const texture = this.skyBackground.texture;
-      const heightMultiplier = 1.5;
-      const backgroundHeight = height * heightMultiplier;
-      const scale = backgroundHeight / (texture.height || 1);
-      this.skyBackground.width = width;
-      this.skyBackground.height = backgroundHeight;
-      this.skyBackground.tileScale.set(scale);
-      const extraHeight = Math.max(0, backgroundHeight - height);
-      this.skyBackground.y = -extraHeight;
+      this.setupSkyBackground();
     }
 
     if (this.currentBackground) {
@@ -1047,9 +1057,9 @@ export class ParallaxGrounds {
       cloud: textures.cloudGround,
       forest: textures.forestGround,
       transition: textures.transitionGround,
-      meteor_transition: textures.meteorGroundTransition,
-      cloud_hole: textures.cloudGroundHole,
-      hole_transition_back: textures.cloudGroundHoleTransitionBack,
+      meteor_transition: textures.meteorGroundTransitionFire,
+      cloud_hole: textures.cloudGroundHoleFire,
+      hole_transition_back: textures.cloudGroundHoleTransitionBackFire,
       cottage_start: textures.cloudCottageStart,
     };
 

@@ -17,6 +17,7 @@ import { CometManager } from './cometManager';
 import { WindSpriteSystem } from './windSprites';
 import { ButterflyManager } from './butterflyAnimation';
 import { GroundHoleManager } from './groundHoleManager';
+import { EmberParticles } from './emberParticles';
 import {
   calculateResponsiveSizes,
   GROUND_PLAYER_DEPTH,
@@ -26,6 +27,11 @@ import {
   HOLE_SMALL_IMAGE_PATH,
   PLATFORM_LARGE_IMAGE_PATH,
   PLATFORM_SMALL_IMAGE_PATH,
+  PLATFORM_SMALL_FIRE_1_IMAGE_PATH,
+  PLATFORM_SMALL_FIRE_2_IMAGE_PATH,
+  PLATFORM_LARGE_FIRE_1_IMAGE_PATH,
+  PLATFORM_LARGE_FIRE_2_IMAGE_PATH,
+  PLATFORM_LARGE_FIRE_3_IMAGE_PATH,
   PLATFORM_VERTICAL_OFFSET,
 } from './config';
 
@@ -81,10 +87,13 @@ const init = async () => {
   const cometContainer = new Container();
   const debugPlatformHitboxContainer = new Container(); // Debug visualization for platform hitboxes
 
+  const emberContainer = new Container();
+
   scene.addChild(
     backgroundContainer,
     overlayContainer,
     groundContainer,
+    emberContainer, // Embers render in front of ground
     platformContainer,
     playfieldContainer,
     cometContainer
@@ -249,12 +258,34 @@ const init = async () => {
     app.renderer.height
   );
 
-  // Initialize platform system
-  const platforms = new FloatingPlatforms(PLATFORM_LARGE_IMAGE_PATH, PLATFORM_SMALL_IMAGE_PATH);
+  // Initialize platform system with fire variants
+  const platforms = new FloatingPlatforms(
+    PLATFORM_LARGE_IMAGE_PATH,
+    PLATFORM_SMALL_IMAGE_PATH,
+    PLATFORM_SMALL_FIRE_1_IMAGE_PATH,
+    PLATFORM_SMALL_FIRE_2_IMAGE_PATH,
+    PLATFORM_LARGE_FIRE_1_IMAGE_PATH,
+    PLATFORM_LARGE_FIRE_2_IMAGE_PATH,
+    PLATFORM_LARGE_FIRE_3_IMAGE_PATH
+  );
   const holes = new HoleManager(HOLE_SMALL_IMAGE_PATH, HOLE_LARGE_IMAGE_PATH);
 
   // Initialize ground hole system for comet hole level
   const groundHoles = new GroundHoleManager();
+
+  // Initialize ember particle system for ground holes
+  const emberParticles = new EmberParticles(app.renderer.width, app.renderer.height);
+  const emberCanvas = document.createElement('canvas');
+  emberCanvas.width = app.renderer.width;
+  emberCanvas.height = app.renderer.height;
+  const emberCtx = emberCanvas.getContext('2d');
+  if (!emberCtx) {
+    throw new Error('Failed to create ember particle context');
+  }
+  const emberTexture = Texture.from(emberCanvas);
+  const emberSprite = new Sprite(emberTexture);
+  emberSprite.blendMode = 'normal';
+  emberContainer.addChild(emberSprite);
 
   // Initialize comet system
   const cometManager = new CometManager(cometContainer, {
@@ -322,8 +353,8 @@ const init = async () => {
   // Comet Hole Level state
   let cometHoleLevelActive = false;
   let lastPlatformX = 0; // Track last platform X position
-  const PLATFORM_MIN_SPACING = 250; // Minimum pixels between platforms
-  const PLATFORM_MAX_SPACING = 450; // Maximum pixels between platforms
+  const PLATFORM_MIN_SPACING = 500; // Minimum pixels between platforms (doubled to have half as many)
+  const PLATFORM_MAX_SPACING = 900; // Maximum pixels between platforms (doubled to have half as many)
   let leftmostHoleX = Infinity; // Track hole area boundaries for culling
   let rightmostHoleX = -Infinity;
 
@@ -363,25 +394,36 @@ const init = async () => {
   // Automatic hole level trigger tracking
   let fencePassedTriggered = false; // Track if we've already triggered hole level after fence
 
-  // Platform height configuration for 4 levels
-  // Level 1: Just above ground (reachable from ground)
-  // Level 2: One jump up from Level 1
-  // Level 3: One jump up from Level 2 (triggers camera pan)
-  // Level 4: Top level (reachable from Level 3)
+  // Platform height configuration - gradual progression from ground to final platform
+  // Most platforms stay near ground level, with gradual increase toward the end
   const screenHeight = app.renderer.height;
-  const levelHeight = (screenHeight * 2) / 3; // Each level is ~2/3 screen height (long jump distance)
-  const FIRST_PLATFORM_HEIGHT = 50; // Just above ground - always reachable
-  const PLATFORM_LEVEL_1_MIN = 50;
-  const PLATFORM_LEVEL_1_MAX = levelHeight * 0.8;
-  const PLATFORM_LEVEL_2_MIN = levelHeight * 0.8;
-  const PLATFORM_LEVEL_2_MAX = levelHeight * 1.6;
-  const PLATFORM_LEVEL_3_MIN = levelHeight * 1.6;
-  const PLATFORM_LEVEL_3_MAX = levelHeight * 2.4;
-  const PLATFORM_LEVEL_4_MIN = levelHeight * 2.4;
-  const PLATFORM_LEVEL_4_MAX = levelHeight * 3.2;
+  const FIRST_PLATFORM_HEIGHT = 60; // At ground level where player rests
+  const FINAL_PLATFORM_HEIGHT = 400; // Highest platform (largePlatformfire3)
 
   let isFirstPlatformSpawned = false; // Track if first platform has been spawned
+  let platformSequenceIndex = 0; // Track position in fire platform sequence
+  let totalPlatformsSpawned = 0; // Total count of platforms spawned in this hole sequence
   const processedSegments = new Set<string>(); // Track which segments have spawned holes
+
+  // Fire platform sequence: smallPlatformfire1, smallPlatformfire2, largePlatformfire1, largePlatformfire2, largePlatformfire3
+  const firePlatformSequence = ['smallfire1', 'smallfire2', 'largefire1', 'largefire2'] as const;
+
+  // Helper to get next platform type in the sequence
+  const getNextPlatformType = (isLastPlatform: boolean): 'small' | 'smallfire1' | 'smallfire2' | 'largefire1' | 'largefire2' | 'largefire3' => {
+    if (!isFirstPlatformSpawned) {
+      // First platform is always regular smallPlatform
+      return 'small';
+    }
+
+    if (isLastPlatform) {
+      // Final platform is always largePlatformfire3
+      return 'largefire3';
+    }
+
+    // Cycle through fire platform sequence
+    const platformType = firePlatformSequence[platformSequenceIndex % firePlatformSequence.length];
+    return platformType;
+  };
 
   // Camera system for hole levels
   let cameraZoom = 1.0;
@@ -569,7 +611,7 @@ const init = async () => {
   };
 
   // Debug hitbox overlay
-  const DEBUG_DRAW_HITBOXES = false; // Disable hitbox overlays
+  const DEBUG_DRAW_HITBOXES = true; // Enable hitbox overlays for debugging
   const hitboxOverlay = new Graphics();
   playfieldContainer.addChild(hitboxOverlay);
   const hitboxLogCache = new Map<number, string>();
@@ -1239,7 +1281,7 @@ const init = async () => {
           processedSegments.add(segmentKey);
 
           // Use same Y position as platform holes, but offset down more
-          const groundY = computePlayerGround() + 40; // Move hitbox 40px lower
+          const groundY = computePlayerGround() + 40; // Offset below ground center for collision detection
           if (seg.type === 'meteor_transition') {
             groundHoles.spawnGroundHole(seg.x, seg.width, groundY, 'meteor_transition');
             console.log(`[GROUND HOLE] ✓ Spawned meteor_transition at x=${seg.x.toFixed(0)} width=${seg.width.toFixed(0)} groundY=${groundY.toFixed(0)}`);
@@ -1265,6 +1307,17 @@ const init = async () => {
     platforms.update(deltaSeconds, groundScrollSpeed, shouldCullObject);
     holes.update(deltaSeconds, groundScrollSpeed, shouldCullObject);
     groundHoles.update(deltaSeconds, groundScrollSpeed, shouldCullObject);
+
+    // Update ember particles based on active ground holes (scroll with ground parallax)
+    const activeGroundHoles = groundHoles.getDebugHitboxes().map(hitbox => ({
+      x: hitbox.left,
+      width: hitbox.right - hitbox.left,
+      groundY: hitbox.top + 50, // Approximate ground Y from hitbox
+      type: hitbox.type,
+      active: true,
+    }));
+    emberParticles.update(deltaSeconds, activeGroundHoles as any, groundScrollSpeed);
+
     // Keep laser horizontal speed in sync with ground scroll so pace feels consistent
     laserPhysics.setScrollSpeed(groundScrollSpeed);
 
@@ -1464,6 +1517,11 @@ const init = async () => {
     jumpDust.render(jumpDustCtx, jumpDustCanvas.width, jumpDustCanvas.height);
     jumpDustTexture.source.update();
 
+    // Render ember particles (for ground holes)
+    emberCtx.clearRect(0, 0, emberCanvas.width, emberCanvas.height);
+    emberParticles.render(emberCtx, emberCanvas.width, emberCanvas.height);
+    emberTexture.source.update();
+
     // DISABLED: Update and render charge particles
     // Keeping code for future re-enable
     // const chargeLevel = physics.getChargeLevel();
@@ -1513,26 +1571,26 @@ const init = async () => {
     platforms.renderToContainer(platformContainer, 0); // No camera offset for now
     holes.renderToContainer(holeContainer, 0);
 
-    // Debug: Render platform and ground hole hitboxes (DISABLED)
-    // debugPlatformHitboxContainer.removeChildren();
+    // Debug: Render platform and ground hole hitboxes
+    debugPlatformHitboxContainer.removeChildren();
 
-    // Platform hitboxes (semi-transparent green) - DISABLED
-    // const platformHitboxes = platforms.getDebugHitboxes(playerDiameter);
-    // platformHitboxes.forEach((hitbox) => {
-    //   const debugRect = new Graphics();
-    //   debugRect.rect(hitbox.left, hitbox.top, hitbox.width, hitbox.height);
-    //   debugRect.fill({ color: 0x00ff7f, alpha: 0.35 }); // Spring green at 35% opacity
-    //   debugPlatformHitboxContainer.addChild(debugRect);
-    // });
+    // Platform hitboxes (semi-transparent green)
+    const platformHitboxes = platforms.getDebugHitboxes(playerDiameter);
+    platformHitboxes.forEach((hitbox) => {
+      const debugRect = new Graphics();
+      debugRect.rect(hitbox.left, hitbox.top, hitbox.width, hitbox.height);
+      debugRect.fill({ color: 0x00ff7f, alpha: 0.35 }); // Spring green at 35% opacity
+      debugPlatformHitboxContainer.addChild(debugRect);
+    });
 
-    // Ground hole hitboxes (semi-transparent red) - DISABLED
-    // const debugGroundHoleHitboxes = groundHoles.getDebugHitboxes();
-    // debugGroundHoleHitboxes.forEach((hitbox) => {
-    //   const debugRect = new Graphics();
-    //   debugRect.rect(hitbox.left, hitbox.top, hitbox.right - hitbox.left, hitbox.bottom - hitbox.top);
-    //   debugRect.fill({ color: 0xff4444, alpha: 0.35 }); // Red at 35% opacity
-    //   debugPlatformHitboxContainer.addChild(debugRect);
-    // });
+    // Ground hole hitboxes (semi-transparent red)
+    const debugGroundHoleHitboxes = groundHoles.getDebugHitboxes();
+    debugGroundHoleHitboxes.forEach((hitbox) => {
+      const debugRect = new Graphics();
+      debugRect.rect(hitbox.left, hitbox.top, hitbox.right - hitbox.left, hitbox.bottom - hitbox.top);
+      debugRect.fill({ color: 0xff4444, alpha: 0.35 }); // Red at 35% opacity
+      debugPlatformHitboxContainer.addChild(debugRect);
+    });
 
     megaLaserHeight = playerDiameter * 1.2;
 
@@ -1625,6 +1683,8 @@ const init = async () => {
     if (!hasActiveHoles && !willMoreHolesCome) {
       lastPlatformX = 0;
       isFirstPlatformSpawned = false;
+      platformSequenceIndex = 0;
+      totalPlatformsSpawned = 0;
       highestPlatformHeight = 0;
       highestPlatformX = 0;
       redEnemyPlatformId = null;
@@ -1680,123 +1740,88 @@ const init = async () => {
             break;
           }
 
+          // Check if this platform would spawn on/above the hole_transition_back segment
+          const segments = grounds.getSegments();
+          const transitionBackSegment = segments.find(seg => seg.type === 'hole_transition_back');
+          if (transitionBackSegment) {
+            const segmentLeft = transitionBackSegment.x;
+            const segmentRight = transitionBackSegment.x + transitionBackSegment.width;
+            // Don't spawn platforms that overlap with the transition_back area
+            if (platformX >= segmentLeft && platformX <= segmentRight) {
+              // Skip this platform position and move to next
+              lastPlatformX = platformX;
+              continue;
+            }
+          }
+
           // Determine platform height progressively based on player's current height
           let verticalOffset: number;
 
-          // First platform is always at ground level for easy access
+          // Determine if this will be the last platform in the sequence
+          // Last platform is when we're close to the end and no more holes are coming
+          const distanceToEnd = spawnTargetX - platformX;
+          const averageSpacing = (PLATFORM_MIN_SPACING + PLATFORM_MAX_SPACING) / 2;
+          const isLastPlatform = !willMoreHolesCome && distanceToEnd < averageSpacing * 1.5;
+
+          // Calculate vertical offset based on position in sequence
+          // First platform is at ground level, most stay near ground, last platform is highest
           if (!isFirstPlatformSpawned) {
             verticalOffset = FIRST_PLATFORM_HEIGHT;
-            isFirstPlatformSpawned = true;
+          } else if (isLastPlatform) {
+            // Final platform is the highest
+            verticalOffset = FINAL_PLATFORM_HEIGHT;
           } else {
-            // Calculate player's current height above ground
-            const groundY = computePlayerGround();
-            const playerHeightAboveGround = groundY - state.y;
+            // Estimate total platforms to calculate progression
+            // Use distance to end and average spacing to estimate how many platforms remain
+            const distanceToEnd = spawnTargetX - platformX;
+            const averageSpacing = (PLATFORM_MIN_SPACING + PLATFORM_MAX_SPACING) / 2;
+            const estimatedTotalPlatforms = Math.max(4, Math.ceil(distanceToEnd / averageSpacing) + totalPlatformsSpawned);
 
-            // Max jump height is approximately 2x player diameter (double jump)
-            const maxJumpHeight = playerDiameter * 2;
+            // Calculate progression: 0 = first platform, 1 = last platform
+            const progression = totalPlatformsSpawned / (estimatedTotalPlatforms - 1);
 
-            // Build available levels - include nearby levels AND upward-leading levels
-            const availableLevels: Array<{min: number, max: number, weight: number}> = [];
+            // Use exponential curve for height - keeps platforms low until near the end
+            // First 70% of platforms stay very close to ground, last 30% gradually rise
+            const heightCurve = Math.pow(progression, 3); // Cubic curve for gradual increase
 
-            // Level 1: Always available when player is near ground
-            // Higher weight when player is at this level
-            if (playerHeightAboveGround < PLATFORM_LEVEL_2_MIN + maxJumpHeight) {
-              const weight = playerHeightAboveGround < PLATFORM_LEVEL_1_MAX ? 3 : 1;
-              availableLevels.push({min: PLATFORM_LEVEL_1_MIN, max: PLATFORM_LEVEL_1_MAX, weight});
-            }
+            // Most platforms stay near ground (60-120px), with gradual increase toward final height
+            const baseHeight = 60; // Minimum height above ground
+            const heightRange = FINAL_PLATFORM_HEIGHT - baseHeight;
+            verticalOffset = baseHeight + (heightRange * heightCurve);
 
-            // Level 2: Available once player can reach it
-            if (playerHeightAboveGround >= PLATFORM_LEVEL_1_MIN - maxJumpHeight) {
-              const weight = (playerHeightAboveGround >= PLATFORM_LEVEL_1_MAX && playerHeightAboveGround < PLATFORM_LEVEL_2_MAX) ? 3 : 1;
-              availableLevels.push({min: PLATFORM_LEVEL_2_MIN, max: PLATFORM_LEVEL_2_MAX, weight});
-            }
-
-            // Level 3: Available once player can reach it
-            if (playerHeightAboveGround >= PLATFORM_LEVEL_2_MIN - maxJumpHeight) {
-              const weight = (playerHeightAboveGround >= PLATFORM_LEVEL_2_MAX && playerHeightAboveGround < PLATFORM_LEVEL_3_MAX) ? 3 : 1;
-              availableLevels.push({min: PLATFORM_LEVEL_3_MIN, max: PLATFORM_LEVEL_3_MAX, weight});
-            }
-
-            // Level 4: Available once player is high enough (camera zoomed out)
-            if (playerHeightAboveGround >= PLATFORM_LEVEL_3_MIN - maxJumpHeight) {
-              const weight = playerHeightAboveGround >= PLATFORM_LEVEL_3_MAX ? 3 : 1;
-              availableLevels.push({min: PLATFORM_LEVEL_4_MIN, max: PLATFORM_LEVEL_4_MAX, weight});
-            }
-
-            // If no levels are available (shouldn't happen), default to Level 1
-            if (availableLevels.length === 0) {
-              availableLevels.push({min: PLATFORM_LEVEL_1_MIN, max: PLATFORM_LEVEL_1_MAX, weight: 1});
-            }
-
-            // Weighted random selection - favors nearby levels but includes upward platforms
-            const totalWeight = availableLevels.reduce((sum, level) => sum + level.weight, 0);
-            let random = Math.random() * totalWeight;
-            let selectedLevel = availableLevels[0];
-
-            for (const level of availableLevels) {
-              random -= level.weight;
-              if (random <= 0) {
-                selectedLevel = level;
-                break;
-              }
-            }
-
-            verticalOffset = selectedLevel.min + Math.random() * (selectedLevel.max - selectedLevel.min);
+            // Add small random variation to avoid perfectly uniform heights
+            verticalOffset += (Math.random() - 0.5) * 20; // ±10px variation
           }
 
           const groundY = computePlayerGround();
 
-          // Check if this platform is too high (more than one screen above player)
-          // If so, spawn a stepping stone platform at mid-screen
-          const playerHeightAboveGround = groundY - state.y;
-          const platformHeightInScreenSpace = verticalOffset - playerHeightAboveGround;
-          const needsSteppingStone = platformHeightInScreenSpace > screenHeight * 0.5;
+          // Use fire platform sequence instead of random types
+          const platformType = getNextPlatformType(isLastPlatform);
 
-          if (needsSteppingStone && verticalOffset > screenHeight * 0.6) {
-            // Spawn a stepping stone platform at mid-screen height
-            const steppingStoneHeight = playerHeightAboveGround + (screenHeight * 0.4);
-            const steppingStoneType = 'small';
-            platforms.spawn(platformX - 100, groundY, playerRadius, steppingStoneType, steppingStoneHeight);
-          }
+          // First platform spawns 10px to the right for better visual positioning
+          const spawnX = !isFirstPlatformSpawned ? platformX + 10 : platformX;
 
-          // Determine platform type and configuration
-          const spawnDouble = Math.random() < 0.25; // 25% chance for double platforms
+          const id = platforms.spawn(spawnX, groundY, playerRadius, platformType, verticalOffset);
 
-          if (spawnDouble) {
-            // Spawn two platforms close together at different heights
-            const type1 = Math.random() > 0.6 ? 'large' : 'small';
-            const type2 = Math.random() > 0.6 ? 'large' : 'small';
-            const height1 = verticalOffset;
-            const height2 = verticalOffset + (Math.random() > 0.5 ? 150 : -150); // +/- 150px
+          // Increment sequence counters
+          totalPlatformsSpawned++;
 
-            const id1 = platforms.spawn(platformX, groundY, playerRadius, type1, height1);
-            const id2 = platforms.spawn(platformX + 180, groundY, playerRadius, type2, Math.max(PLATFORM_LEVEL_1_MIN, height2));
-
-            // Track highest platform for enemy spawning
-            const maxHeight = Math.max(height1, height2);
-            if (maxHeight > highestPlatformHeight) {
-              highestPlatformHeight = maxHeight;
-              highestPlatformX = maxHeight === height1 ? platformX : platformX + 180;
-              redEnemyPlatformId = maxHeight === height1 ? id1 : id2;
-            }
-
-            lastPlatformX = platformX + 180;
+          // Mark first platform as spawned AFTER spawning it
+          // This ensures getNextPlatformType() sees the correct state
+          if (!isFirstPlatformSpawned) {
+            isFirstPlatformSpawned = true;
           } else {
-            // Single platform - 70% small, 30% large
-            const platformType = Math.random() > 0.3 ? 'small' : 'large';
-
-            const id = platforms.spawn(platformX, groundY, playerRadius, platformType, verticalOffset);
-
-            // Track highest platform for enemy spawning
-            if (verticalOffset > highestPlatformHeight) {
-              highestPlatformHeight = verticalOffset;
-              highestPlatformX = platformX;
-              redEnemyPlatformId = id;
-            }
-
-            lastPlatformX = platformX;
+            platformSequenceIndex++;
           }
 
+          // Track highest platform for enemy spawning
+          if (verticalOffset > highestPlatformHeight) {
+            highestPlatformHeight = verticalOffset;
+            highestPlatformX = platformX;
+            redEnemyPlatformId = id;
+          }
+
+          lastPlatformX = platformX;
           spawnCount++;
         }
       }
@@ -2226,7 +2251,7 @@ const init = async () => {
       const isOnPlatform = activePlatformId !== null || supportingPlatform !== null;
 
       // Zoom out slightly when player is on platforms to show more vertical space
-      if (isOnPlatform && playerHeightAboveGround > PLATFORM_LEVEL_1_MIN) {
+      if (isOnPlatform && playerHeightAboveGround > 50) {
         const targetZoom = 0.90; // Slight zoom out when on platforms
         cameraZoom += (targetZoom - cameraZoom) * 0.015;
       } else if (isOnBaselineGround && isGrounded) {
@@ -2286,6 +2311,7 @@ const init = async () => {
     platformContainer.position.y = clampedGroundCameraY; // Platforms move with ground (use same clamp)
     playfieldContainer.position.y = clampedGroundCameraY; // Player and effects move with ground (use same clamp)
     overlayContainer.position.y = clampedGroundCameraY; // Gradient/dust move with ground (use same clamp)
+    emberContainer.position.y = clampedGroundCameraY; // Embers move with ground (use same clamp)
 
     // Only update ball position from physics during normal gameplay and after respawn
     // During dying/waiting/animating_back, ball is manually positioned at spawn point above screen
@@ -3148,11 +3174,13 @@ const init = async () => {
 
     // Reset platform spawning state
     isFirstPlatformSpawned = false;
+    platformSequenceIndex = 0;
+    totalPlatformsSpawned = 0;
     lastPlatformX = ball.position.x;
 
     // Immediately spawn ground holes for ALL segments in the sequence (including off-screen ones)
     const segments = grounds.getSegments();
-    const groundY = computePlayerGround() + 40;
+    const groundY = computePlayerGround() + 40; // Offset below ground center for collision detection
     let firstHoleSegmentX = Infinity;
 
     segments.forEach((seg, idx) => {
