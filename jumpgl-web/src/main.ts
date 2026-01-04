@@ -396,7 +396,6 @@ const init = async () => {
 
   // Platform height configuration - gradual progression from ground to final platform
   // Most platforms stay near ground level, with gradual increase toward the end
-  const screenHeight = app.renderer.height;
   const FIRST_PLATFORM_HEIGHT = 60; // At ground level where player rests
   const FINAL_PLATFORM_HEIGHT = 400; // Highest platform (largePlatformfire3)
 

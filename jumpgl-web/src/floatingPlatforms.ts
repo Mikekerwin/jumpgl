@@ -55,8 +55,6 @@ export class FloatingPlatforms {
   // Backwards compatibility
   private get largeImage() { return this.images.get('large') || null; }
   private get smallImage() { return this.images.get('small') || null; }
-  private get largeImageLoaded() { return this.imagesLoaded.get('large') || false; }
-  private get smallImageLoaded() { return this.imagesLoaded.get('small') || false; }
 
   constructor(
     largeImagePath: string,

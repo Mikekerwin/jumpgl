@@ -53,7 +53,7 @@ export class AnimatedSkyBackground {
    * Anchors the bottom edge to the bottom of the target area
    */
   private scaleSpriteToCover(sprite: Sprite): void {
-    if (!sprite.texture || !sprite.texture.valid) return;
+    if (!sprite.texture) return;
 
     const textureWidth = sprite.texture.width;
     const textureHeight = sprite.texture.height;

@@ -157,14 +157,10 @@ export class EmberParticles {
   private spawnRate = 3; // Embers per hole per second
   private lastSpawnTime = 0;
 
-  private width: number;
-  private height: number;
   private startTime: number;
   private supported = typeof document !== 'undefined';
 
   constructor(width: number, height: number) {
-    this.width = width;
-    this.height = height;
     this.startTime = typeof performance !== 'undefined' ? performance.now() : 0;
 
     if (this.supported) {
@@ -344,8 +340,6 @@ export class EmberParticles {
 
     // Resize canvas if needed
     if (this.canvas.width !== width || this.canvas.height !== height) {
-      this.width = width;
-      this.height = height;
       this.canvas.width = width;
       this.canvas.height = height;
     }
