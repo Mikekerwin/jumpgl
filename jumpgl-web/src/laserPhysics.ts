@@ -274,6 +274,11 @@ export class LaserPhysics {
     let hitPosition: { x: number; y: number } | null = null;
 
     this.lasers.forEach((laser) => {
+      // Skip inactive lasers (waiting to be recycled) - performance optimization
+      if (laser.x < -this.laserWidth) {
+        return;
+      }
+
       // Move laser horizontally
       laser.x -= currentSpeed;
 
@@ -290,6 +295,7 @@ export class LaserPhysics {
       // Cull inactive lasers
       if (laser.x + laser.width < -this.laserWidth) {
         laser.x = -this.laserWidth - 100;
+        return; // Skip collision check for this frame
       }
 
       // Collision check
