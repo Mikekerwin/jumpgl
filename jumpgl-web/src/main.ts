@@ -383,7 +383,6 @@ const init = async () => {
   let spawnPoints: number[] = []; // Array of spawn X positions (sorted left to right)
   let currentSpawnIndex = -1; // Which spawn player is "after" (-1 means before first spawn)
   let nextSpawnIndex = 0; // Next spawn ahead
-  let previousSpawnIndex = -1; // Track previous spawn index to detect when we pass a spawn
   let spawnPointX = 0; // X position to respawn at (start of meteor transition) - FIXED, set once when meteor spawns
   let deathPlayerX = 0; // Player's world X position when they died
   let remainingRewindDistance = 0; // Fixed distance to scroll back to spawn (updated each frame by deltaX)
@@ -838,7 +837,6 @@ const init = async () => {
 
     // Next spawn is the one ahead
     nextSpawnIndex = currentSpawnIndex + 1;
-    previousSpawnIndex = currentSpawnIndex;
   };
 
   /**
