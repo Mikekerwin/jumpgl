@@ -2630,6 +2630,7 @@ const init = async () => {
         scenarioStage !== 'firing',
       introComplete,
       stopSpawning: enemyMode === 'sleep' || scenarioStage === 'prep' || scenarioStage === 'charging' || scenarioStage === 'firing',
+      deltaSeconds,
     });
     if (laserResult.scoreChange !== 0) {
       laserScore += laserResult.scoreChange;

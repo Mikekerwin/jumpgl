@@ -69,7 +69,7 @@ export const HOLE_LARGE_IMAGE_PATH = '/jumpgl/holeLarge.png';
 // Laser configuration (ported from original Jump)
 export const LASER_WIDTH = 25;
 export const LASER_HEIGHT = 2;
-export const BASE_LASER_SPEED = 1.25; // Slower speed - base speed before scroll speed is added
+export const BASE_LASER_SPEED = 75; // pixels per second - base speed before scroll speed is added
 export const MAX_LASERS = 4;
 export const SCORE_PER_LASER_UNLOCK = 25;
 export const CHAOS_INCREMENT_INTERVAL = 5;

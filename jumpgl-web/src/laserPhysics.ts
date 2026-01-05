@@ -32,6 +32,7 @@ type UpdateParams = {
   isHovering: boolean;
   introComplete: boolean;
   stopSpawning?: boolean;
+  deltaSeconds: number;
 };
 
 export class LaserPhysics {
@@ -53,7 +54,7 @@ export class LaserPhysics {
   private laserWidth: number = LASER_WIDTH;
   private laserHeight: number = LASER_HEIGHT;
   private isCalmProfile: boolean = true;
-  private scrollSpeedPerFrame: number = 0;
+  private scrollSpeedPerSecond: number = 0;
 
   constructor(_screenWidth: number, screenHeight: number, centerY: number, enemyX: number) {
     this.centerY = centerY;
@@ -227,6 +228,7 @@ export class LaserPhysics {
       isHovering,
       introComplete,
       stopSpawning = false,
+      deltaSeconds,
     } = params;
 
     this.enemyX = enemyX;
@@ -262,11 +264,13 @@ export class LaserPhysics {
       }
     }
 
-    const currentSpeed = this.baseSpeed + this.scrollSpeedPerFrame;
+    // Calculate laser speed - now properly delta-time based
+    const speedPerSecond = this.baseSpeed + this.scrollSpeedPerSecond;
+    const currentSpeed = speedPerSecond * deltaSeconds;
 
     // Debug logging - log every 300 frames (~5 seconds at 60fps)
     if (Math.random() < 0.003) {
-      console.log(`[LASER SPEED DEBUG] baseSpeed: ${this.baseSpeed.toFixed(2)}, scrollSpeed: ${this.scrollSpeedPerFrame.toFixed(2)}, total: ${currentSpeed.toFixed(2)} px/frame`);
+      console.log(`[LASER SPEED DEBUG] baseSpeed: ${this.baseSpeed.toFixed(2)}, scrollSpeed: ${this.scrollSpeedPerSecond.toFixed(2)}, total: ${speedPerSecond.toFixed(2)} px/sec, deltaSeconds: ${deltaSeconds.toFixed(4)}, movement: ${currentSpeed.toFixed(2)} px`);
     }
 
     let wasHit = false;
@@ -348,7 +352,6 @@ export class LaserPhysics {
    * Adjust laser movement to track world scroll speed (pixels per second)
    */
   setScrollSpeed(pixelsPerSecond: number): void {
-    // Convert to per-frame speed assuming ~60fps
-    this.scrollSpeedPerFrame = pixelsPerSecond / 60;
+    this.scrollSpeedPerSecond = pixelsPerSecond;
   }
 }
