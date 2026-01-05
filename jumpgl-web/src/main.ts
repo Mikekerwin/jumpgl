@@ -384,7 +384,6 @@ const init = async () => {
   let currentSpawnIndex = -1; // Which spawn player is "after" (-1 means before first spawn)
   let nextSpawnIndex = 0; // Next spawn ahead
   let spawnPointX = 0; // X position to respawn at (start of meteor transition) - FIXED, set once when meteor spawns
-  let holeTransitionBackX = 0; // X position of hole_transition_back segment (for respawn hitbox visualization)
   let deathPlayerX = 0; // Player's world X position when they died
   let remainingRewindDistance = 0; // Fixed distance to scroll back to spawn (updated each frame by deltaX)
   let resumeRampTimer = 0;
@@ -1943,7 +1942,7 @@ const init = async () => {
           // First platform spawns 10px to the right for better visual positioning
           const spawnX = !isFirstPlatformSpawned ? platformX + 10 : platformX;
 
-          const id = platforms.spawn(spawnX, groundY, playerRadius, platformType, verticalOffset);
+          platforms.spawn(spawnX, groundY, playerRadius, platformType, verticalOffset);
 
           // Increment sequence counters
           totalPlatformsSpawned++;
