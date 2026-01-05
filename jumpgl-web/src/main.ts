@@ -383,6 +383,7 @@ const init = async () => {
   let spawnPoints: number[] = []; // Array of spawn X positions (sorted left to right)
   let currentSpawnIndex = -1; // Which spawn player is "after" (-1 means before first spawn)
   let nextSpawnIndex = 0; // Next spawn ahead
+  let previousSpawnIndex = -1; // Track previous spawn index to detect when we pass a spawn
   let spawnPointX = 0; // X position to respawn at (start of meteor transition) - FIXED, set once when meteor spawns
   let deathPlayerX = 0; // Player's world X position when they died
   let remainingRewindDistance = 0; // Fixed distance to scroll back to spawn (updated each frame by deltaX)
@@ -393,9 +394,9 @@ const init = async () => {
 
   // Platform height configuration - gradual progression from ground to final platform
   // Most platforms stay near ground level, with gradual increase toward the end
-  const FIRST_PLATFORM_HEIGHT = 40; // Base height above ground for the first platform
-  const FIRST_PLATFORM_DROP = 90; // Lower the first platform by 10px
-  const FINAL_PLATFORM_HEIGHT = 325; // Highest platform (largePlatformfire3)
+  const FIRST_PLATFORM_HEIGHT = 30; // Base height above ground for the first platform
+  const FIRST_PLATFORM_DROP = 95; // Lower the first platform by 10px
+  const FINAL_PLATFORM_HEIGHT = 300; // Highest platform (largePlatformfire3)
 
   let isFirstPlatformSpawned = false; // Track if first platform has been spawned
   let platformSequenceIndex = 0; // Track position in fire platform sequence
@@ -789,17 +790,55 @@ const init = async () => {
   const updateSpawnIndices = () => {
     const playerX = physics.getState().x;
 
-    // Find which spawn we're "after" (most recent spawn behind us)
+    // Get current ground segments to check spawn positions
+    const segments = grounds.getSegments();
+
+    const prevIndex = currentSpawnIndex;
     currentSpawnIndex = -1;
-    for (let i = spawnPoints.length - 1; i >= 0; i--) {
-      if (playerX >= spawnPoints[i]) {
-        currentSpawnIndex = i;
-        break;
+
+    // Update spawnPoints array with current segment positions (for culling)
+    // This ensures the culling function uses real-time scrolling positions
+    const meteorSegment = segments.find((seg: any) => seg.type === 'meteor_transition');
+    const holeBackSegment = segments.find((seg: any) => seg.type === 'hole_transition_back');
+
+    if (meteorSegment && holeBackSegment) {
+      const firstSpawnX = meteorSegment.x;
+      const secondSpawnX = holeBackSegment.x + holeBackSegment.width - 100;
+
+      // Update spawn points with current positions (keeps array sorted)
+      spawnPoints = [firstSpawnX, secondSpawnX];
+    }
+
+    // Check first spawn: meteor_transition segment start
+    if (meteorSegment && meteorSegment.x < playerX) {
+      currentSpawnIndex = 0;
+    }
+
+    // Check second spawn: end of hole_transition_back segment (100px from right edge)
+    if (holeBackSegment) {
+      const secondSpawnX = holeBackSegment.x + holeBackSegment.width - 100;
+      if (secondSpawnX < playerX) {
+        currentSpawnIndex = 1;
+      }
+    }
+
+    // Log ONLY when we pass a spawn point for the first time (index changes)
+    if (currentSpawnIndex !== prevIndex && currentSpawnIndex >= 0) {
+      console.log(`[SPAWN PASSED] ✅ Player passed spawn ${currentSpawnIndex + 1} (playerX=${playerX.toFixed(0)})`);
+
+      // Special log for second spawn - disable hole area protection to allow culling
+      if (currentSpawnIndex === 1) {
+        console.log(`[SECOND SPAWN] ✅✅✅ PASSED SECOND SPAWN! Now culling should begin for old assets.`);
+        cometHoleLevelActive = false; // Disable hole area protection so spawn-based culling works
+        console.log(`[CULLING] Hole area protection disabled - old assets can now be culled`);
+        console.log(`[CULLING] Current spawn points:`, spawnPoints.map(x => x.toFixed(0)));
+        console.log(`[CULLING] Player X: ${playerX.toFixed(0)}, currentSpawnIndex: ${currentSpawnIndex}, nextSpawnIndex: ${nextSpawnIndex}`);
       }
     }
 
     // Next spawn is the one ahead
     nextSpawnIndex = currentSpawnIndex + 1;
+    previousSpawnIndex = currentSpawnIndex;
   };
 
   /**
@@ -816,6 +855,8 @@ const init = async () => {
     // Add buffer to ensure objects are COMPLETELY off-screen before culling
     // Wait for one full ground segment width past the left edge of screen
     const CULL_BUFFER = screenWidth * 1.5; // Extra buffer to ensure object is fully invisible
+    const KEEP_GROUNDS_BEFORE_SPAWN = 2; // Keep two ground segments before the last spawn
+    const KEEP_BEFORE_SPAWN_DISTANCE = screenWidth * KEEP_GROUNDS_BEFORE_SPAWN;
 
     // NEVER cull during respawn (player rewinding to spawn)
     if (respawnState !== 'normal') return false;
@@ -826,33 +867,30 @@ const init = async () => {
       if (inHoleArea) return false;
     }
 
-    // Case 1: No spawn points yet (start of game)
+    // Case 1: No spawn points yet or player is before the first spawn
     // Use normal culling - remove when off-screen to the left with buffer
-    if (spawnPoints.length === 0) {
+    if (spawnPoints.length === 0 || currentSpawnIndex < 0) {
       const cullBoundary = playerX - CULL_BUFFER;
       return objectRight < cullBoundary;
     }
 
     // Case 2: We have spawn points
-    const currentSpawn = currentSpawnIndex >= 0 ? spawnPoints[currentSpawnIndex] : -Infinity;
-    const nextSpawn = nextSpawnIndex < spawnPoints.length ? spawnPoints[nextSpawnIndex] : Infinity;
+    const currentSpawn = spawnPoints[currentSpawnIndex];
+    const nextSpawn = nextSpawnIndex < spawnPoints.length ? spawnPoints[nextSpawnIndex] : null;
+    const currentKeepStart = currentSpawn - KEEP_BEFORE_SPAWN_DISTANCE;
 
-    // Check if next spawn is fully visible (well past left edge of screen)
-    const nextSpawnVisible = nextSpawn !== Infinity && nextSpawn < playerX - screenWidth * 0.5;
-
-    if (nextSpawnVisible) {
-      // Next spawn is well off-screen left - cull everything BEFORE it (with buffer)
-      // This ensures we keep everything until next spawn is fully out of view to the left
-      return objectRight < nextSpawn - CULL_BUFFER;
-    } else {
-      // Next spawn not visible yet - preserve everything between current and next spawn
-      // Only cull if before current spawn AND well off-screen
-      if (objectRight < currentSpawn) {
-        const cullBoundary = playerX - CULL_BUFFER;
-        return objectRight < cullBoundary;
-      }
-      return false; // Between spawns - don't cull
+    // If we're between spawns, keep the interval plus two grounds before the current spawn
+    if (nextSpawn !== null && playerX < nextSpawn) {
+      const inProtectedRange = objectRight >= currentKeepStart && objectX <= nextSpawn;
+      if (inProtectedRange) return false;
+      const cullBoundary = Math.min(playerX - CULL_BUFFER, currentKeepStart);
+      return objectRight < cullBoundary;
     }
+
+    // Once we pass the last spawn, aggressively cull everything behind us
+    // except what's visible on screen (normal off-screen culling)
+    const cullBoundary = playerX - CULL_BUFFER;
+    return objectRight < cullBoundary;
   };
 
   const updateMeteorHitbox = (meteorBounds: { x: number; width: number; height: number }) => {
@@ -3407,10 +3445,12 @@ const init = async () => {
 
   // Comet Hole Level button - now supports variable hole counts
   const startCometHoleLevel = (holeCount: number = 5) => {
+    console.log(`[START COMET HOLE LEVEL] ========== STARTING WITH ${holeCount} HOLES ==========`);
     grounds.startHoleSequence(holeCount);
     cometHoleLevelActive = true;
     groundHoles.clear();
     processedSegments.clear();
+    console.log(`[START COMET HOLE LEVEL] Cleared ground holes and processed segments`);
 
     // Reset platform spawning state
     isFirstPlatformSpawned = false;
@@ -3420,6 +3460,7 @@ const init = async () => {
 
     // Immediately spawn ground holes for ALL segments in the sequence (including off-screen ones)
     const segments = grounds.getSegments();
+    console.log(`[START COMET HOLE LEVEL] Got ${segments.length} segments from grounds.getSegments()`);
     const groundY = computePlayerGround(); // Base ground for hole hitbox
     let firstHoleSegmentX = Infinity;
     let entryPlatformSpawned = false;
@@ -3451,6 +3492,14 @@ const init = async () => {
         groundHoles.spawnGroundHole(seg.x, seg.width, groundY, 'hole_transition_back');
         if (seg.x < firstHoleSegmentX) firstHoleSegmentX = seg.x;
         console.log(`[COMET HOLE LEVEL] Pre-spawned hole_transition_back at x=${seg.x.toFixed(0)} width=${seg.width.toFixed(0)}`);
+
+        // Add second spawn point at the end of hole area (where pink respawn box is)
+        const secondSpawnX = seg.x + seg.width - 100; // 100px from right edge (matches pink box)
+        if (!spawnPoints.includes(secondSpawnX)) {
+          spawnPoints.push(secondSpawnX);
+          spawnPoints.sort((a, b) => a - b); // Keep sorted left to right
+          console.log(`[CULLING] Second spawn point added at x=${secondSpawnX.toFixed(0)} (end of hole area, total: ${spawnPoints.length})`);
+        }
       }
     });
 
@@ -3463,7 +3512,7 @@ const init = async () => {
       if (!spawnPoints.includes(firstHoleSegmentX)) {
         spawnPoints.push(firstHoleSegmentX);
         spawnPoints.sort((a, b) => a - b); // Keep sorted left to right
-        console.log(`[CULLING] Spawn point added at x=${firstHoleSegmentX.toFixed(0)} (total: ${spawnPoints.length})`);
+        console.log(`[CULLING] First spawn point added at x=${firstHoleSegmentX.toFixed(0)} (start of hole area, total: ${spawnPoints.length})`);
       }
 
       // Update debug indicator position (keep hidden)
