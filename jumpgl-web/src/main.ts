@@ -298,6 +298,8 @@ const init = async () => {
   let platformSpawnType: 'large' | 'small' = 'large'; // Tracks which platform type to spawn next
   let holePlatformSpawnType: 'large' | 'small' = 'small'; // Tracks which hole-platform type to spawn next
   let activePlatformId: number | null = null;
+  // Meteor hitbox for landing on the meteor overlay
+  let meteorHitbox: { x: number; width: number; surfaceY: number } | null = null;
   const PLATFORM_LANDING_OFFSET = 30; // Extra pixels to sink into platform at rest
   const PLATFORM_EDGE_TOLERANCE = 8; // Horizontal forgiveness so we don't drop too early
   let platformAscendBonus = 0; // Additional vertical offset for successive spawns after landings
@@ -361,18 +363,13 @@ const init = async () => {
   // Red enemy state for hole level
   let redEnemyActive = false;
   let redEnemyState: 'on_platform' | 'falling' | 'rolling_in' | 'jumping_intro' | 'shooting' = 'on_platform';
-  let redEnemyPlatformId: number | null = null;
   let redEnemyVelocityY = 0;
   let redEnemyVelocityX = 0;
   let enemyEverVisible = false; // Track if enemy has ever been shown (for player movement range)
-  let enemyIntroDelayStartTime = 0; // When the 1-second delay before enemy intro started
   let playerReturnStartTime = 0; // When player started returning to left half
   let playerReturnStartX = 0; // Player X when return animation started
   let playerReturnTargetX = 0; // Target X for return animation
-  let redEnemyFallTime = 0;
   const RED_ENEMY_ROLL_SPEED = 700; // Faster horizontal roll-in speed
-  let highestPlatformHeight = 0; // Track highest platform to spawn enemy on it
-  let highestPlatformX = 0;
 
   const RESPAWN_WAIT_TIME = 0.2; // Shorter wait before animating back
   const RESPAWN_HEIGHT_ABOVE_SCREEN = -200; // Spawn player this many pixels above top of screen
@@ -387,6 +384,7 @@ const init = async () => {
   let currentSpawnIndex = -1; // Which spawn player is "after" (-1 means before first spawn)
   let nextSpawnIndex = 0; // Next spawn ahead
   let spawnPointX = 0; // X position to respawn at (start of meteor transition) - FIXED, set once when meteor spawns
+  let holeTransitionBackX = 0; // X position of hole_transition_back segment (for respawn hitbox visualization)
   let deathPlayerX = 0; // Player's world X position when they died
   let remainingRewindDistance = 0; // Fixed distance to scroll back to spawn (updated each frame by deltaX)
   let resumeRampTimer = 0;
@@ -396,8 +394,9 @@ const init = async () => {
 
   // Platform height configuration - gradual progression from ground to final platform
   // Most platforms stay near ground level, with gradual increase toward the end
-  const FIRST_PLATFORM_HEIGHT = 60; // At ground level where player rests
-  const FINAL_PLATFORM_HEIGHT = 400; // Highest platform (largePlatformfire3)
+  const FIRST_PLATFORM_HEIGHT = 40; // Base height above ground for the first platform
+  const FIRST_PLATFORM_DROP = 90; // Lower the first platform by 10px
+  const FINAL_PLATFORM_HEIGHT = 325; // Highest platform (largePlatformfire3)
 
   let isFirstPlatformSpawned = false; // Track if first platform has been spawned
   let platformSequenceIndex = 0; // Track position in fire platform sequence
@@ -481,6 +480,8 @@ const init = async () => {
     initialX: initialPlayerX(),
     screenWidth: app.renderer.width,
   });
+
+  let currentGroundSurface = initialGround;
 
   // Rest of player intro animation state
   let playerIntroPhase: 'initial' | 'moveout' | 'jump1' | 'jump2' | 'grow' | 'delay' | 'complete' = 'initial';
@@ -609,10 +610,18 @@ const init = async () => {
     console.log('[HOLE] Player falling into hole, ground collision disabled');
   };
 
+  // Check if debug UI should be shown (development only)
+  const SHOW_DEBUG_UI = import.meta.env.VITE_SHOW_DEBUG_UI === 'true';
+  const SHOW_HITBOXES = import.meta.env.VITE_SHOW_HITBOXES === 'true';
+  const DEBUG_DRAW_HITBOXES = SHOW_DEBUG_UI && SHOW_HITBOXES;
+
+  debugPlatformHitboxContainer.visible = DEBUG_DRAW_HITBOXES;
+
   // Debug hitbox overlay
-  const DEBUG_DRAW_HITBOXES = true; // Enable hitbox overlays for debugging
-  const hitboxOverlay = new Graphics();
-  playfieldContainer.addChild(hitboxOverlay);
+  const hitboxOverlay = DEBUG_DRAW_HITBOXES ? new Graphics() : null;
+  if (hitboxOverlay) {
+    playfieldContainer.addChild(hitboxOverlay);
+  }
   const hitboxLogCache = new Map<number, string>();
 
   // Start enemy dormant; it will roll in later and then run its jump intro
@@ -640,14 +649,19 @@ const init = async () => {
   const CAMERA_FOLLOW_THRESHOLD = 20; // How far below floor before camera starts following down
   const CAMERA_TOP_MARGIN = 100; // Keep player at least this many pixels from top of screen
 
-  // Check if debug UI should be shown (development only)
-  const SHOW_DEBUG_UI = import.meta.env.VITE_SHOW_DEBUG_UI === 'true';
-
   // Minimap setup - picture-in-picture zoomed-out view (dev only)
   const MINIMAP_WIDTH = 450;
   const MINIMAP_HEIGHT = 200;
-  const MINIMAP_ZOOM = 0.02; // Show ~8.3x more area
+  let minimapZoom = 0.02; // Show ~8.3x more area (adjustable with +/- buttons)
   const MINIMAP_PADDING = 20;
+  let minimapPanWorldX = 0;
+  let minimapPanWorldY = 0;
+  let minimapDragging = false;
+  let minimapDragLastX = 0;
+  let minimapDragLastY = 0;
+  let minimapDragStartX = 0;
+  let minimapDragStartY = 0;
+  let minimapDragMoved = false;
 
   // Create render texture for minimap (only if debug UI enabled)
   const minimapRenderTexture = SHOW_DEBUG_UI ? RenderTexture.create({
@@ -683,6 +697,90 @@ const init = async () => {
     app.stage.addChild(minimapBackground);
     app.stage.addChild(minimapSprite);
     app.stage.addChild(minimapBorder);
+  }
+
+  const getPointerCanvasPosition = (event: PointerEvent) => {
+    const rect = app.canvas.getBoundingClientRect();
+    const scaleX = app.renderer.width / rect.width;
+    const scaleY = app.renderer.height / rect.height;
+    return {
+      x: (event.clientX - rect.left) * scaleX,
+      y: (event.clientY - rect.top) * scaleY,
+    };
+  };
+
+  const isPointerOverMinimap = (event: PointerEvent): boolean => {
+    if (!SHOW_DEBUG_UI || !minimapSprite) return false;
+    const { x, y } = getPointerCanvasPosition(event);
+    return (
+      x >= minimapSprite.x &&
+      x <= minimapSprite.x + MINIMAP_WIDTH &&
+      y >= minimapSprite.y &&
+      y <= minimapSprite.y + MINIMAP_HEIGHT
+    );
+  };
+
+  const updateMinimapCursor = (event: PointerEvent) => {
+    if (!SHOW_DEBUG_UI || !minimapSprite) return;
+    if (event.pointerType !== 'mouse') return;
+    const overMinimap = isPointerOverMinimap(event);
+    if (minimapDragging) {
+      app.canvas.style.cursor = 'grabbing';
+    } else if (overMinimap) {
+      app.canvas.style.cursor = 'grab';
+    } else {
+      app.canvas.style.cursor = '';
+    }
+  };
+
+  // Minimap zoom control buttons (on top of minimap)
+  if (SHOW_DEBUG_UI && minimapSprite) {
+    const buttonSize = 30;
+    const buttonPadding = 5;
+    const minimapRight = minimapSprite.x + MINIMAP_WIDTH;
+    const minimapBottom = minimapSprite.y + MINIMAP_HEIGHT;
+
+    // Zoom In (+) button - bottom right of minimap
+    const zoomInBtn = document.createElement('button');
+    zoomInBtn.textContent = '+';
+    zoomInBtn.style.position = 'absolute';
+    zoomInBtn.style.width = `${buttonSize}px`;
+    zoomInBtn.style.height = `${buttonSize}px`;
+    zoomInBtn.style.right = `${app.renderer.width - minimapRight + buttonPadding}px`;
+    zoomInBtn.style.top = `${minimapBottom - buttonSize - buttonPadding}px`;
+    zoomInBtn.style.fontSize = '18px';
+    zoomInBtn.style.fontWeight = 'bold';
+    zoomInBtn.style.padding = '0';
+    zoomInBtn.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+    zoomInBtn.style.color = 'white';
+    zoomInBtn.style.border = '1px solid white';
+    zoomInBtn.style.cursor = 'pointer';
+    zoomInBtn.style.zIndex = '1000';
+    zoomInBtn.addEventListener('click', () => {
+      minimapZoom = Math.min(1.0, minimapZoom * 1.1); // Zoom in 10%
+    });
+    document.body.appendChild(zoomInBtn);
+
+    // Zoom Out (-) button - left of zoom in button
+    const zoomOutBtn = document.createElement('button');
+    zoomOutBtn.textContent = '-';
+    zoomOutBtn.style.position = 'absolute';
+    zoomOutBtn.style.width = `${buttonSize}px`;
+    zoomOutBtn.style.height = `${buttonSize}px`;
+    zoomOutBtn.style.right = `${app.renderer.width - minimapRight + buttonSize + buttonPadding * 2}px`;
+    zoomOutBtn.style.top = `${minimapBottom - buttonSize - buttonPadding}px`;
+    zoomOutBtn.style.fontSize = '18px';
+    zoomOutBtn.style.fontWeight = 'bold';
+    zoomOutBtn.style.padding = '0';
+    zoomOutBtn.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+    zoomOutBtn.style.color = 'white';
+    zoomOutBtn.style.border = '1px solid white';
+    zoomOutBtn.style.cursor = 'pointer';
+    zoomOutBtn.style.zIndex = '1000';
+    zoomOutBtn.addEventListener('click', () => {
+      minimapZoom = Math.max(0.005, minimapZoom * 0.9); // Zoom out 10%
+    });
+    document.body.appendChild(zoomOutBtn);
   }
 
   /**
@@ -756,6 +854,29 @@ const init = async () => {
       }
       return false; // Between spawns - don't cull
     }
+  };
+
+  const updateMeteorHitbox = (meteorBounds: { x: number; width: number; height: number }) => {
+    const hitboxX = meteorBounds.x + 50;
+    const hitboxWidth = 420;
+    const groundY = computePlayerGround();
+    const hitboxSurfaceY = groundY - 160;
+
+    if (!meteorHitbox) {
+      meteorHitbox = {
+        x: hitboxX,
+        width: hitboxWidth,
+        surfaceY: hitboxSurfaceY,
+      };
+      console.log(
+        `[METEOR HITBOX] Created at x=${hitboxX.toFixed(0)} surfaceY=${hitboxSurfaceY.toFixed(0)} width=${hitboxWidth}px (groundY=${groundY.toFixed(0)})`
+      );
+      return;
+    }
+
+    meteorHitbox.x = hitboxX;
+    meteorHitbox.width = hitboxWidth;
+    meteorHitbox.surfaceY = hitboxSurfaceY;
   };
 
   const ticker = new Ticker();
@@ -900,6 +1021,7 @@ const init = async () => {
         speedMultiplier = 0; // Stop scrolling
         // Reset contact state so holes/platforms work after respawn
         activePlatformId = null;
+        meteorHitbox = null;
         fallingIntoHole = false;
         physics.clearSurfaceOverride();
         wasGrounded = false;
@@ -1280,7 +1402,7 @@ const init = async () => {
           processedSegments.add(segmentKey);
 
           // Use same Y position as platform holes, but offset down more
-          const groundY = computePlayerGround() + 40; // Offset below ground center for collision detection
+          const groundY = computePlayerGround(); // Base ground for hole hitbox
           if (seg.type === 'meteor_transition') {
             groundHoles.spawnGroundHole(seg.x, seg.width, groundY, 'meteor_transition');
             console.log(`[GROUND HOLE] ✓ Spawned meteor_transition at x=${seg.x.toFixed(0)} width=${seg.width.toFixed(0)} groundY=${groundY.toFixed(0)}`);
@@ -1570,26 +1692,28 @@ const init = async () => {
     platforms.renderToContainer(platformContainer, 0); // No camera offset for now
     holes.renderToContainer(holeContainer, 0);
 
-    // Debug: Render platform and ground hole hitboxes
-    debugPlatformHitboxContainer.removeChildren();
+    if (DEBUG_DRAW_HITBOXES) {
+      // Debug: Render platform and ground hole hitboxes
+      debugPlatformHitboxContainer.removeChildren();
 
-    // Platform hitboxes (semi-transparent green)
-    const platformHitboxes = platforms.getDebugHitboxes(playerDiameter);
-    platformHitboxes.forEach((hitbox) => {
-      const debugRect = new Graphics();
-      debugRect.rect(hitbox.left, hitbox.top, hitbox.width, hitbox.height);
-      debugRect.fill({ color: 0x00ff7f, alpha: 0.35 }); // Spring green at 35% opacity
-      debugPlatformHitboxContainer.addChild(debugRect);
-    });
+      // Platform hitboxes (semi-transparent green)
+      const platformHitboxes = platforms.getDebugHitboxes(playerDiameter);
+      platformHitboxes.forEach((hitbox) => {
+        const debugRect = new Graphics();
+        debugRect.rect(hitbox.left, hitbox.top, hitbox.width, hitbox.height);
+        debugRect.fill({ color: 0x00ff7f, alpha: 0.35 }); // Spring green at 35% opacity
+        debugPlatformHitboxContainer.addChild(debugRect);
+      });
 
-    // Ground hole hitboxes (semi-transparent red)
-    const debugGroundHoleHitboxes = groundHoles.getDebugHitboxes();
-    debugGroundHoleHitboxes.forEach((hitbox) => {
-      const debugRect = new Graphics();
-      debugRect.rect(hitbox.left, hitbox.top, hitbox.right - hitbox.left, hitbox.bottom - hitbox.top);
-      debugRect.fill({ color: 0xff4444, alpha: 0.35 }); // Red at 35% opacity
-      debugPlatformHitboxContainer.addChild(debugRect);
-    });
+      // Ground hole hitboxes (semi-transparent red)
+      const debugGroundHoleHitboxes = groundHoles.getDebugHitboxes();
+      debugGroundHoleHitboxes.forEach((hitbox) => {
+        const debugRect = new Graphics();
+        debugRect.rect(hitbox.left, hitbox.top, hitbox.right - hitbox.left, hitbox.bottom - hitbox.top);
+        debugRect.fill({ color: 0xff4444, alpha: 0.35 }); // Red at 35% opacity
+        debugPlatformHitboxContainer.addChild(debugRect);
+      });
+    }
 
     megaLaserHeight = playerDiameter * 1.2;
 
@@ -1618,6 +1742,28 @@ const init = async () => {
     }
 
     // Stars disabled for now
+
+    // Lower ground surface while over hole segments so the player can fall into them
+    const baseGroundSurface = computePlayerGround();
+    let desiredGroundSurface = baseGroundSurface;
+
+    if (cometHoleLevelActive && !fallingIntoHole) {
+      const physicsState = physics.getState();
+      const playerLeft = physicsState.x - playerRadius;
+      const playerRight = physicsState.x + playerRadius;
+      const holeUnderPlayer = groundHoles.getDebugHitboxes().find((hole) => (
+        playerRight > hole.left && playerLeft < hole.right
+      ));
+
+      if (holeUnderPlayer) {
+        desiredGroundSurface = holeUnderPlayer.bottom + playerRadius + 10;
+      }
+    }
+
+    if (desiredGroundSurface !== currentGroundSurface) {
+      physics.setGroundSurface(desiredGroundSurface);
+      currentGroundSurface = desiredGroundSurface;
+    }
 
     // Platform collision detection
     // Store previous position for frame-by-frame tracking
@@ -1684,9 +1830,6 @@ const init = async () => {
       isFirstPlatformSpawned = false;
       platformSequenceIndex = 0;
       totalPlatformsSpawned = 0;
-      highestPlatformHeight = 0;
-      highestPlatformX = 0;
-      redEnemyPlatformId = null;
       lastHoleStartX = null;
     }
 
@@ -1765,7 +1908,7 @@ const init = async () => {
           // Calculate vertical offset based on position in sequence
           // First platform is at ground level, most stay near ground, last platform is highest
           if (!isFirstPlatformSpawned) {
-            verticalOffset = FIRST_PLATFORM_HEIGHT;
+            verticalOffset = FIRST_PLATFORM_HEIGHT - FIRST_PLATFORM_DROP;
           } else if (isLastPlatform) {
             // Final platform is the highest
             verticalOffset = FINAL_PLATFORM_HEIGHT;
@@ -1784,7 +1927,7 @@ const init = async () => {
             const heightCurve = Math.pow(progression, 3); // Cubic curve for gradual increase
 
             // Most platforms stay near ground (60-120px), with gradual increase toward final height
-            const baseHeight = 60; // Minimum height above ground
+            const baseHeight = 40; // Minimum height above ground
             const heightRange = FINAL_PLATFORM_HEIGHT - baseHeight;
             verticalOffset = baseHeight + (heightRange * heightCurve);
 
@@ -1813,58 +1956,57 @@ const init = async () => {
             platformSequenceIndex++;
           }
 
-          // Track highest platform for enemy spawning
-          if (verticalOffset > highestPlatformHeight) {
-            highestPlatformHeight = verticalOffset;
-            highestPlatformX = platformX;
-            redEnemyPlatformId = id;
-          }
-
           lastPlatformX = platformX;
           spawnCount++;
         }
       }
     }
 
-    // Spawn red enemy on the highest platform once platforms are done spawning
-    if (cometHoleLevelActive && !redEnemyActive && highestPlatformHeight > 0 && !willMoreHolesCome) {
-      const plat = redEnemyPlatformId !== null ? platforms.getPlatformBounds(redEnemyPlatformId) : null;
-      if (plat) {
-        const enemyX = (plat.left + plat.right) / 2;
-        const enemyY = plat.surfaceY + playerRadius; // sit centered on platform
-        enemyBall.position.set(enemyX, enemyY);
-        enemyBall.visible = true;
-        redEnemyActive = true;
-        redEnemyState = 'on_platform';
-        console.log(
-          `[RED ENEMY] Spawned on platform ${plat.id} at x=${enemyX.toFixed(0)} surfaceY=${plat.surfaceY.toFixed(0)}`
-        );
-      } else {
-        // Fallback: place at stored height/X even if we lost the platform id
-        const groundY = computePlayerGround();
-        const enemyY = groundY - highestPlatformHeight - playerRadius;
-        enemyBall.position.set(highestPlatformX, enemyY);
-        enemyBall.visible = true;
-        redEnemyActive = true;
-        redEnemyState = 'on_platform';
-        console.warn('[RED ENEMY] Spawned with fallback position (no platform id)');
-      }
+    const meteorBounds = cometHoleLevelActive ? grounds.getMeteorOverlayBounds() : null;
+
+    if (cometHoleLevelActive && meteorBounds) {
+      updateMeteorHitbox(meteorBounds);
+    } else if (meteorHitbox) {
+      meteorHitbox = null;
+    }
+
+    // Spawn red enemy inside the meteor overlay when it appears
+    if (cometHoleLevelActive && meteorBounds && !redEnemyActive) {
+      // Position enemy inside meteor using percentages of overlay dimensions plus pixel adjustments
+      const percentFromLeft = 0.36; // 36% from left edge of overlay
+      const percentFromBottom = 0.27; // 27% from bottom edge of overlay
+
+      // Fine-tune position with pixel offsets (move 30px left, 50px down, then 10px right, 15px down)
+      const enemyX = meteorBounds.x + (meteorBounds.width * percentFromLeft) - 30 + 10;
+      const enemyY = meteorBounds.y - (meteorBounds.height * percentFromBottom) + 50 + 15;
+
+      enemyBall.position.set(enemyX, enemyY);
+      enemyBall.visible = true;
+      redEnemyActive = true;
+      redEnemyState = 'on_platform'; // Using 'on_platform' state but enemy is in meteor
+      console.log(
+        `[RED ENEMY] Spawned inside meteor at x=${enemyX.toFixed(0)} y=${enemyY.toFixed(0)} (overlay: ${meteorBounds.width.toFixed(0)}x${meteorBounds.height.toFixed(0)})`
+      );
     }
 
     // Red enemy collision detection with blue player
     if (redEnemyActive && redEnemyState === 'on_platform') {
-      // Keep enemy stuck to its platform while it scrolls
-      if (redEnemyPlatformId !== null) {
-        const plat = platforms.getPlatformBounds(redEnemyPlatformId);
-        if (plat) {
-          enemyBall.position.x = (plat.left + plat.right) / 2;
-          enemyBall.position.y = plat.surfaceY + playerRadius;
-        } else {
-          // Platform vanished; fall
-          redEnemyState = 'falling';
-          redEnemyVelocityX = RED_ENEMY_ROLL_SPEED;
-          redEnemyVelocityY = 0;
-        }
+      // Keep enemy stuck to meteor overlay position as it scrolls
+      if (meteorBounds) {
+        // Update enemy position using percentages of overlay dimensions plus pixel adjustments
+        const percentFromLeft = 0.36; // 36% from left edge of overlay
+        const percentFromBottom = 0.27; // 27% from bottom edge of overlay
+
+        // Fine-tune position with pixel offsets (move 30px left, 50px down, then 10px right, 15px down, then 25px right, 15px down, then 10px right, 5px down)
+        enemyBall.position.x = meteorBounds.x + (meteorBounds.width * percentFromLeft) + 120;
+        enemyBall.position.y = meteorBounds.y - (meteorBounds.height * percentFromBottom) + 155;
+      } else {
+        // Meteor overlay vanished; enemy jumps out
+        redEnemyState = 'falling';
+        redEnemyVelocityX = 300; // Jump out to the right
+        redEnemyVelocityY = -400; // Jump up
+        meteorHitbox = null; // Clear meteor hitbox
+        console.log('[RED ENEMY] Meteor vanished, jumping out');
       }
 
       const playerBounds = {
@@ -1885,91 +2027,61 @@ const init = async () => {
       const overlapsY = playerBounds.bottom > enemyBounds.top && playerBounds.top < enemyBounds.bottom;
 
       if (overlapsX && overlapsY) {
-        // Player hit the enemy - start fall-off animation
+        // Player hit the enemy - jump out of meteor
         redEnemyState = 'falling';
-        redEnemyVelocityX = 200; // Push enemy to the right
-        redEnemyVelocityY = -300; // Initial upward velocity from impact
-        redEnemyPlatformId = null;
+        redEnemyVelocityX = 300; // Jump out to the right
+        redEnemyVelocityY = -400; // Jump up and out
         // Impact feedback: sparks + quick screen shake
         sparkParticles.spawn(enemyBall.position.x, enemyBall.position.y, 'red');
         shakeActive = true;
         shakeEndTime = performance.now() + 220;
-        redEnemyFallTime = performance.now();
-        console.log('[RED ENEMY] Hit by player, falling off platform');
+        console.log('[RED ENEMY] Hit by player, jumping out of meteor');
       }
     }
 
-    // Red enemy falling animation
+    // Red enemy falling animation (jumps out of meteor, lands on ground)
     if (redEnemyActive && redEnemyState === 'falling') {
       const GRAVITY = 2000; // Gravity for falling
       redEnemyVelocityY += GRAVITY * deltaSeconds;
       enemyBall.position.x += redEnemyVelocityX * deltaSeconds;
       enemyBall.position.y += redEnemyVelocityY * deltaSeconds;
 
-      // Check if enemy has fallen far below ground
+      // Check if enemy has landed on ground
       const groundY = computePlayerGround();
-      if (enemyBall.position.y > groundY + 500) {
-        // Enemy has fallen into the hole
-        enemyBall.visible = false;
-        console.log('[RED ENEMY] Fell into hole, hiding');
+      if (enemyBall.position.y >= groundY - playerRadius) {
+        // Enemy landed on ground - snap to ground and transition to rolling state
+        enemyBall.position.y = groundY - playerRadius;
+        redEnemyVelocityY = 0;
+        redEnemyState = 'rolling_in';
+        console.log('[RED ENEMY] Landed on ground, starting roll to the right');
       }
     }
 
-    // Detect when player returns to grassy area to start roll-in animation (even if enemy never fully hid)
-    if (
-      redEnemyActive &&
-      (redEnemyState === 'falling' || redEnemyState === 'on_platform')
-    ) {
-      const noHolesAhead = !cometHoleLevelActive && !hasActiveHoles && !willMoreHolesCome;
-      const farPastHoles = rightmostHoleX > -Infinity && state.x > rightmostHoleX + window.innerWidth * 0.25;
-      const timeSinceFall = performance.now() - redEnemyFallTime;
-
-      // Start the delay timer when conditions are met
-      if ((noHolesAhead || farPastHoles) && timeSinceFall > 400) {
-        if (enemyIntroDelayStartTime === 0) {
-          // First time conditions met - start the 1-second delay
-          enemyIntroDelayStartTime = performance.now();
-          console.log('[RED ENEMY] Hole area cleared, starting 1-second intro delay');
-        }
-
-        // Check if 1-second delay has passed
-        const delayElapsed = performance.now() - enemyIntroDelayStartTime;
-        if (delayElapsed >= 1000) {
-          const groundY = computePlayerGround();
-          enemyBall.position.set(-120, groundY - playerRadius); // Start off-screen left
-          enemyBall.visible = true;
-
-          // First time enemy becomes visible - constrain player to left half
-          if (!enemyEverVisible) {
-            enemyEverVisible = true;
-            physics.resetHorizontalRange(); // Back to default 250 left, 150 right
-
-            // If player is too far right (beyond 45% screen), start smooth return animation
-            const playerScreenPercent = state.x / app.renderer.width;
-            const maxAllowedPercent = 0.45; // 45% of screen (right boundary of left half)
-            if (playerScreenPercent > maxAllowedPercent) {
-              playerReturnStartTime = performance.now();
-              playerReturnStartX = state.x;
-              playerReturnTargetX = app.renderer.width * 0.40; // Move to 40% (safely in left half)
-              console.log(`[PLAYER RANGE] Player at ${(playerScreenPercent * 100).toFixed(0)}%, animating to 40%`);
-            }
-
-            console.log('[PLAYER RANGE] Enemy appearing, constraining to left half');
-          }
-
-          redEnemyState = 'rolling_in';
-          redEnemyVelocityX = RED_ENEMY_ROLL_SPEED;
-          showScoreUI();
-          console.log('[RED ENEMY] 1-second delay complete, starting roll-in animation');
-        }
-      }
-    }
-
-    // Red enemy rolling in animation
+    // Red enemy rolling in animation (rolls right after landing from meteor)
     if (redEnemyActive && redEnemyState === 'rolling_in') {
-      enemyBall.position.x += redEnemyVelocityX * deltaSeconds;
+      // First time entering rolling state - constrain player to left half and show score UI
+      if (!enemyEverVisible) {
+        enemyEverVisible = true;
+        physics.resetHorizontalRange(); // Back to default 250 left, 150 right
 
-      // Stop at 90% of screen width (original enemy position)
+        // If player is too far right (beyond 45% screen), start smooth return animation
+        const playerScreenPercent = state.x / app.renderer.width;
+        const maxAllowedPercent = 0.45; // 45% of screen (right boundary of left half)
+        if (playerScreenPercent > maxAllowedPercent) {
+          playerReturnStartTime = performance.now();
+          playerReturnStartX = state.x;
+          playerReturnTargetX = app.renderer.width * 0.40; // Move to 40% (safely in left half)
+          console.log(`[PLAYER RANGE] Player at ${(playerScreenPercent * 100).toFixed(0)}%, animating to 40%`);
+        }
+
+        showScoreUI();
+        console.log('[PLAYER RANGE] Enemy appearing, constraining to left half');
+      }
+
+      // Roll to the right
+      enemyBall.position.x += RED_ENEMY_ROLL_SPEED * deltaSeconds;
+
+      // Stop at 90% of screen width (final enemy position)
       const targetX = app.renderer.width * 0.9;
       if (enemyBall.position.x >= targetX) {
         enemyBall.position.x = targetX;
@@ -2029,12 +2141,45 @@ const init = async () => {
 
     // Check for platform collision (ignore small movements during charge to prevent falling through)
     const isCharging = physics.isChargingJump();
-    const supportingPlatform = platforms.getSupportingPlatform(
+    let supportingPlatform = platforms.getSupportingPlatform(
       playerBounds,
       prevBounds,
       verticalVelocity,
       physics.getJumpedThroughPlatforms() // Pass Set of platforms jumped through
     );
+
+    // Check for meteor hitbox collision if no platform found
+    if (!supportingPlatform && meteorHitbox) {
+      const hitboxLeft = meteorHitbox.x;
+      const hitboxRight = meteorHitbox.x + meteorHitbox.width;
+      const horizontalOverlap = playerBounds.right > hitboxLeft && playerBounds.left < hitboxRight;
+
+      if (horizontalOverlap) {
+        const playerHeight = playerBounds.bottom - playerBounds.top;
+        const tolerance = Math.max(2, playerHeight * 0.05);
+        const platformBottomCollision = meteorHitbox.surfaceY + playerHeight;
+        const descending = verticalVelocity <= 0 || playerBounds.bottom > prevBounds.bottom;
+        const approachingFromAbove = prevBounds.top + tolerance <= meteorHitbox.surfaceY;
+        const crossedThisFrame =
+          descending &&
+          approachingFromAbove &&
+          prevBounds.bottom <= platformBottomCollision + tolerance &&
+          playerBounds.bottom >= platformBottomCollision - tolerance;
+        const resting =
+          Math.abs(playerBounds.bottom - platformBottomCollision) <= tolerance &&
+          Math.abs(verticalVelocity) < 0.8;
+
+        if (crossedThisFrame || resting) {
+          // Player landed on meteor hitbox - treat it like a platform
+          supportingPlatform = {
+            id: -1, // Special ID for meteor hitbox
+            surfaceY: meteorHitbox.surfaceY,
+            left: hitboxLeft,
+            right: hitboxRight,
+          };
+        }
+      }
+    }
 
     // Hole collision: if we're not on a platform and overlap a hole, fall and respawn
     if (!supportingPlatform && !fallingIntoHole) {
@@ -2096,7 +2241,10 @@ const init = async () => {
         platformAscendBonus = Math.min(platformAscendBonus + PLATFORM_ASCEND_STEP, PLATFORM_ASCEND_MAX);
       } else if (activePlatformId !== null) {
         // Keep platform override while bouncing vertically so the bounce counter isn't reset
-        const livePlatform = platforms.getPlatformBounds(activePlatformId);
+        const livePlatform =
+          activePlatformId === -1 && meteorHitbox
+            ? { left: meteorHitbox.x, right: meteorHitbox.x + meteorHitbox.width }
+            : platforms.getPlatformBounds(activePlatformId);
 
         // If platform has been culled (scrolled away), release the player
         if (!livePlatform) {
@@ -2160,7 +2308,7 @@ const init = async () => {
     previousVelocity = Math.abs(verticalVelocity);
 
     // Debug: draw player and platform hitboxes
-    if (DEBUG_DRAW_HITBOXES) {
+    if (DEBUG_DRAW_HITBOXES && hitboxOverlay) {
       hitboxOverlay.clear();
       // Player bounds
       hitboxOverlay.rect(playerBounds.left, playerBounds.top, playerBounds.right - playerBounds.left, playerBounds.bottom - playerBounds.top).fill({ color: 0xff0000, alpha: 0.25 });
@@ -2201,6 +2349,35 @@ const init = async () => {
         }
         hitboxOverlay.rect(hole.left, hole.top, width, height).fill({ color, alpha: 0.3 });
       });
+
+      // Meteor hitbox (green/lime color for landing surface)
+      if (meteorHitbox) {
+        const meteorWidth = meteorHitbox.width;
+        const meteorHeight = playerDiameter; // Use player diameter for visual height reference
+        hitboxOverlay.rect(meteorHitbox.x, meteorHitbox.surfaceY, meteorWidth, meteorHeight).fill({ color: 0x00ff00, alpha: 0.35 });
+      }
+
+      // Respawn points (pink/magenta boxes)
+      const spawnBoxWidth = 80;
+      const spawnBoxHeight = 120;
+      const spawnGroundY = computePlayerGround();
+
+      // Get ground segments for respawn hitbox positioning
+      const segments = grounds.getSegments();
+
+      // Pink box 1 (0xff00ff): Front of meteor_transition segment (first meteor)
+      const meteorTransitionSegment = segments.find((seg: { type: string }) => seg.type === 'meteor_transition');
+      if (meteorTransitionSegment) {
+        const respawnX = meteorTransitionSegment.x + 100; // 100px from left edge of meteor_transition
+        hitboxOverlay.rect(respawnX - spawnBoxWidth / 2, spawnGroundY - spawnBoxHeight, spawnBoxWidth, spawnBoxHeight).fill({ color: 0xff00ff, alpha: 0.4 });
+      }
+
+      // Pink box 2 (0xff1493): Back of hole_transition_back segment (where player respawns after falling)
+      const holeTransitionBackSegment = segments.find((seg: { type: string }) => seg.type === 'hole_transition_back');
+      if (holeTransitionBackSegment) {
+        const respawnX = holeTransitionBackSegment.x + holeTransitionBackSegment.width - 100; // 100px from right edge
+        hitboxOverlay.rect(respawnX - spawnBoxWidth / 2, spawnGroundY - spawnBoxHeight, spawnBoxWidth, spawnBoxHeight).fill({ color: 0xff1493, alpha: 0.4 });
+      }
     }
 
     // Camera system: locks to platform floors, follows player downward
@@ -2352,6 +2529,22 @@ const init = async () => {
           const platformShadowY = plat.surfaceY + playerDiameter + PLATFORM_LANDING_OFFSET;
 
           // Track the closest platform below the player's current position
+          if (platformShadowY > state.y - playerRadius) {
+            if (closestPlatformY === null || platformShadowY < closestPlatformY) {
+              closestPlatformY = platformShadowY;
+            }
+          }
+        }
+      }
+
+      if (meteorHitbox) {
+        const platLeft = meteorHitbox.x;
+        const platRight = meteorHitbox.x + meteorHitbox.width;
+        const playerLeft = state.x - playerRadius;
+        const playerRight = state.x + playerRadius;
+
+        if (playerRight > platLeft && playerLeft < platRight) {
+          const platformShadowY = meteorHitbox.surfaceY + playerDiameter + PLATFORM_LANDING_OFFSET;
           if (platformShadowY > state.y - playerRadius) {
             if (closestPlatformY === null || platformShadowY < closestPlatformY) {
               closestPlatformY = platformShadowY;
@@ -2589,10 +2782,10 @@ const init = async () => {
       const minimapCenterY = MINIMAP_HEIGHT / 2;
 
       // Apply minimap transform - zoom out and center on player
-      scene.scale.set(MINIMAP_ZOOM);
+      scene.scale.set(minimapZoom);
       scene.position.set(
-        minimapCenterX - playerState.x * MINIMAP_ZOOM,
-        minimapCenterY - playerState.y * MINIMAP_ZOOM
+        minimapCenterX - (playerState.x + minimapPanWorldX) * minimapZoom,
+        minimapCenterY - (playerState.y + minimapPanWorldY) * minimapZoom
       );
 
       // Render scene to minimap texture
@@ -2678,12 +2871,60 @@ const init = async () => {
       }
     }
 
+    const overMinimap = SHOW_DEBUG_UI && minimapSprite && isPointerOverMinimap(event);
+
+    if (minimapDragging) {
+      const position = getPointerCanvasPosition(event);
+      const deltaX = position.x - minimapDragLastX;
+      const deltaY = position.y - minimapDragLastY;
+      if (Math.abs(deltaX) > 1 || Math.abs(deltaY) > 1) {
+        minimapDragMoved = true;
+      }
+      minimapPanWorldX -= deltaX / minimapZoom;
+      minimapPanWorldY -= deltaY / minimapZoom;
+      minimapDragLastX = position.x;
+      minimapDragLastY = position.y;
+      updateMinimapCursor(event);
+      return;
+    }
+
+    if (overMinimap) {
+      updateMinimapCursor(event);
+      return;
+    }
+
+    updateMinimapCursor(event);
     physics.setMousePosition(event.clientX);
   };
 
   window.addEventListener('pointermove', handlePointerMove);
-  window.addEventListener('pointerdown', triggerJump);
-  window.addEventListener('pointerup', releaseJump);
+  window.addEventListener('pointerdown', (event: PointerEvent) => {
+    if (SHOW_DEBUG_UI && minimapSprite && isPointerOverMinimap(event)) {
+      const position = getPointerCanvasPosition(event);
+      minimapDragging = true;
+      minimapDragMoved = false;
+      minimapDragStartX = position.x;
+      minimapDragStartY = position.y;
+      minimapDragLastX = position.x;
+      minimapDragLastY = position.y;
+      updateMinimapCursor(event);
+      return;
+    }
+    triggerJump(event);
+  });
+  window.addEventListener('pointerup', (event: PointerEvent) => {
+    if (minimapDragging) {
+      if (!minimapDragMoved && minimapSprite) {
+        const minimapCenterX = minimapSprite.x + MINIMAP_WIDTH / 2;
+        const minimapCenterY = minimapSprite.y + MINIMAP_HEIGHT / 2;
+        minimapPanWorldX -= (minimapCenterX - minimapDragStartX) / minimapZoom;
+        minimapPanWorldY -= (minimapCenterY - minimapDragStartY) / minimapZoom;
+      }
+      minimapDragging = false;
+      updateMinimapCursor(event);
+    }
+    releaseJump();
+  });
   window.addEventListener('keydown', (event) => {
     if (event.code === 'Space' || event.code === 'ArrowUp') {
       event.preventDefault();
@@ -2788,6 +3029,7 @@ const init = async () => {
 
     const updatedGround = computePlayerGround();
     physics.setGroundSurface(updatedGround);
+    currentGroundSurface = updatedGround;
     physics.updateScreenWidth(app.renderer.width);
     ball.position.y = updatedGround - playerRadius;
 
@@ -3179,8 +3421,9 @@ const init = async () => {
 
     // Immediately spawn ground holes for ALL segments in the sequence (including off-screen ones)
     const segments = grounds.getSegments();
-    const groundY = computePlayerGround() + 40; // Offset below ground center for collision detection
+    const groundY = computePlayerGround(); // Base ground for hole hitbox
     let firstHoleSegmentX = Infinity;
+    let entryPlatformSpawned = false;
 
     segments.forEach((seg, idx) => {
       const segmentKey = `${idx}_${seg.type}`;
@@ -3190,6 +3433,17 @@ const init = async () => {
         groundHoles.spawnGroundHole(seg.x, seg.width, groundY, 'meteor_transition');
         if (seg.x < firstHoleSegmentX) firstHoleSegmentX = seg.x;
         console.log(`[COMET HOLE LEVEL] Pre-spawned meteor_transition at x=${seg.x.toFixed(0)} width=${seg.width.toFixed(0)}`);
+
+        if (!entryPlatformSpawned) {
+          const holeWidth = seg.width * 0.66;
+          const holeStartX = seg.x + seg.width - holeWidth;
+          const entryPlatformX = holeStartX + 5;
+          const entryGroundY = computePlayerGround();
+          platforms.spawn(entryPlatformX, entryGroundY, playerRadius, 'small', FIRST_PLATFORM_HEIGHT - FIRST_PLATFORM_DROP);
+          isFirstPlatformSpawned = true;
+          totalPlatformsSpawned = Math.max(1, totalPlatformsSpawned + 1);
+          entryPlatformSpawned = true;
+        }
       } else if (seg.type === 'cloud_hole') {
         groundHoles.spawnGroundHole(seg.x, seg.width, groundY, 'full_hole');
         if (seg.x < firstHoleSegmentX) firstHoleSegmentX = seg.x;

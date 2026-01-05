@@ -31,6 +31,7 @@ export interface DebugHitbox {
 export class GroundHoleManager {
   private holes: GroundHoleInstance[] = [];
   private readonly HOLE_DEPTH = 150; // Hitbox extends down from ground (matches platform hole depth)
+  private readonly HOLE_TOP_OFFSET = 100; // Push hole hitbox down from ground
 
   constructor() {}
 
@@ -89,8 +90,8 @@ export class GroundHoleManager {
       const holeLeft = hole.x;
       const holeRight = hole.x + hole.width;
       // Holes extend downward from ground (like platform holes)
-      const holeTop = hole.groundY - 50; // Small buffer above ground to catch player
-      const holeBottom = hole.groundY + this.HOLE_DEPTH; // Extends deep below ground
+      const holeTop = hole.groundY + this.HOLE_TOP_OFFSET; // Lower hitbox so player falls into hole
+      const holeBottom = holeTop + this.HOLE_DEPTH; // Extends deep below hole top
 
       // AABB collision check
       const overlapsX = bounds.right > holeLeft && bounds.left < holeRight;
@@ -133,8 +134,8 @@ export class GroundHoleManager {
       .map((hole) => ({
         left: hole.x,
         right: hole.x + hole.width,
-        top: hole.groundY - 50, // Small buffer above ground
-        bottom: hole.groundY + this.HOLE_DEPTH, // Extends deep below ground
+        top: hole.groundY + this.HOLE_TOP_OFFSET, // Lower hitbox so player falls into hole
+        bottom: hole.groundY + this.HOLE_TOP_OFFSET + this.HOLE_DEPTH, // Extends deep below hole top
         type: hole.type,
       }));
   }

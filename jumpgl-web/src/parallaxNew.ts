@@ -2,13 +2,14 @@ import { Assets, Container, Sprite, Texture, TilingSprite } from 'pixi.js';
 import { calculateResponsiveSizes } from './config';
 import { BiomeSequenceManager, BIOME_CONFIGS } from './biomeSystem';
 import type { BiomeType } from './biomeSystem';
-// import { AnimatedSkyBackground } from './animatedSkyBackground'; // Disabled - will re-enable with better quality images
+import { AnimatedSkyBackground } from './animatedSkyBackground';
 
 const FRAMES_PER_SECOND = 60;
 const SPEED_MULTIPLIER = 1.2; // 20% faster overall
 const BASE_GROUND_SCROLL_SPEED = 1.0 * FRAMES_PER_SECOND * SPEED_MULTIPLIER; // 72 px/sec
 const BASE_BACKGROUND_SPEED = 0.5 * FRAMES_PER_SECOND * SPEED_MULTIPLIER; // ~36 px/sec
 const TRANSITION_SPEED_MULTIPLIER = 1.15;
+const USE_ANIMATED_SKY = import.meta.env.VITE_USE_ANIMATED_SKY === 'true';
 
 /**
  * Segment types: biome segments that repeat, or transition segments between biomes
@@ -39,6 +40,8 @@ class SegmentScroller {
   private fenceSprite: Sprite | null = null;
   private cottageOverlayTexture: Texture;
   private cottageOverlaySprite: Sprite | null = null;
+  private meteorOverlayTexture: Texture;
+  private meteorOverlaySprite: Sprite | null = null;
   private fenceButterflySprite: Sprite | null = null;
   private fenceButterflyActive = true; // Butterfly is on fence and stationary
   private fenceButterflyFrames: Texture[] = [];
@@ -64,7 +67,8 @@ class SegmentScroller {
     segmentHeight: number,
     offsetY: number,
     fenceTexture: Texture,
-    cottageOverlayTexture: Texture
+    cottageOverlayTexture: Texture,
+    meteorOverlayTexture: Texture
   ) {
     this.container = new Container();
     parent.addChild(this.container);
@@ -79,6 +83,7 @@ class SegmentScroller {
     this.offsetY = offsetY;
     this.fenceTexture = fenceTexture;
     this.cottageOverlayTexture = cottageOverlayTexture;
+    this.meteorOverlayTexture = meteorOverlayTexture;
     this.buildInitialSegments();
   }
 
@@ -96,6 +101,12 @@ class SegmentScroller {
     if (this.cottageOverlaySprite) {
       this.cottageOverlaySprite.destroy();
       this.cottageOverlaySprite = null;
+    }
+
+    // Destroy old meteor overlay sprite if it exists
+    if (this.meteorOverlaySprite) {
+      this.meteorOverlaySprite.destroy();
+      this.meteorOverlaySprite = null;
     }
 
     // Destroy old butterfly sprite if it exists
@@ -294,6 +305,11 @@ class SegmentScroller {
       this.cottageOverlaySprite.x -= scrollAmount;
     }
 
+    // Scroll meteor overlay sprite with ground
+    if (this.meteorOverlaySprite) {
+      this.meteorOverlaySprite.x -= scrollAmount;
+    }
+
     // Scroll fence sprite with ground
     if (this.fenceSprite) {
       this.fenceSprite.x -= scrollAmount;
@@ -436,6 +452,15 @@ class SegmentScroller {
         if (shouldCull(this.cottageOverlaySprite.x, overlayWidth)) {
           this.cottageOverlaySprite.destroy();
           this.cottageOverlaySprite = null;
+        }
+      }
+
+      // Cull meteor overlay if off-screen
+      if (this.meteorOverlaySprite) {
+        const overlayWidth = this.meteorOverlaySprite.width;
+        if (shouldCull(this.meteorOverlaySprite.x, overlayWidth)) {
+          this.meteorOverlaySprite.destroy();
+          this.meteorOverlaySprite = null;
         }
       }
 
@@ -619,6 +644,32 @@ class SegmentScroller {
     this.createSegment('hole_transition_back', cursor);
     cursor += this.segments[this.segments.length - 1].width;
 
+    // Create meteor overlay on top of hole_transition_back segment
+    const holeTransitionBackSegment = this.segments.find(
+      seg => seg.type === 'hole_transition_back'
+    );
+
+    if (holeTransitionBackSegment) {
+      // Create meteor overlay sprite
+      this.meteorOverlaySprite = new Sprite(this.meteorOverlayTexture);
+
+      // Get the hole_transition_back segment's actual rendered scale
+      const segmentSprite = holeTransitionBackSegment.sprite;
+      const segmentScale = segmentSprite.scale.x;
+
+      // Scale overlay to match segment scale
+      this.meteorOverlaySprite.scale.set(segmentScale);
+
+      // Position overlay at same left-bottom point as segment
+      this.meteorOverlaySprite.x = segmentSprite.x;
+      this.meteorOverlaySprite.y = segmentSprite.y;
+
+      // Add overlay to ground container so player renders above it
+      this.container.addChild(this.meteorOverlaySprite);
+
+      console.log('[METEOR OVERLAY] Created at X:', this.meteorOverlaySprite.x);
+    }
+
     // 4. cloud (return to normal)
     this.createSegment('cloud', cursor);
 
@@ -750,6 +801,20 @@ class SegmentScroller {
   getFenceX(): number | null {
     return this.fenceSprite ? this.fenceSprite.x : null;
   }
+
+  /**
+   * Get meteor overlay position and dimensions (null if overlay hasn't spawned or has been destroyed)
+   * Returns { x, y, width, height } where x/y are the left-bottom position of the overlay
+   */
+  getMeteorOverlayBounds(): { x: number; y: number; width: number; height: number } | null {
+    if (!this.meteorOverlaySprite) return null;
+    return {
+      x: this.meteorOverlaySprite.x,
+      y: this.meteorOverlaySprite.y,
+      width: this.meteorOverlaySprite.width,
+      height: this.meteorOverlaySprite.height
+    };
+  }
 }
 
 const FOREST_TOP_CROP = 2; // pixels to trim from the top of forest/transition images
@@ -784,6 +849,7 @@ export type ParallaxTextures = {
   cloudGroundHoleTransitionBack: Texture;
   cloudGroundHoleTransitionBackFire: Texture;
   cloudFence: Texture;
+  meteorOverlay: Texture;
 };
 
 let bundleRegistered = false;
@@ -806,6 +872,7 @@ export const loadParallaxTextures = async (): Promise<ParallaxTextures> => {
       cloudGroundHoleTransitionBack: 'cloud_light_ground_hole_transition_back.webp',
       cloudGroundHoleTransitionBackFire: 'cloud_light_ground_hole_transition_back_fire.webp',
       cloudFence: 'cloud_light_fence.webp',
+      meteorOverlay: 'meteor.webp',
     });
     bundleRegistered = true;
   }
@@ -819,7 +886,7 @@ export class ParallaxBackgrounds {
   private container: Container;
   private biomeManager: BiomeSequenceManager;
   private skyBackground: TilingSprite | null = null;
-  // private animatedSky: AnimatedSkyBackground | null = null; // Disabled for now - will re-enable with better quality images
+  private animatedSky: AnimatedSkyBackground | null = null;
   private currentBackground: TilingSprite | null = null;
   private transitionGroup: Container | null = null;
   private textures: ParallaxTextures;
@@ -849,8 +916,12 @@ export class ParallaxBackgrounds {
   private setupSkyBackground(): void {
     if (this.skyBackground) {
       this.skyBackground.destroy();
+      this.skyBackground = null;
     }
-    const texture = this.textures.cloudSky;
+    if (this.animatedSky) {
+      this.animatedSky.destroy();
+      this.animatedSky = null;
+    }
     const heightMultiplier = 1.5;
     const backgroundHeight = this.viewportHeight * heightMultiplier;
     // Make sky wider than viewport to account for camera zoom (0.95 scale = ~1.05x wider needed)
@@ -858,6 +929,16 @@ export class ParallaxBackgrounds {
     const skyWidthMultiplier = 1.4; // Extra width for camera zoom-out
     const skyScaleMultiplier = 0.95; // Make sky texture slightly larger (increased from 0.95)
     const backgroundWidth = this.viewportWidth * skyWidthMultiplier;
+    const extraHeight = Math.max(0, backgroundHeight - this.viewportHeight);
+    const extraWidth = backgroundWidth - this.viewportWidth;
+
+    if (USE_ANIMATED_SKY) {
+      this.animatedSky = new AnimatedSkyBackground(this.container, backgroundWidth, backgroundHeight);
+      this.animatedSky.setPosition(-extraWidth * 0.15, -extraHeight * 0.88);
+      return;
+    }
+
+    const texture = this.textures.cloudSky;
 
     this.skyBackground = new TilingSprite({
       texture,
@@ -869,11 +950,9 @@ export class ParallaxBackgrounds {
     this.skyBackground.tilePosition.set(0, 0);
     // Position sky with negative offset so more sky is visible when jumping higher
     // Reduce the offset slightly (multiply by 0.85) to push sky down with a tiny bit more upward
-    const extraHeight = Math.max(0, backgroundHeight - this.viewportHeight);
     this.skyBackground.y = -extraHeight * 0.88; // Increased from 0.8 to push up slightly
 
     // Position sky more to the right (20% left, 80% right for more right-side coverage)
-    const extraWidth = backgroundWidth - this.viewportWidth;
     this.skyBackground.x = -extraWidth * 0.15; // Changed from 0.3 to 0.2 for more right coverage
 
     this.container.addChildAt(this.skyBackground, 0);
@@ -916,10 +995,9 @@ export class ParallaxBackgrounds {
   }
 
   update(deltaSeconds: number, speedMultiplier: number = 1, shouldCull?: (x: number, w: number) => boolean): void {
-    // Animated sky update disabled - using static sky background for now
-    // if (this.animatedSky) {
-    //   this.animatedSky.update(deltaSeconds);
-    // }
+    if (this.animatedSky) {
+      this.animatedSky.update(deltaSeconds);
+    }
 
     const currentBiome = this.biomeManager.getCurrentBiome();
     const config = BIOME_CONFIGS[currentBiome];
@@ -963,9 +1041,7 @@ export class ParallaxBackgrounds {
     this.viewportHeight = height;
 
     // Recreate sky background with new dimensions
-    if (this.skyBackground) {
-      this.setupSkyBackground();
-    }
+    this.setupSkyBackground();
 
     if (this.currentBackground) {
       const texture = this.currentBackground.texture;
@@ -1071,7 +1147,8 @@ export class ParallaxGrounds {
       this.groundHeight,
       this.groundTop,
       textures.cloudFence,
-      textures.cloudCottageStartOverlay
+      textures.cloudCottageStartOverlay,
+      textures.meteorOverlay
     );
   }
 
@@ -1153,5 +1230,13 @@ export class ParallaxGrounds {
    */
   setAllowNewSegments(allow: boolean): void {
     this.scroller.setAllowNewSegments(allow);
+  }
+
+  /**
+   * Get meteor overlay position and dimensions (null if overlay hasn't spawned or has been destroyed)
+   * Returns { x, y, width, height } where x/y are the left-bottom position of the overlay
+   */
+  getMeteorOverlayBounds(): { x: number; y: number; width: number; height: number } | null {
+    return this.scroller.getMeteorOverlayBounds();
   }
 }
