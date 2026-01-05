@@ -538,6 +538,14 @@ const init = async () => {
     bottom: enemyBall.position.y + playerRadius,
   });
 
+  // Add ground middleground container (meteor overlay) - renders above enemy, below player
+  playfieldContainer.addChild(grounds.getMiddlegroundContainer());
+
+  // Re-order rendering layers for proper z-index:
+  // Move player ball to render after middleground (above meteor overlay)
+  playfieldContainer.removeChild(ball);
+  playfieldContainer.addChild(ball);
+
   // Lasers render above players
   playfieldContainer.addChild(laserContainer);
 

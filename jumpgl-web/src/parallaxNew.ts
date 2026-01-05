@@ -59,6 +59,8 @@ class SegmentScroller {
   private readonly fenceButterflyBaseFrameDuration = 0.045;
   private fenceButterflyFrameDurationCurrent = 0.045;
 
+  private middlegroundContainer: Container; // For elements between enemy and player
+
   constructor(
     parent: Container,
     textures: SegmentTextures,
@@ -72,6 +74,9 @@ class SegmentScroller {
   ) {
     this.container = new Container();
     parent.addChild(this.container);
+
+    // Create separate middleground container (renders between enemy and player)
+    this.middlegroundContainer = new Container();
 
     // Create separate foreground container (will be added to parent later, above player)
     this.foregroundContainer = new Container();
@@ -664,8 +669,8 @@ class SegmentScroller {
       this.meteorOverlaySprite.x = segmentSprite.x;
       this.meteorOverlaySprite.y = segmentSprite.y;
 
-      // Add overlay to ground container so player renders above it
-      this.container.addChild(this.meteorOverlaySprite);
+      // Add overlay to middleground container (renders above enemy, below player)
+      this.middlegroundContainer.addChild(this.meteorOverlaySprite);
 
       console.log('[METEOR OVERLAY] Created at X:', this.meteorOverlaySprite.x);
     }
@@ -786,6 +791,13 @@ class SegmentScroller {
   setAllowNewSegments(allow: boolean): void {
     this.allowNewSegments = allow;
     console.log(`[SEGMENT GENERATION] ${allow ? 'Enabled' : 'Disabled'}`);
+  }
+
+  /**
+   * Get the middleground container (for elements that render between enemy and player)
+   */
+  getMiddlegroundContainer(): Container {
+    return this.middlegroundContainer;
   }
 
   /**
@@ -1169,6 +1181,13 @@ export class ParallaxGrounds {
 
   getSurfaceY(): number {
     return this.groundTop;
+  }
+
+  /**
+   * Get the middleground container (for elements that render between enemy and player)
+   */
+  getMiddlegroundContainer(): Container {
+    return this.scroller.getMiddlegroundContainer();
   }
 
   /**
