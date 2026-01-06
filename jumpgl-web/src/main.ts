@@ -400,6 +400,12 @@ const init = async () => {
   let isFirstPlatformSpawned = false; // Track if first platform has been spawned
   let platformSequenceIndex = 0; // Track position in fire platform sequence
   let totalPlatformsSpawned = 0; // Total count of platforms spawned in this hole sequence
+  let estimatedTotalPlatforms = 0; // Estimated total platforms for this hole sequence (for height progression)
+  const holeSequencePlatformIds: number[] = [];
+  const holeSequencePlatformIndex = new Map<number, number>();
+  let holeSequenceLastIndex: number | null = null;
+  let holeSequencePenultimateIndex: number | null = null;
+  let lastLandedSequenceIndex: number | null = null;
   const processedSegments = new Set<string>(); // Track which segments have spawned holes
 
   // Fire platform sequence: smallPlatformfire1, smallPlatformfire2, largePlatformfire1, largePlatformfire2, largePlatformfire3
@@ -424,6 +430,12 @@ const init = async () => {
 
   // Camera system for hole levels
   let cameraZoom = 1.0;
+  let hasLandedOnFirstPlatform = false;
+  let cameraPanX = 0;
+  let cameraPanY = 0;
+  let firstZoomProgress = 0;
+  let lateZoomProgress = 0;
+  let panEaseProgress = 0;
 
 
   // Stars disabled for now
@@ -614,6 +626,11 @@ const init = async () => {
     physics.clearSurfaceOverride();
     physics.setGroundCollisionEnabled(false);
     physics.forceVelocity(Math.max(300, Math.abs(currentVelocity) + 150));
+    hasLandedOnFirstPlatform = false;
+    firstZoomProgress = 0;
+    lateZoomProgress = 0;
+    panEaseProgress = 0;
+    lastLandedSequenceIndex = null;
     console.log('[HOLE] Player falling into hole, ground collision disabled');
   };
 
@@ -655,6 +672,7 @@ const init = async () => {
   const CAMERA_LERP_SPEED = 0.15; // How quickly camera follows (faster for downward tracking)
   const CAMERA_FOLLOW_THRESHOLD = 20; // How far below floor before camera starts following down
   const CAMERA_TOP_MARGIN = 100; // Keep player at least this many pixels from top of screen
+  const RESPAWN_ZOOM_RESET_SPEED = 0.0005; // Slower zoom reset during respawn
 
   // Minimap setup - picture-in-picture zoomed-out view (dev only)
   const MINIMAP_WIDTH = 450;
@@ -1873,6 +1891,16 @@ const init = async () => {
       isFirstPlatformSpawned = false;
       platformSequenceIndex = 0;
       totalPlatformsSpawned = 0;
+      estimatedTotalPlatforms = 0;
+      holeSequencePlatformIds.length = 0;
+      holeSequencePlatformIndex.clear();
+      holeSequenceLastIndex = null;
+      holeSequencePenultimateIndex = null;
+      lastLandedSequenceIndex = null;
+      hasLandedOnFirstPlatform = false;
+      firstZoomProgress = 0;
+      lateZoomProgress = 0;
+      panEaseProgress = 0;
       lastHoleStartX = null;
     }
 
@@ -1960,7 +1988,7 @@ const init = async () => {
             // Use distance to end and average spacing to estimate how many platforms remain
             const distanceToEnd = spawnTargetX - platformX;
             const averageSpacing = (PLATFORM_MIN_SPACING + PLATFORM_MAX_SPACING) / 2;
-            const estimatedTotalPlatforms = Math.max(4, Math.ceil(distanceToEnd / averageSpacing) + totalPlatformsSpawned);
+            estimatedTotalPlatforms = Math.max(4, Math.ceil(distanceToEnd / averageSpacing) + totalPlatformsSpawned);
 
             // Calculate progression: 0 = first platform, 1 = last platform
             const progression = totalPlatformsSpawned / (estimatedTotalPlatforms - 1);
@@ -1986,7 +2014,7 @@ const init = async () => {
           // First platform spawns 10px to the right for better visual positioning
           const spawnX = !isFirstPlatformSpawned ? platformX + 10 : platformX;
 
-          platforms.spawn(spawnX, groundY, playerRadius, platformType, verticalOffset);
+          const spawnedPlatformId = platforms.spawn(spawnX, groundY, playerRadius, platformType, verticalOffset);
 
           // Increment sequence counters
           totalPlatformsSpawned++;
@@ -1997,6 +2025,17 @@ const init = async () => {
             isFirstPlatformSpawned = true;
           } else {
             platformSequenceIndex++;
+          }
+
+          if (spawnedPlatformId !== null) {
+            const seqIndex = holeSequencePlatformIds.length;
+            holeSequencePlatformIds.push(spawnedPlatformId);
+            holeSequencePlatformIndex.set(spawnedPlatformId, seqIndex);
+
+            if (isLastPlatform && holeSequenceLastIndex === null) {
+              holeSequenceLastIndex = seqIndex;
+              holeSequencePenultimateIndex = Math.max(0, seqIndex - 1);
+            }
           }
 
           lastPlatformX = platformX;
@@ -2041,8 +2080,8 @@ const init = async () => {
         const percentFromBottom = 0.27; // 27% from bottom edge of overlay
 
         // Fine-tune position with pixel offsets (move 30px left, 50px down, then 10px right, 15px down, then 25px right, 15px down, then 10px right, 5px down)
-        enemyBall.position.x = meteorBounds.x + (meteorBounds.width * percentFromLeft) + 120;
-        enemyBall.position.y = meteorBounds.y - (meteorBounds.height * percentFromBottom) + 155;
+        enemyBall.position.x = meteorBounds.x + (meteorBounds.width * percentFromLeft) + 138;
+        enemyBall.position.y = meteorBounds.y - (meteorBounds.height * percentFromBottom) + 160;
       } else {
         // Meteor overlay vanished; enemy jumps out
         redEnemyState = 'falling';
@@ -2259,6 +2298,16 @@ const init = async () => {
           physics.resetFallHeight();
         }
 
+        if (supportingPlatform.id >= 0) {
+          const seqIndex = holeSequencePlatformIndex.get(supportingPlatform.id);
+          if (seqIndex !== undefined) {
+            lastLandedSequenceIndex = seqIndex;
+          }
+          if (cometHoleLevelActive && !hasLandedOnFirstPlatform) {
+            hasLandedOnFirstPlatform = true;
+          }
+        }
+
         // Lock camera floor to this platform if it's higher than current floor
         if (supportingPlatform.surfaceY < cameraFloorY) {
           cameraFloorY = supportingPlatform.surfaceY;
@@ -2463,21 +2512,80 @@ const init = async () => {
     // Smoothly interpolate camera to target position
     cameraY += (targetCameraY - cameraY) * CAMERA_LERP_SPEED;
 
-    // Camera zoom (comet hole level ONLY) - slight zoom out to keep ground visible
+    // Camera zoom (comet hole level ONLY) - progressive zoom revealing meteor
     if (cometHoleLevelActive) {
-      const groundY = computePlayerGround();
-      const playerHeightAboveGround = groundY - state.y;
-      const isOnPlatform = activePlatformId !== null || supportingPlatform !== null;
+      let targetZoom = 1.0; // Default no zoom
 
-      // Zoom out slightly when player is on platforms to show more vertical space
-      if (isOnPlatform && playerHeightAboveGround > 50) {
-        const targetZoom = 0.90; // Slight zoom out when on platforms
-        cameraZoom += (targetZoom - cameraZoom) * 0.015;
-      } else if (isOnBaselineGround && isGrounded) {
-        // Only zoom back in when ACTUALLY on baseline ground AND grounded (not mid-air)
-        cameraZoom += (1.0 - cameraZoom) * 0.015;
+      const onOrPastPenultimate =
+        holeSequencePenultimateIndex !== null &&
+        lastLandedSequenceIndex !== null &&
+        lastLandedSequenceIndex >= holeSequencePenultimateIndex;
+
+      const LATE_ZOOM_DURATION = 2.5;
+      if (onOrPastPenultimate) {
+        if (
+          holeSequenceLastIndex !== null &&
+          lastLandedSequenceIndex !== null &&
+          lastLandedSequenceIndex >= holeSequenceLastIndex
+        ) {
+          lateZoomProgress = 1;
+        } else {
+          lateZoomProgress = Math.min(1, lateZoomProgress + deltaSeconds / LATE_ZOOM_DURATION);
+        }
+      } else {
+        lateZoomProgress = Math.max(0, lateZoomProgress - deltaSeconds / LATE_ZOOM_DURATION);
       }
-      // Otherwise maintain current zoom (during jumps between platforms)
+
+      // Determine zoom based on platform progression
+      // Stage 1: Initial zoom (first platform) - zoom to 0.90
+      // Stage 2: Late zoom (from penultimate) - zoom continuously from 0.90 to 0.75
+
+      const FIRST_ZOOM_DURATION = 2.5;
+      if (!hasLandedOnFirstPlatform) {
+        // No zoom until the first platform is actually landed on
+        firstZoomProgress = Math.max(0, firstZoomProgress - deltaSeconds / FIRST_ZOOM_DURATION);
+        targetZoom = 1.0;
+      } else if (!onOrPastPenultimate) {
+        // Before the penultimate platform: ease into the initial zoom
+        firstZoomProgress = Math.min(1, firstZoomProgress + deltaSeconds / FIRST_ZOOM_DURATION);
+        const firstEase = 1 - Math.pow(1 - firstZoomProgress, 3);
+        targetZoom = 1.0 - (1.0 - 0.90) * firstEase;
+      } else {
+        // After penultimate platform: progressively zoom toward the meteor
+        // Interpolate between 0.90 (start) and 0.75 (end)
+        firstZoomProgress = 1;
+        const BASE_ZOOM = 0.90;  // Zoom at late-zoom start
+        const MAX_ZOOM = 0.75;   // Maximum zoom at end
+        const lateEase = lateZoomProgress * lateZoomProgress * lateZoomProgress;
+        targetZoom = BASE_ZOOM - (BASE_ZOOM - MAX_ZOOM) * lateEase;
+      }
+
+      const zoomFollowSpeed = 0.2;
+      cameraZoom += (targetZoom - cameraZoom) * zoomFollowSpeed;
+
+      // Only reset zoom when BOTH players are back on baseline ground after meteor sequence
+      // Check if red enemy has finished rolling and is now hovering (back to normal gameplay)
+      const meteorSequenceComplete = !redEnemyActive || (enemyMode === 'hover');
+      if (isOnBaselineGround && isGrounded && meteorSequenceComplete) {
+        const resetSpeed = respawnState !== 'normal' ? RESPAWN_ZOOM_RESET_SPEED : 0.015;
+        cameraZoom += (1.0 - cameraZoom) * resetSpeed;
+      }
+
+      // Camera pan toward meteor area starting on the second-to-last platform
+      const PAN_EASE_DURATION = 7.0;
+      if (onOrPastPenultimate) {
+        panEaseProgress = Math.min(1, panEaseProgress + deltaSeconds / PAN_EASE_DURATION);
+      } else {
+        panEaseProgress = Math.max(0, panEaseProgress - deltaSeconds / PAN_EASE_DURATION);
+      }
+
+      if (isOnBaselineGround && isGrounded && meteorSequenceComplete) {
+        panEaseProgress = Math.max(0, panEaseProgress - deltaSeconds / PAN_EASE_DURATION);
+      }
+
+      const panEase = panEaseProgress * panEaseProgress * panEaseProgress; // Strong ease-in
+      cameraPanX = -160 * panEase; // Shift view right
+      cameraPanY = -90 * panEase;  // Shift view down
 
       // Apply zoom with parallax depth - background zooms less for realistic parallax
       const backgroundZoom = 1.0 - (1.0 - cameraZoom) * 0.2; // Only 20% of the zoom
@@ -2491,19 +2599,27 @@ const init = async () => {
     } else {
       // Reset zoom when not in comet hole level
       if (cameraZoom !== 1.0) {
-        cameraZoom += (1.0 - cameraZoom) * 0.015;
+        const resetSpeed = respawnState !== 'normal' ? RESPAWN_ZOOM_RESET_SPEED : 0.015;
+        cameraZoom += (1.0 - cameraZoom) * resetSpeed;
         backgroundContainer.scale.set(cameraZoom);
         groundContainer.scale.set(cameraZoom);
         platformContainer.scale.set(cameraZoom);
         playfieldContainer.scale.set(cameraZoom);
         overlayContainer.scale.set(cameraZoom);
       }
+      if (cameraPanX !== 0 || cameraPanY !== 0) {
+        cameraPanX += (0 - cameraPanX) * 0.05;
+        cameraPanY += (0 - cameraPanY) * 0.05;
+      }
     }
 
     // Apply camera position with parallax
     // Background moves less (30% of camera movement) for depth effect
     // Foreground elements move at 100% camera speed
-    backgroundContainer.position.y = cameraY * 0.3; // Sky parallax - moves slower
+    const totalCameraY = cameraY + cameraPanY;
+    const totalCameraX = cameraPanX;
+    backgroundContainer.position.x = totalCameraX * 0.3;
+    backgroundContainer.position.y = totalCameraY * 0.3; // Sky parallax - moves slower
 
     // Ground container needs special handling to prevent exposing bottom edge
     // When zoomed out and camera moves down (or when falling into holes), clamp ground
@@ -2512,11 +2628,11 @@ const init = async () => {
 
     // Ground segments are positioned at y=groundTop within the container and extend to y=viewportHeight
     // When container is scaled and positioned, calculate where ground's bottom edge appears:
-    // Ground bottom in screen space = viewportHeight * cameraZoom + cameraY
-    const groundBottomInScreenSpace = viewportHeight * cameraZoom + cameraY;
+    // Ground bottom in screen space = viewportHeight * cameraZoom + camera offset
+    const groundBottomInScreenSpace = viewportHeight * cameraZoom + totalCameraY;
 
     // If ground's bottom would be above screen bottom (viewportHeight), clamp it
-    let clampedGroundCameraY = cameraY;
+    let clampedGroundCameraY = totalCameraY;
     if (groundBottomInScreenSpace < viewportHeight) {
       // Calculate the cameraY that would put ground's bottom exactly at screen bottom
       // viewportHeight = viewportHeight * cameraZoom + clampedY
@@ -2526,11 +2642,11 @@ const init = async () => {
       console.log(`[GROUND CLAMP] Bottom would be at ${groundBottomInScreenSpace.toFixed(1)}, clamping to ${clampedGroundCameraY.toFixed(1)}`);
     }
 
-    groundContainer.position.y = clampedGroundCameraY;
-    platformContainer.position.y = clampedGroundCameraY; // Platforms move with ground (use same clamp)
-    playfieldContainer.position.y = clampedGroundCameraY; // Player and effects move with ground (use same clamp)
-    overlayContainer.position.y = clampedGroundCameraY; // Gradient/dust move with ground (use same clamp)
-    emberContainer.position.y = clampedGroundCameraY; // Embers move with ground (use same clamp)
+    groundContainer.position.set(totalCameraX, clampedGroundCameraY);
+    platformContainer.position.set(totalCameraX, clampedGroundCameraY); // Platforms move with ground (use same clamp)
+    playfieldContainer.position.set(totalCameraX, clampedGroundCameraY); // Player and effects move with ground (use same clamp)
+    overlayContainer.position.set(totalCameraX, clampedGroundCameraY); // Gradient/dust move with ground (use same clamp)
+    emberContainer.position.set(totalCameraX, clampedGroundCameraY); // Embers move with ground (use same clamp)
 
     // Only update ball position from physics during normal gameplay and after respawn
     // During dying/waiting/animating_back, ball is manually positioned at spawn point above screen
@@ -3463,7 +3579,17 @@ const init = async () => {
     isFirstPlatformSpawned = false;
     platformSequenceIndex = 0;
     totalPlatformsSpawned = 0;
+    estimatedTotalPlatforms = 0;
     lastPlatformX = ball.position.x;
+    holeSequencePlatformIds.length = 0;
+    holeSequencePlatformIndex.clear();
+    holeSequenceLastIndex = null;
+    holeSequencePenultimateIndex = null;
+    lastLandedSequenceIndex = null;
+    hasLandedOnFirstPlatform = false;
+    firstZoomProgress = 0;
+    lateZoomProgress = 0;
+    panEaseProgress = 0;
 
     // Immediately spawn ground holes for ALL segments in the sequence (including off-screen ones)
     const segments = grounds.getSegments();
