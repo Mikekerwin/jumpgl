@@ -2342,7 +2342,7 @@ const init = async () => {
         // Keep platform override while bouncing vertically so the bounce counter isn't reset
         const livePlatform =
           activePlatformId === -1 && meteorHitbox
-            ? { left: meteorHitbox.x, right: meteorHitbox.x + meteorHitbox.width }
+            ? { left: meteorHitbox.x, right: meteorHitbox.x + meteorHitbox.width, surfaceY: meteorHitbox.surfaceY }
             : platforms.getPlatformBounds(activePlatformId);
 
         // If platform has been culled (scrolled away), release the player
@@ -2359,6 +2359,11 @@ const init = async () => {
           const inJumpGracePeriod = timeSinceJump < JUMP_GRACE_PERIOD;
 
           // If we're deliberately pressing Down, force a fall-through (unless in grace)
+          if (stillOverPlatform && !isCharging && Math.abs(verticalVelocity) < 5) {
+            const updatedSurfaceY = livePlatform.surfaceY + playerRadius + PLATFORM_LANDING_OFFSET;
+            physics.landOnSurface(updatedSurfaceY, activePlatformId);
+          }
+
           if (isPressingDown && !inJumpGracePeriod) {
             physics.clearSurfaceOverride();
             activePlatformId = null;

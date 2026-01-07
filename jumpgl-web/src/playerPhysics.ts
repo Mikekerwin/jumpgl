@@ -59,6 +59,7 @@ export class PlayerPhysics {
 
   // Platform surface override
   private surfaceOverrideY: number | null = null;
+  private currentPlatformId: number | null = null;
   private platformBounceCount: number = 0;
   private groundCollisionEnabled = true;
   private platformsJumpedThrough: Set<number> = new Set(); // Track platform IDs jumped through from below
@@ -296,7 +297,9 @@ export class PlayerPhysics {
    */
   landOnSurface(surfaceY: number, platformId?: number): void {
     // Only set override if it's a new platform or first landing
-    const isNewPlatform = this.surfaceOverrideY !== surfaceY;
+    const isNewPlatform = platformId !== undefined
+      ? platformId !== this.currentPlatformId
+      : this.surfaceOverrideY !== surfaceY;
     this.surfaceOverrideY = surfaceY;
 
     // Reset bounce counter when landing on a new platform
@@ -305,6 +308,7 @@ export class PlayerPhysics {
     }
     // Clear this platform from the jumped-through list when we land on it
     if (platformId !== undefined) {
+      this.currentPlatformId = platformId;
       this.platformsJumpedThrough.delete(platformId);
     }
     // Don't force position or velocity - let physics handle bouncing naturally
@@ -315,6 +319,7 @@ export class PlayerPhysics {
    */
   clearSurfaceOverride(): void {
     this.surfaceOverrideY = null;
+    this.currentPlatformId = null;
     this.platformBounceCount = 0; // Reset bounce counter when leaving platform
   }
 
