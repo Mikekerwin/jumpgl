@@ -436,6 +436,8 @@ const init = async () => {
   let firstZoomProgress = 0;
   let lateZoomProgress = 0;
   let panEaseProgress = 0;
+  let respawnZoomProgress = 0;
+  let respawnZoomActive = false;
 
 
   // Stars disabled for now
@@ -630,6 +632,8 @@ const init = async () => {
     firstZoomProgress = 0;
     lateZoomProgress = 0;
     panEaseProgress = 0;
+    respawnZoomProgress = 0;
+    respawnZoomActive = false;
     lastLandedSequenceIndex = null;
     console.log('[HOLE] Player falling into hole, ground collision disabled');
   };
@@ -672,7 +676,8 @@ const init = async () => {
   const CAMERA_LERP_SPEED = 0.15; // How quickly camera follows (faster for downward tracking)
   const CAMERA_FOLLOW_THRESHOLD = 20; // How far below floor before camera starts following down
   const CAMERA_TOP_MARGIN = 100; // Keep player at least this many pixels from top of screen
-  const RESPAWN_ZOOM_RESET_SPEED = 0.0005; // Slower zoom reset during respawn
+  const RESPAWN_LAND_ZOOM_DURATION = 2.5; // Seconds to ease from 0.9 -> 1.0 after landing
+  const RESPAWN_HOLD_ZOOM = 0.9; // Hold zoom during respawn until player is set down
 
   // Minimap setup - picture-in-picture zoomed-out view (dev only)
   const MINIMAP_WIDTH = 450;
@@ -1901,6 +1906,8 @@ const init = async () => {
       firstZoomProgress = 0;
       lateZoomProgress = 0;
       panEaseProgress = 0;
+      respawnZoomProgress = 0;
+      respawnZoomActive = false;
       lastHoleStartX = null;
     }
 
@@ -2560,15 +2567,38 @@ const init = async () => {
         targetZoom = BASE_ZOOM - (BASE_ZOOM - MAX_ZOOM) * lateEase;
       }
 
-      const zoomFollowSpeed = 0.2;
-      cameraZoom += (targetZoom - cameraZoom) * zoomFollowSpeed;
+      const inRespawn = respawnState !== 'normal' || fallingIntoHole;
+      if (inRespawn) {
+        if (!isOnBaselineGround) {
+          targetZoom = RESPAWN_HOLD_ZOOM;
+          firstZoomProgress = 1;
+          respawnZoomProgress = 0;
+          respawnZoomActive = false;
+        } else {
+          if (!respawnZoomActive) {
+            respawnZoomActive = true;
+            respawnZoomProgress = 0;
+          }
+          respawnZoomProgress = Math.min(1, respawnZoomProgress + deltaSeconds / RESPAWN_LAND_ZOOM_DURATION);
+          const ease = 1 - Math.pow(1 - respawnZoomProgress, 3);
+          targetZoom = RESPAWN_HOLD_ZOOM + (1 - RESPAWN_HOLD_ZOOM) * ease;
+          if (respawnZoomProgress >= 1) {
+            respawnZoomActive = false;
+          }
+        }
+        cameraZoom = targetZoom;
+      } else {
+        respawnZoomActive = false;
+        respawnZoomProgress = 0;
+        const zoomFollowSpeed = 0.2;
+        cameraZoom += (targetZoom - cameraZoom) * zoomFollowSpeed;
+      }
 
       // Only reset zoom when BOTH players are back on baseline ground after meteor sequence
       // Check if red enemy has finished rolling and is now hovering (back to normal gameplay)
       const meteorSequenceComplete = !redEnemyActive || (enemyMode === 'hover');
-      if (isOnBaselineGround && isGrounded && meteorSequenceComplete) {
-        const resetSpeed = respawnState !== 'normal' ? RESPAWN_ZOOM_RESET_SPEED : 0.015;
-        cameraZoom += (1.0 - cameraZoom) * resetSpeed;
+      if (!inRespawn && isOnBaselineGround && isGrounded && meteorSequenceComplete) {
+        cameraZoom += (1.0 - cameraZoom) * 0.015;
       }
 
       // Camera pan toward meteor area starting on the second-to-last platform
@@ -2599,8 +2629,7 @@ const init = async () => {
     } else {
       // Reset zoom when not in comet hole level
       if (cameraZoom !== 1.0) {
-        const resetSpeed = respawnState !== 'normal' ? RESPAWN_ZOOM_RESET_SPEED : 0.015;
-        cameraZoom += (1.0 - cameraZoom) * resetSpeed;
+        cameraZoom += (1.0 - cameraZoom) * 0.015;
         backgroundContainer.scale.set(cameraZoom);
         groundContainer.scale.set(cameraZoom);
         platformContainer.scale.set(cameraZoom);
@@ -3590,6 +3619,8 @@ const init = async () => {
     firstZoomProgress = 0;
     lateZoomProgress = 0;
     panEaseProgress = 0;
+    respawnZoomProgress = 0;
+    respawnZoomActive = false;
 
     // Immediately spawn ground holes for ALL segments in the sequence (including off-screen ones)
     const segments = grounds.getSegments();
