@@ -436,8 +436,11 @@ const init = async () => {
   let firstZoomProgress = 0;
   let lateZoomProgress = 0;
   let panEaseProgress = 0;
-  let respawnZoomProgress = 0;
-  let respawnZoomActive = false;
+  let respawnHoldProgress = 0;
+  let respawnHoldActive = false;
+  let respawnHoldStartZoom = 1.0;
+  let respawnLandProgress = 0;
+  let respawnLandActive = false;
 
 
   // Stars disabled for now
@@ -632,8 +635,11 @@ const init = async () => {
     firstZoomProgress = 0;
     lateZoomProgress = 0;
     panEaseProgress = 0;
-    respawnZoomProgress = 0;
-    respawnZoomActive = false;
+    respawnHoldProgress = 0;
+    respawnHoldActive = false;
+    respawnHoldStartZoom = 1.0;
+    respawnLandProgress = 0;
+    respawnLandActive = false;
     lastLandedSequenceIndex = null;
     console.log('[HOLE] Player falling into hole, ground collision disabled');
   };
@@ -676,6 +682,7 @@ const init = async () => {
   const CAMERA_LERP_SPEED = 0.15; // How quickly camera follows (faster for downward tracking)
   const CAMERA_FOLLOW_THRESHOLD = 20; // How far below floor before camera starts following down
   const CAMERA_TOP_MARGIN = 100; // Keep player at least this many pixels from top of screen
+  const RESPAWN_HOLD_ZOOM_DURATION = 4; // Seconds to ease toward 0.9 after falling in
   const RESPAWN_LAND_ZOOM_DURATION = 2.5; // Seconds to ease from 0.9 -> 1.0 after landing
   const RESPAWN_HOLD_ZOOM = 0.9; // Hold zoom during respawn until player is set down
 
@@ -1906,8 +1913,11 @@ const init = async () => {
       firstZoomProgress = 0;
       lateZoomProgress = 0;
       panEaseProgress = 0;
-      respawnZoomProgress = 0;
-      respawnZoomActive = false;
+      respawnHoldProgress = 0;
+      respawnHoldActive = false;
+      respawnHoldStartZoom = 1.0;
+      respawnLandProgress = 0;
+      respawnLandActive = false;
       lastHoleStartX = null;
     }
 
@@ -2567,7 +2577,7 @@ const init = async () => {
         // Interpolate between 0.90 (start) and 0.75 (end)
         firstZoomProgress = 1;
         const BASE_ZOOM = 0.90;  // Zoom at late-zoom start
-        const MAX_ZOOM = 0.75;   // Maximum zoom at end
+        const MAX_ZOOM = 0.80;   // Maximum zoom at end
         const lateEase = lateZoomProgress * lateZoomProgress * lateZoomProgress;
         targetZoom = BASE_ZOOM - (BASE_ZOOM - MAX_ZOOM) * lateEase;
       }
@@ -2575,26 +2585,35 @@ const init = async () => {
       const inRespawn = respawnState !== 'normal' || fallingIntoHole;
       if (inRespawn) {
         if (!isOnBaselineGround) {
-          targetZoom = RESPAWN_HOLD_ZOOM;
-          firstZoomProgress = 1;
-          respawnZoomProgress = 0;
-          respawnZoomActive = false;
-        } else {
-          if (!respawnZoomActive) {
-            respawnZoomActive = true;
-            respawnZoomProgress = 0;
+          if (!respawnHoldActive) {
+            respawnHoldActive = true;
+            respawnHoldProgress = 0;
+            respawnHoldStartZoom = cameraZoom;
           }
-          respawnZoomProgress = Math.min(1, respawnZoomProgress + deltaSeconds / RESPAWN_LAND_ZOOM_DURATION);
-          const ease = 1 - Math.pow(1 - respawnZoomProgress, 3);
+          respawnHoldProgress = Math.min(1, respawnHoldProgress + deltaSeconds / RESPAWN_HOLD_ZOOM_DURATION);
+          const holdEase = 1 - Math.pow(1 - respawnHoldProgress, 3);
+          targetZoom = respawnHoldStartZoom + (RESPAWN_HOLD_ZOOM - respawnHoldStartZoom) * holdEase;
+          firstZoomProgress = 1;
+        } else {
+          respawnHoldActive = false;
+          respawnHoldProgress = 0;
+          if (!respawnLandActive) {
+            respawnLandActive = true;
+            respawnLandProgress = 0;
+          }
+          respawnLandProgress = Math.min(1, respawnLandProgress + deltaSeconds / RESPAWN_LAND_ZOOM_DURATION);
+          const ease = 1 - Math.pow(1 - respawnLandProgress, 3);
           targetZoom = RESPAWN_HOLD_ZOOM + (1 - RESPAWN_HOLD_ZOOM) * ease;
-          if (respawnZoomProgress >= 1) {
-            respawnZoomActive = false;
+          if (respawnLandProgress >= 1) {
+            respawnLandActive = false;
           }
         }
         cameraZoom = targetZoom;
       } else {
-        respawnZoomActive = false;
-        respawnZoomProgress = 0;
+        respawnHoldActive = false;
+        respawnHoldProgress = 0;
+        respawnLandActive = false;
+        respawnLandProgress = 0;
         const zoomFollowSpeed = 0.2;
         cameraZoom += (targetZoom - cameraZoom) * zoomFollowSpeed;
       }
@@ -3624,8 +3643,11 @@ const init = async () => {
     firstZoomProgress = 0;
     lateZoomProgress = 0;
     panEaseProgress = 0;
-    respawnZoomProgress = 0;
-    respawnZoomActive = false;
+    respawnHoldProgress = 0;
+    respawnHoldActive = false;
+    respawnHoldStartZoom = 1.0;
+    respawnLandProgress = 0;
+    respawnLandActive = false;
 
     // Immediately spawn ground holes for ALL segments in the sequence (including off-screen ones)
     const segments = grounds.getSegments();

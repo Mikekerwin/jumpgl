@@ -31,6 +31,7 @@ interface PlatformInstance {
   spriteType?: PlatformType;
 
   // Oscillation state
+  baseX: number; // Original X (before oscillation)
   baseSurfaceY: number; // Original surface Y (before oscillation)
   baseRenderY: number; // Original render Y (before oscillation)
   oscillationPhase: number; // Random starting phase for variety
@@ -38,6 +39,11 @@ interface PlatformInstance {
   oscillationAmplitudeY: number; // Vertical amplitude (pixels)
   oscillationAmplitudeX: number; // Horizontal amplitude (pixels)
   shouldOscillate: boolean; // Not all platforms oscillate
+  isGapMover: boolean; // Moves within large gaps to help the player
+  gapMovePhase: number;
+  gapMoveSpeed: number;
+  gapMoveMaxLeft: number;
+  gapMoveMaxRight: number;
 
   // Landing compression state
   compressionOffset: number; // Current downward compression offset
@@ -146,7 +152,8 @@ export class FloatingPlatforms {
     const hitboxOffsetX = isLarge ? 10 : 5;
 
     plat.id = this.nextId++;
-    plat.x = worldX + hitboxOffsetX;
+    plat.baseX = worldX + hitboxOffsetX;
+    plat.x = plat.baseX;
     plat.surfaceY = surfaceY;
     plat.renderY = renderY;
     plat.width = hitboxWidth;
@@ -160,29 +167,23 @@ export class FloatingPlatforms {
     plat.baseSurfaceY = surfaceY;
     plat.baseRenderY = renderY;
 
-    // 80% of platforms oscillate (20% stay static for variety)
-    plat.shouldOscillate = Math.random() < 0.8;
+    // All platforms oscillate
+    plat.shouldOscillate = true;
 
     if (plat.shouldOscillate) {
       // Random starting phase so platforms aren't synchronized
       plat.oscillationPhase = Math.random() * Math.PI * 2;
 
-      // Random speed - slower for large platforms, faster for small
-      if (isLarge) {
-        plat.oscillationSpeed = 0.2 + Math.random() * 0.3; // 0.2-0.5 rad/sec
-      } else {
-        plat.oscillationSpeed = 0.4 + Math.random() * 0.6; // 0.4-1.0 rad/sec
-      }
+      // Random speed for visible oscillation
+      plat.oscillationSpeed = 0.5 + Math.random() * 0.7; // 0.5-1.2 rad/sec
 
-      // Most platforms favor vertical movement (70%), some favor horizontal (30%)
-      if (Math.random() < 0.7) {
-        // 70% primarily vertical - much more visible
-        plat.oscillationAmplitudeY = 8 + Math.random() * 12; // 8-20 pixels
-        plat.oscillationAmplitudeX = 3 + Math.random() * 5; // 3-8 pixels
-      } else {
-        // 30% more horizontal drift
-        plat.oscillationAmplitudeY = 6 + Math.random() * 8; // 6-14 pixels
+      // All platforms use the same oscillation range now
+      if (isLarge) {
+        plat.oscillationAmplitudeY = 12 + Math.random() * 18; // 12-30 pixels
         plat.oscillationAmplitudeX = 8 + Math.random() * 10; // 8-18 pixels
+      } else {
+        plat.oscillationAmplitudeY = 10 + Math.random() * 18; // 10-28 pixels
+        plat.oscillationAmplitudeX = 6 + Math.random() * 12; // 6-18 pixels
       }
     } else {
       // Static platform - no oscillation
@@ -191,6 +192,12 @@ export class FloatingPlatforms {
       plat.oscillationAmplitudeY = 0;
       plat.oscillationAmplitudeX = 0;
     }
+
+    plat.isGapMover = false;
+    plat.gapMovePhase = Math.random() * Math.PI * 2;
+    plat.gapMoveSpeed = 0.4 + Math.random() * 0.3;
+    plat.gapMoveMaxLeft = 0;
+    plat.gapMoveMaxRight = 0;
 
     // Initialize compression state
     plat.compressionOffset = 0;
@@ -215,13 +222,84 @@ export class FloatingPlatforms {
     // Update elapsed time for oscillation
     this.elapsedTime += deltaSeconds;
 
+    // Scroll base X for all active platforms
+    const activePlatforms = this.platforms.filter(p => p.active);
+    activePlatforms.forEach((platform) => {
+      platform.baseX -= groundSpeed * deltaSeconds;
+    });
+
+    // Select a platform to move within large gaps
+    const screenWidth = typeof window !== 'undefined' ? window.innerWidth : 0;
+    const LARGE_GAP_THRESHOLD = 350;
+    const GAP_MOVE_LIMIT = 100;
+    const buffer = 20;
+    const wasGapMover = new Map<number, boolean>();
+
+    activePlatforms.forEach((platform) => {
+      wasGapMover.set(platform.id, platform.isGapMover);
+      platform.isGapMover = false;
+      platform.gapMoveMaxLeft = 0;
+      platform.gapMoveMaxRight = 0;
+    });
+
+    if (screenWidth > 0 && activePlatforms.length > 2) {
+      const sorted = [...activePlatforms].sort((a, b) => a.baseX - b.baseX);
+
+      for (let i = 1; i < sorted.length - 1; i++) {
+        const platform = sorted[i];
+        const leftNeighbor = sorted[i - 1];
+        const rightNeighbor = sorted[i + 1];
+
+        const leftGap = platform.baseX - (leftNeighbor.baseX + leftNeighbor.width);
+        const rightGap = rightNeighbor.baseX - (platform.baseX + platform.width);
+
+        const isLarge = platform.platformType === 'large' || platform.platformType.startsWith('largefire');
+        if (!isLarge && leftGap >= LARGE_GAP_THRESHOLD && rightGap >= LARGE_GAP_THRESHOLD) {
+          const maxLeft = Math.max(0, platform.baseX - (leftNeighbor.baseX + leftNeighbor.width + buffer));
+          const maxRight = Math.max(0, (rightNeighbor.baseX - buffer - platform.width) - platform.baseX);
+          platform.isGapMover = true;
+          platform.gapMoveMaxLeft = Math.min(GAP_MOVE_LIMIT, maxLeft);
+          platform.gapMoveMaxRight = Math.min(GAP_MOVE_LIMIT, maxRight);
+
+          if (!wasGapMover.get(platform.id)) {
+            platform.gapMovePhase = Math.random() * Math.PI * 2;
+            platform.gapMoveSpeed = 0.9 + Math.random() * 0.6;
+          } else if (platform.gapMoveSpeed === 0) {
+            platform.gapMoveSpeed = 0.9 + Math.random() * 0.6;
+          }
+        }
+      }
+    }
+
     this.platforms.forEach((platform) => {
       if (!platform.active) return;
 
-      // Move platform left at ground speed
-      platform.x -= groundSpeed * deltaSeconds;
+      const isLarge = platform.platformType === 'large' || platform.platformType.startsWith('largefire');
+
+      let offsetX = 0;
+      let offsetY = 0;
 
       // Cull platform if needed
+      if (platform.shouldOscillate) {
+        const time = this.elapsedTime;
+        const phase = platform.oscillationPhase;
+        const speed = platform.oscillationSpeed;
+
+        offsetY = Math.sin(time * speed + phase) * platform.oscillationAmplitudeY;
+        offsetX = Math.cos(time * speed * 0.7 + phase) * platform.oscillationAmplitudeX;
+
+        offsetY += Math.sin(time * speed * 1.9 + phase * 1.3) * (platform.oscillationAmplitudeY * 0.35);
+        offsetX += Math.cos(time * speed * 1.4 + phase * 0.6) * (platform.oscillationAmplitudeX * 0.45);
+      }
+
+      if (platform.isGapMover) {
+        const s = Math.sin(this.elapsedTime * platform.gapMoveSpeed + platform.gapMovePhase);
+        const gapOffset = s < 0 ? s * platform.gapMoveMaxLeft : s * platform.gapMoveMaxRight;
+        offsetX += gapOffset;
+      }
+
+      platform.x = platform.baseX + offsetX;
+
       if (shouldCull && shouldCull(platform.x, platform.width)) {
         platform.active = false;
         platform.sprite?.destroy();
@@ -231,13 +309,6 @@ export class FloatingPlatforms {
 
       // Apply oscillation if enabled (both visual and collision move together)
       if (platform.shouldOscillate) {
-        const time = this.elapsedTime;
-        const phase = platform.oscillationPhase;
-        const speed = platform.oscillationSpeed;
-
-        // Sine wave oscillation for smooth vertical movement
-        const offsetY = Math.sin(time * speed + phase) * platform.oscillationAmplitudeY;
-
         // Apply oscillation to both collision surface and visual position
         // This makes the player ride the platform as it floats up and down
         platform.surfaceY = platform.baseSurfaceY + offsetY;
@@ -307,22 +378,8 @@ export class FloatingPlatforms {
         platform.sprite.height = image.height;
       }
 
-      // Calculate visual position with horizontal oscillation
-      let visualX = platform.x - cameraX;
-
-      if (platform.shouldOscillate) {
-        const time = this.elapsedTime;
-        const phase = platform.oscillationPhase;
-        const speed = platform.oscillationSpeed;
-
-        // Add horizontal oscillation offset (visual only, doesn't affect collision)
-        // Use cosine with slightly different frequency for natural movement
-        const offsetX = Math.cos(time * speed * 0.7 + phase) * platform.oscillationAmplitudeX;
-        visualX += offsetX;
-      }
-
       // Update sprite position (renderY already includes oscillation and compression from update())
-      platform.sprite.position.set(visualX, platform.renderY);
+      platform.sprite.position.set(platform.x - cameraX, platform.renderY);
       platform.sprite.width = image.width;
       platform.sprite.height = image.height;
 
@@ -638,6 +695,7 @@ export class FloatingPlatforms {
     const platform: PlatformInstance = {
       id: this.nextId++,
       x: 0,
+      baseX: 0,
       surfaceY: 0,
       renderY: 0,
       width: 0,
@@ -653,6 +711,11 @@ export class FloatingPlatforms {
       oscillationAmplitudeY: 0,
       oscillationAmplitudeX: 0,
       shouldOscillate: false,
+      isGapMover: false,
+      gapMovePhase: 0,
+      gapMoveSpeed: 0,
+      gapMoveMaxLeft: 0,
+      gapMoveMaxRight: 0,
       compressionOffset: 0,
       compressionProgress: 0,
       compressionAmount: 0,
