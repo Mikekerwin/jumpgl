@@ -274,8 +274,6 @@ export class FloatingPlatforms {
     this.platforms.forEach((platform) => {
       if (!platform.active) return;
 
-      const isLarge = platform.platformType === 'large' || platform.platformType.startsWith('largefire');
-
       let offsetX = 0;
       let offsetY = 0;
 
