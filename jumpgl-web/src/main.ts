@@ -346,6 +346,7 @@ const init = async () => {
   let redOuts = 0;
   let firstOutMade = false;
   let scoreVisible = false;
+  let revealEnergyBar: (() => void) | null = null;
   const HITS_PER_OUT = 20;
   let scenarioButton: HTMLButtonElement | null = null;
   let autoScenarioPending = false;
@@ -453,7 +454,7 @@ const init = async () => {
 
   const groundSurface = () => grounds.getSurfaceY();
   const computePlayerGround = () => groundSurface() + playerDiameter * GROUND_PLAYER_DEPTH;
-  const initialPlayerX = () => app.renderer.width * 0.32;
+  const playerInitialX = app.renderer.width * 0.32;
 
   // Create shadow (added before player so it appears behind)
   const playerShadow = new Shadow({ playerWidth: playerDiameter });
@@ -487,13 +488,13 @@ const init = async () => {
   ball.circle(0, 0, initialRadius).fill({ color: ballBaseColor });
 
   const initialGround = computePlayerGround();
-  ball.position.set(initialPlayerX(), initialGround - playerRadius);
+  ball.position.set(playerInitialX, initialGround - playerRadius);
   playfieldContainer.addChild(ball);
 
   const physics = new PlayerPhysics({
     radius: playerRadius,
     groundSurface: initialGround,
-    initialX: initialPlayerX(),
+    initialX: playerInitialX,
     screenWidth: app.renderer.width,
   });
 
@@ -530,7 +531,33 @@ const init = async () => {
   // Start with full-screen movement range (enemy not visible yet)
   // Player can move from ~5% to ~95% of screen width
   // With initialX at 32%, left=350 gives ~5%, right=750 gives ~95%
-  physics.setHorizontalRange(350, 750);
+  const PLAYER_RANGE_FULL_LEFT = 350;
+  const PLAYER_RANGE_FULL_RIGHT = 750;
+  const PLAYER_RANGE_LEFT_HALF_LEFT = 250;
+  const PLAYER_RANGE_LEFT_HALF_RIGHT = 150;
+  let playerRangeMode: 'full' | 'leftHalf' = 'full';
+  const playerRangeBounds = {
+    full: {
+      left: playerInitialX - PLAYER_RANGE_FULL_LEFT,
+      right: playerInitialX + PLAYER_RANGE_FULL_RIGHT,
+    },
+    leftHalf: {
+      left: playerInitialX - PLAYER_RANGE_LEFT_HALF_LEFT,
+      right: playerInitialX + PLAYER_RANGE_LEFT_HALF_RIGHT,
+    },
+  };
+
+  const updatePlayerHorizontalRangeForCamera = (cameraX: number, zoom: number) => {
+    const bounds = playerRangeMode === 'leftHalf' ? playerRangeBounds.leftHalf : playerRangeBounds.full;
+    const safeZoom = Math.max(0.0001, zoom);
+    const worldLeft = (bounds.left - cameraX) / safeZoom;
+    const worldRight = (bounds.right - cameraX) / safeZoom;
+    const leftRange = Math.max(0, playerInitialX - worldLeft);
+    const rightRange = Math.max(0, worldRight - playerInitialX);
+    physics.setHorizontalRange(leftRange, rightRange);
+  };
+
+  physics.setHorizontalRange(PLAYER_RANGE_FULL_LEFT, PLAYER_RANGE_FULL_RIGHT);
   console.log('[PLAYER RANGE] Initial: Full screen (5% to 95%)');
 
   // Create enemy at 90% of screen width
@@ -682,6 +709,7 @@ const init = async () => {
   const CAMERA_LERP_SPEED = 0.15; // How quickly camera follows (faster for downward tracking)
   const CAMERA_FOLLOW_THRESHOLD = 20; // How far below floor before camera starts following down
   const CAMERA_TOP_MARGIN = 100; // Keep player at least this many pixels from top of screen
+  let backgroundParallaxY = 0; // Smoothed sky parallax to prevent jumpy camera transitions
   const RESPAWN_HOLD_ZOOM_DURATION = 4; // Seconds to ease toward 0.9 after falling in
   const RESPAWN_LAND_ZOOM_DURATION = 2.5; // Seconds to ease from 0.9 -> 1.0 after landing
   const RESPAWN_HOLD_ZOOM = 0.9; // Hold zoom during respawn until player is set down
@@ -744,6 +772,12 @@ const init = async () => {
       x: (event.clientX - rect.left) * scaleX,
       y: (event.clientY - rect.top) * scaleY,
     };
+  };
+
+  const screenToWorldX = (screenX: number) => {
+    const safeZoom = Math.max(0.0001, cameraZoom);
+    const adjustedX = screenX - scene.position.x - cameraPanX;
+    return adjustedX / safeZoom;
   };
 
   const isPointerOverMinimap = (event: PointerEvent): boolean => {
@@ -1103,9 +1137,9 @@ const init = async () => {
         // Respawn player at original starting X position (NOT spawnPointX)
         // Keep player's horizontal movement range intact
         const groundY = computePlayerGround();
-        physics.respawn(initialPlayerX(), groundY); // Use original spawn X, not meteor segment X
+        physics.respawn(playerInitialX, groundY); // Use original spawn X, not meteor segment X
         physics.setGroundCollisionEnabled(true);
-        console.log(`[RESPAWN] Player respawning at original X=${initialPlayerX().toFixed(0)}, final remaining=${remainingRewindDistance.toFixed(1)}px`);
+        console.log(`[RESPAWN] Player respawning at original X=${playerInitialX.toFixed(0)}, final remaining=${remainingRewindDistance.toFixed(1)}px`);
 
         // Force player Y position above screen
         physics.forceVelocity(0);
@@ -1396,7 +1430,7 @@ const init = async () => {
           postIntroEaseActive = true;
           postIntroEaseStartTime = now;
           postIntroPlayerStartX = ball.position.x; // Store where player is now
-          postIntroInitialMouseX = app.renderer.events.pointer.global.x; // Store actual mouse position
+          postIntroInitialMouseX = screenToWorldX(app.renderer.events.pointer.global.x); // Store actual mouse position in world space
 
           // Enable soft mouse following for smooth easing
           physics.setSoftFollowMode(true);
@@ -2130,6 +2164,9 @@ const init = async () => {
         redEnemyState = 'falling';
         redEnemyVelocityX = 300; // Jump out to the right
         redEnemyVelocityY = -400; // Jump up and out
+        if (revealEnergyBar) {
+          revealEnergyBar();
+        }
         // Impact feedback: sparks + quick screen shake
         sparkParticles.spawn(enemyBall.position.x, enemyBall.position.y, 'red');
         shakeActive = true;
@@ -2161,7 +2198,7 @@ const init = async () => {
       // First time entering rolling state - constrain player to left half and show score UI
       if (!enemyEverVisible) {
         enemyEverVisible = true;
-        physics.resetHorizontalRange(); // Back to default 250 left, 150 right
+        playerRangeMode = 'leftHalf';
 
         // If player is too far right (beyond 45% screen), start smooth return animation
         const playerScreenPercent = state.x / app.renderer.width;
@@ -2316,6 +2353,13 @@ const init = async () => {
         }
 
         if (supportingPlatform.id >= 0) {
+          if (isNewLanding && cometHoleLevelActive) {
+            const seqIndex = holeSequencePlatformIndex.get(supportingPlatform.id);
+            if (seqIndex !== undefined) {
+              laserScore += 1;
+              updateScoreDisplay();
+            }
+          }
           const seqIndex = holeSequencePlatformIndex.get(supportingPlatform.id);
           if (seqIndex !== undefined) {
             lastLandedSequenceIndex = seqIndex;
@@ -2650,6 +2694,9 @@ const init = async () => {
       platformContainer.scale.set(cameraZoom);
       playfieldContainer.scale.set(cameraZoom);
       overlayContainer.scale.set(cameraZoom);
+      emberContainer.scale.set(cameraZoom);
+      const gradientScale = 1 / Math.max(0.0001, cameraZoom);
+      gradientSprite.scale.set(gradientScale);
     } else {
       // Reset zoom when not in comet hole level
       if (cameraZoom !== 1.0) {
@@ -2659,6 +2706,9 @@ const init = async () => {
         platformContainer.scale.set(cameraZoom);
         playfieldContainer.scale.set(cameraZoom);
         overlayContainer.scale.set(cameraZoom);
+        emberContainer.scale.set(cameraZoom);
+        const gradientScale = 1 / Math.max(0.0001, cameraZoom);
+        gradientSprite.scale.set(gradientScale);
       }
       if (cameraPanX !== 0 || cameraPanY !== 0) {
         cameraPanX += (0 - cameraPanX) * 0.05;
@@ -2671,9 +2721,7 @@ const init = async () => {
     // Foreground elements move at 100% camera speed
     const totalCameraY = cameraY + cameraPanY;
     const totalCameraX = cameraPanX;
-    backgroundContainer.position.x = totalCameraX * 0.3;
-    backgroundContainer.position.y = totalCameraY * 0.3; // Sky parallax - moves slower
-
+    updatePlayerHorizontalRangeForCamera(totalCameraX, cameraZoom);
     // Ground container needs special handling to prevent exposing bottom edge
     // When zoomed out and camera moves down (or when falling into holes), clamp ground
     // so its bottom edge never rises above the screen bottom
@@ -2700,6 +2748,19 @@ const init = async () => {
     playfieldContainer.position.set(totalCameraX, clampedGroundCameraY); // Player and effects move with ground (use same clamp)
     overlayContainer.position.set(totalCameraX, clampedGroundCameraY); // Gradient/dust move with ground (use same clamp)
     emberContainer.position.set(totalCameraX, clampedGroundCameraY); // Embers move with ground (use same clamp)
+
+    // Background follows the ground/camera motion for parallax without snapping
+    backgroundContainer.position.x = totalCameraX * 0.3;
+    const targetBackgroundY = clampedGroundCameraY * 0.3;
+    const BG_PARALLAX_SPEED = 120; // px/sec clamp to keep sky from snapping
+    const maxParallaxStep = BG_PARALLAX_SPEED * deltaSeconds;
+    const deltaParallaxY = targetBackgroundY - backgroundParallaxY;
+    if (Math.abs(deltaParallaxY) <= maxParallaxStep) {
+      backgroundParallaxY = targetBackgroundY;
+    } else {
+      backgroundParallaxY += Math.sign(deltaParallaxY) * maxParallaxStep;
+    }
+    backgroundContainer.position.y = backgroundParallaxY; // Sky parallax - moves slower
 
     // Only update ball position from physics during normal gameplay and after respawn
     // During dying/waiting/animating_back, ball is manually positioned at spawn point above screen
@@ -3107,7 +3168,8 @@ const init = async () => {
     }
 
     updateMinimapCursor(event);
-    physics.setMousePosition(event.clientX);
+    const pointerPosition = getPointerCanvasPosition(event);
+    physics.setMousePosition(screenToWorldX(pointerPosition.x));
   };
 
   window.addEventListener('pointermove', handlePointerMove);
@@ -3281,18 +3343,28 @@ const init = async () => {
   }
 
   // Energy bar UI
+  const energyWrapper = document.createElement('div');
+  energyWrapper.style.position = 'fixed';
+  energyWrapper.style.left = '20px';
+  energyWrapper.style.top = '50%';
+  energyWrapper.style.transform = 'translateY(-50%)';
+  energyWrapper.style.width = '30px';
+  energyWrapper.style.height = '300px';
+  energyWrapper.style.zIndex = '10';
+  energyWrapper.style.pointerEvents = 'none';
+
   const energyContainer = document.createElement('div');
-  energyContainer.style.position = 'fixed';
-  energyContainer.style.left = '20px';
-  energyContainer.style.top = '50%';
-  energyContainer.style.transform = 'translateY(-50%)';
-  energyContainer.style.width = '30px';
-  energyContainer.style.height = '300px';
+  energyContainer.style.position = 'relative';
+  energyContainer.style.width = '100%';
+  energyContainer.style.height = '100%';
   energyContainer.style.border = '2px solid rgba(255, 255, 255, 0.3)';
   energyContainer.style.background = 'rgba(0, 0, 0, 0.5)';
   energyContainer.style.borderRadius = '15px';
   energyContainer.style.overflow = 'hidden';
-  energyContainer.style.zIndex = '10';
+  energyContainer.style.opacity = '0';
+  energyContainer.style.transform = 'scaleY(0)';
+  energyContainer.style.transformOrigin = 'center bottom';
+  energyContainer.style.transition = 'transform 1.2s ease, opacity 0.8s ease';
   const energyFill = document.createElement('div');
   energyFill.style.position = 'absolute';
   energyFill.style.bottom = '0';
@@ -3309,35 +3381,49 @@ const init = async () => {
   energyMarker.style.position = 'absolute';
   energyMarker.style.left = '0';
   energyMarker.style.width = '30px';
-  energyMarker.style.height = '2px';
+  energyMarker.style.height = '1px';
   energyMarker.style.backgroundColor = 'white';
   energyMarker.style.boxShadow = '0 0 5px rgba(255, 255, 255, 0.8)';
   energyMarker.style.transition = 'bottom 0.2s ease';
 
   const energyMarkerLine = document.createElement('div');
   energyMarkerLine.style.position = 'absolute';
-  energyMarkerLine.style.top = '-1px';
+  energyMarkerLine.style.top = '0';
   energyMarkerLine.style.left = '100%';
   energyMarkerLine.style.width = '20px';
-  energyMarkerLine.style.height = '2px';
+  energyMarkerLine.style.height = '1px';
   energyMarkerLine.style.backgroundColor = 'white';
   energyMarkerLine.style.boxShadow = '0 0 5px rgba(255, 255, 255, 0.8)';
   energyMarker.appendChild(energyMarkerLine);
 
   const energyLabel = document.createElement('div');
   energyLabel.style.position = 'absolute';
-  energyLabel.style.top = '-10px';
-  energyLabel.style.left = 'calc(100% + 25px)';
-  energyLabel.style.transform = 'translateY(-50%)';
+  energyLabel.style.left = 'calc(100% + 16px)';
+  energyLabel.style.bottom = '0';
+  energyLabel.style.transform = 'translateY(50%) translateY(-1px)';
   energyLabel.style.color = 'white';
-  energyLabel.style.fontSize = '14px';
+  energyLabel.style.fontSize = '15px';
   energyLabel.style.fontWeight = 'bold';
+  energyLabel.style.fontFamily = '"Times New Roman", Times, serif';
   energyLabel.style.textShadow = '0 0 8px black';
   energyLabel.style.whiteSpace = 'nowrap';
-  energyMarker.appendChild(energyLabel);
+  energyLabel.style.letterSpacing = '0.3px';
+  energyLabel.style.opacity = '0';
+  energyLabel.style.transition = 'bottom 0.2s ease, opacity 0.8s ease';
 
   energyContainer.appendChild(energyMarker);
-  document.body.appendChild(energyContainer);
+  energyWrapper.appendChild(energyContainer);
+  energyWrapper.appendChild(energyLabel);
+  document.body.appendChild(energyWrapper);
+  let energyVisible = false;
+  let energyLabelState: 'jump' | 'shoot' = 'jump';
+  revealEnergyBar = () => {
+    if (energyVisible) return;
+    energyVisible = true;
+    energyContainer.style.opacity = '1';
+    energyContainer.style.transform = 'scaleY(1)';
+    energyLabel.style.opacity = '1';
+  };
 
   // Scoreboard (fades in when enemy rolls in) with hits/outs styled like original Jump
   const scoreContainer = document.createElement('div');
@@ -3441,8 +3527,15 @@ const init = async () => {
     energyFill.style.background = color;
     energyFill.style.boxShadow = `0 0 8px ${color}`;
     energyMarker.style.bottom = `${clampedEnergy}%`;
-    const barText = laserScore < 50 ? 'Fill Up!' : (clampedEnergy > 50 ? 'Shoot!' : 'Jump!');
-    energyLabel.textContent = barText;
+    energyLabel.style.bottom = `calc(${clampedEnergy}% + 1px)`;
+    if (!shootUnlocked) {
+      energyLabelState = 'jump';
+    } else if (clampedEnergy >= 90) {
+      energyLabelState = 'shoot';
+    } else if (clampedEnergy <= 40) {
+      energyLabelState = 'jump';
+    }
+    energyLabel.textContent = energyLabelState === 'shoot' ? 'Shoot!' : 'Jump!';
   };
   updateEnergyUI();
 

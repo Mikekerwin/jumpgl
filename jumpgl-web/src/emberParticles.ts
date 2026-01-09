@@ -32,16 +32,20 @@ const VERTEX_SHADER = `
     // Use per-particle rise height for variability (70% rise 300px, 30% rise 150px)
     float verticalOffset = progress * a_riseHeight;
 
-    // Circular motion using sin/cos (like CSS animations)
-    // Each ember follows a circular/spiral path as it rises
-    // Use per-particle horizontal range for extreme variability
-    float circleRadius = a_horizontalRange; // Variable horizontal range (15-100px)
-    float circleSpeed = a_speed * 0.8; // Speed of circular motion
-    float angle = u_time * circleSpeed + a_phase * 6.28; // Current angle in circle
+    // Circular motion using sin/cos
+    // Each ember follows a swirly/spiral path as it rises
+    // Use per-particle horizontal range for variability
+    float rangeFactor = clamp(a_horizontalRange / 120.0, 0.0, 1.0);
+    float speedFactor = mix(1.0, 0.6, rangeFactor);
+    float circleSpeed = a_speed * 1.2 * speedFactor; // Slow wide swirls near extremes
+    float angle = (u_time * circleSpeed) + (progress * 6.28) + (a_phase * 6.28);
+    float radiusPulse = 0.6 + 0.4 * sin((progress + a_phase) * 6.28);
+    float radiusProgress = 0.3 + 0.7 * progress;
+    float circleRadius = a_horizontalRange * radiusPulse * radiusProgress;
 
     // Calculate circular path position
     float swirlX = cos(angle) * circleRadius;
-    float swirlY = sin(angle) * circleRadius;
+    float swirlY = sin(angle) * circleRadius * 0.15 * progress;
 
     // Use world position directly (no camera offset needed - container doesn't move)
     float x = a_position.x + swirlX;
@@ -153,8 +157,8 @@ export class EmberParticles {
   } = {};
 
   private particles: EmberParticle[] = [];
-  private maxParticles = 150; // Max concurrent embers
-  private spawnRate = 3; // Embers per hole per second
+  private maxParticles = 390; // Max concurrent embers
+  private spawnRate = 7.5; // Embers per hole per second
   private lastSpawnTime = 0;
 
   private startTime: number;
@@ -286,14 +290,40 @@ export class EmberParticles {
     const spawnInterval = 1000 / this.spawnRate; // ms between spawns per hole
 
     if (timeSinceLastSpawn >= spawnInterval && this.particles.length < this.maxParticles) {
-      holes.forEach((hole, index) => {
-        if (!hole.active) return;
+      const activeHoles = holes.filter(hole => hole.active);
+      let minX = Infinity;
+      let maxX = -Infinity;
+      activeHoles.forEach(hole => {
+        minX = Math.min(minX, hole.x);
+        maxX = Math.max(maxX, hole.x + hole.width);
+      });
+      const span = Math.max(1, maxX - minX);
+      const edgeMultiplier = 1 / 1.5;
+      const middleMultiplier = 2.0;
 
-        // Spawn ember at random X position within hole, at ground level
-        const spawnX = hole.x + Math.random() * hole.width;
-        const spawnY = hole.groundY; // Spawn at ground Y position (world coordinates)
+      activeHoles.forEach((hole, index) => {
+        const holeCenter = hole.x + hole.width * 0.5;
+        const progress = (holeCenter - minX) / span;
+        const centerWeight = Math.max(0, 1 - Math.abs(progress - 0.5) * 2);
+        const spawnMultiplier = edgeMultiplier + (middleMultiplier - edgeMultiplier) * centerWeight;
 
-        this.spawnEmber(spawnX, spawnY, index);
+        let spawnCount = 1;
+        if (spawnMultiplier < 1) {
+          if (Math.random() > spawnMultiplier) return;
+        } else if (spawnMultiplier > 1) {
+          const extraChance = Math.min(1, spawnMultiplier - 1);
+          if (Math.random() < extraChance) {
+            spawnCount = 2;
+          }
+        }
+
+        for (let i = 0; i < spawnCount; i++) {
+          if (this.particles.length >= this.maxParticles) return;
+          // Spawn ember at random X position within hole, at ground level
+          const spawnX = hole.x + Math.random() * hole.width;
+          const spawnY = hole.groundY; // Spawn at ground Y position (world coordinates)
+          this.spawnEmber(spawnX, spawnY, index);
+        }
       });
 
       this.lastSpawnTime = now;
@@ -304,24 +334,26 @@ export class EmberParticles {
    * Spawn a single ember particle
    */
   private spawnEmber(x: number, y: number, holeIndex: number): void {
-    // 70% of embers rise high (300px), 30% rise lower (150px) for variability
+    // Spawn a smaller batch of tall embers that rise twice as high
+    const isTall = Math.random() < 0.15;
+    // 70% of remaining embers rise high (300px), 30% rise lower (150px)
     const risesHigh = Math.random() < 0.7;
-    const riseHeight = risesHigh ? 300.0 : 150.0;
+    const riseHeight = isTall ? 600.0 : (risesHigh ? 300.0 : 150.0);
 
     // Extreme horizontal range variability (some embers move far left-right, others stay subtle)
     // 40% have extreme wide curved paths, 60% have moderate to subtle paths
     const hasWideMotion = Math.random() < 0.4;
     const horizontalRange = hasWideMotion
-      ? (60.0 + Math.random() * 40.0)  // 40% of embers: 60-100px wide curves
-      : (15.0 + Math.random() * 30.0); // 60% of embers: 15-45px moderate curves
+      ? (70.0 + Math.random() * 50.0)  // 40% of embers: 70-120px wide curves
+      : (25.0 + Math.random() * 35.0); // 60% of embers: 25-60px moderate curves
 
     const ember: EmberParticle = {
       x,
       y: y + 100, // Spawn 100px below ground level (below visible screen)
       size: 2 + Math.random() * 3, // 2-5px embers (very small)
       phase: Math.random(), // Random phase for swirl variety
-      speed: 0.3 + Math.random() * 0.4, // 0.3-0.7 slower drift speed
-      lifetime: 4000 + Math.random() * 2000, // 4-6 second lifetime (slower drift)
+      speed: 0.5 + Math.random() * 0.5, // 0.5-1.0 swirl speed
+      lifetime: (4000 + Math.random() * 2000) * (isTall ? 1.35 : 1), // Slightly longer for tall embers
       age: 0,
       holeIndex,
       riseHeight,
