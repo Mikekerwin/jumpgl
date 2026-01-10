@@ -465,13 +465,14 @@ export class FloatingPlatforms {
       const crossedThisFrame =
         descending &&
         effectiveApproachingFromAbove &&
-        previousBounds.bottom <= platformBottomCollision + tolerance &&
+        previousBounds.bottom <= platformBottomCollision - tolerance &&
         currentBounds.bottom >= platformBottomCollision - tolerance;
 
       // Check if player is resting on the platform (already on it, minimal velocity)
       const resting =
         Math.abs(currentBounds.bottom - platformBottomCollision) <= tolerance &&
-        Math.abs(playerVelocity) < 0.8;
+        Math.abs(playerVelocity) < 0.8 &&
+        currentBounds.bottom <= platformBottomCollision + tolerance;
 
       // Return platform collision if any landing condition is met
       if (crossedThisFrame || resting) {

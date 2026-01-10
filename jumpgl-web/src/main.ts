@@ -651,7 +651,7 @@ const init = async () => {
 
   const laserSprites: Sprite[] = [];
 
-  const triggerFallIntoHole = (currentVelocity: number) => {
+  const triggerFallIntoHole = (currentVelocity: number, plumeX: number, plumeY: number) => {
     // Disable ground collision and let player fall through
     // The respawn state machine will handle the rest when player falls below screen
     fallingIntoHole = true;
@@ -668,6 +668,7 @@ const init = async () => {
     respawnLandProgress = 0;
     respawnLandActive = false;
     lastLandedSequenceIndex = null;
+    jumpDust.spawnSmokePlume(plumeX, plumeY);
     console.log('[HOLE] Player falling into hole, ground collision disabled');
   };
 
@@ -1740,7 +1741,7 @@ const init = async () => {
     haloTexture.source.update();
 
     // Update and render jump dust particles
-    jumpDust.update(deltaSeconds);
+    jumpDust.update(deltaSeconds, groundScrollSpeed);
     jumpDustCtx.clearRect(0, 0, jumpDustCanvas.width, jumpDustCanvas.height);
     jumpDust.render(jumpDustCtx, jumpDustCanvas.width, jumpDustCanvas.height);
     jumpDustTexture.source.update();
@@ -2321,14 +2322,18 @@ const init = async () => {
     if (!supportingPlatform && !fallingIntoHole) {
       const hole = holes.getCollidingHole(playerBounds);
       if (hole) {
-        triggerFallIntoHole(verticalVelocity);
+        const plumeX = state.x;
+        const plumeY = playerBounds.bottom;
+        triggerFallIntoHole(verticalVelocity, plumeX, plumeY);
         activePlatformId = null;
       }
 
       // Ground hole collision (comet hole level)
       const groundHole = groundHoles.getCollidingHole(playerBounds);
       if (groundHole) {
-        triggerFallIntoHole(verticalVelocity);
+        const plumeX = state.x;
+        const plumeY = playerBounds.bottom;
+        triggerFallIntoHole(verticalVelocity, plumeX, plumeY);
         activePlatformId = null;
         console.log(`[GROUND HOLE] Player fell into ${groundHole.type} hole`);
       }
