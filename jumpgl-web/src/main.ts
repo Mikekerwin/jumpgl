@@ -72,6 +72,60 @@ const init = async () => {
   }
   mount.replaceChildren(app.canvas);
 
+  // Loading screen overlay
+  const MIN_LOADING_MS = 1000;
+  const loadingStartTime = performance.now();
+  let loadingScreenActive = true;
+  let pendingIntroReset = false;
+
+  const loadingOverlay = document.createElement('div');
+  loadingOverlay.style.position = 'fixed';
+  loadingOverlay.style.inset = '0';
+  loadingOverlay.style.background = '#000';
+  loadingOverlay.style.display = 'flex';
+  loadingOverlay.style.flexDirection = 'column';
+  loadingOverlay.style.alignItems = 'center';
+  loadingOverlay.style.justifyContent = 'center';
+  loadingOverlay.style.zIndex = '9999';
+  loadingOverlay.style.opacity = '1';
+  loadingOverlay.style.transition = 'opacity 0.6s ease';
+
+  const loadingTitle = document.createElement('div');
+  loadingTitle.textContent = 'Jump!';
+  loadingTitle.style.fontFamily = '"Times New Roman", Times, serif';
+  loadingTitle.style.fontSize = '17rem';
+  loadingTitle.style.fontWeight = 'bold';
+  loadingTitle.style.color = '#fff';
+  loadingTitle.style.letterSpacing = '4px';
+  loadingTitle.style.marginBottom = '24px';
+
+  const loadingBar = document.createElement('div');
+  loadingBar.style.width = 'min(200px, 30vw)';
+  loadingBar.style.height = '6px';
+  loadingBar.style.border = '1px solid #fff';
+  loadingBar.style.borderRadius = '999px';
+  loadingBar.style.overflow = 'hidden';
+
+  const loadingBarFill = document.createElement('div');
+  loadingBarFill.style.width = '0%';
+  loadingBarFill.style.height = '100%';
+  loadingBarFill.style.background = '#fff';
+  loadingBarFill.style.transition = 'width 0.3s ease';
+
+  loadingBar.appendChild(loadingBarFill);
+  loadingOverlay.appendChild(loadingTitle);
+  loadingOverlay.appendChild(loadingBar);
+  document.body.appendChild(loadingOverlay);
+
+  const animateLoadingBar = () => {
+    if (!loadingScreenActive) return;
+    const elapsed = performance.now() - loadingStartTime;
+    const autoProgress = Math.min(0.85, (elapsed / MIN_LOADING_MS) * 0.85);
+    loadingBarFill.style.width = `${(autoProgress * 100).toFixed(0)}%`;
+    requestAnimationFrame(animateLoadingBar);
+  };
+  animateLoadingBar();
+
   const scene = new Container();
   app.stage.addChild(scene);
 
@@ -111,6 +165,20 @@ const init = async () => {
 
   // Stars temporarily disabled
   const parallaxTextures = await loadParallaxTextures();
+  const loadingElapsed = performance.now() - loadingStartTime;
+  const remainingDelay = Math.max(0, MIN_LOADING_MS - loadingElapsed);
+  if (remainingDelay > 0) {
+    await new Promise(resolve => setTimeout(resolve, remainingDelay));
+  }
+  loadingBarFill.style.width = '100%';
+  setTimeout(() => {
+    loadingOverlay.style.opacity = '0';
+    loadingScreenActive = false;
+    pendingIntroReset = true;
+    setTimeout(() => {
+      loadingOverlay.remove();
+    }, 650);
+  }, 200);
 
   const biomeManager = new BiomeSequenceManager('cloud');
   biomeManager.setSequence(['cloud', 'forest']);
@@ -1015,6 +1083,15 @@ const init = async () => {
   const ticker = new Ticker();
   ticker.add((tickerInstance) => {
     const deltaSeconds = tickerInstance.deltaMS / 1000;
+    if (loadingScreenActive) {
+      return;
+    }
+    if (pendingIntroReset) {
+      playerIntroPhase = 'initial';
+      playerIntroStartTime = performance.now();
+      playerIntroActive = true;
+      pendingIntroReset = false;
+    }
     // Apply screen shake if active
     if (shakeActive) {
       const now = performance.now();
