@@ -63,6 +63,8 @@ export class PlayerPhysics {
   private platformBounceCount: number = 0;
   private groundCollisionEnabled = true;
   private platformsJumpedThrough: Set<number> = new Set(); // Track platform IDs jumped through from below
+  private lastSurfaceOverrideClearTime = 0;
+  private lastGroundClampLogTime = 0;
 
   // Height tracking for fall-based compression
   private highestYSinceLastPlatform: number = 0; // Track peak height for fall distance calculation
@@ -174,6 +176,18 @@ export class PlayerPhysics {
     this.wasOnPlatformLastFrame = isOnPlatform;
 
     if (this.groundCollisionEnabled && this.y > effectiveGround) {
+      const now = performance.now();
+      const recentlyLeftPlatform = now - this.lastSurfaceOverrideClearTime < 350;
+      const clampDelta = this.y - effectiveGround;
+      if (recentlyLeftPlatform && clampDelta > 2 && now - this.lastGroundClampLogTime > 200) {
+        this.lastGroundClampLogTime = now;
+        console.log('[PLATFORM SNAP] Ground clamp after override clear', {
+          y: this.y,
+          ground: effectiveGround,
+          vy: this.velocity,
+          delta: clampDelta,
+        });
+      }
       this.y = effectiveGround;
       this.jumpCount = 0; // Reset jump count when touching ground/platform
       this.hasJumpedFlag = false;
@@ -321,6 +335,7 @@ export class PlayerPhysics {
     this.surfaceOverrideY = null;
     this.currentPlatformId = null;
     this.platformBounceCount = 0; // Reset bounce counter when leaving platform
+    this.lastSurfaceOverrideClearTime = performance.now();
   }
 
   /**
@@ -329,6 +344,14 @@ export class PlayerPhysics {
    */
   markPlatformJumpedThrough(platformId: number): void {
     this.platformsJumpedThrough.add(platformId);
+  }
+
+  /**
+   * Remove a platform from the jumped-through set
+   * Used when walking off so we don't reattach from below
+   */
+  clearPlatformJumpedThrough(platformId: number): void {
+    this.platformsJumpedThrough.delete(platformId);
   }
 
   /**
@@ -497,6 +520,15 @@ export class PlayerPhysics {
     this.horizontalRangeRight = this.DEFAULT_RANGE_RIGHT;
   }
 
+  getCursorScreenPercent(): number {
+    if (this.screenWidth <= 0) return 0;
+    return Math.max(0, Math.min(1, this.lastCursorX / this.screenWidth));
+  }
+
+  getJumpCount(): number {
+    return this.jumpCount;
+  }
+
   /**
    * Get current charge level (0.0 to 1.0) for particle system
    * Returns 0 if not charging
@@ -518,40 +550,35 @@ export class PlayerPhysics {
   /**
    * Calculate scroll speed multiplier based on actual cursor position.
    * Mapping:
-   * - Cursor at 0-10% screen: Speed = 0.1 → 1.5 (slow crawl to walk)
-   * - Cursor at 10-25% screen: Speed = 1.5 (default walk speed)
-   * - Cursor at 25-50% screen: Speed = 1.5 → 3.0 (walk to sprint)
-   * - Cursor at 50%+ screen: Speed = 3.0 (max sprint speed)
+   * - Cursor at 0-25% screen: Speed = 0.05 → 1.5 (near stop to normal)
+   * - Cursor at 25-70% screen: Speed = 1.5 (normal speed)
+   * - Cursor at 70-100% screen: Speed = 1.5 → 3.0 (normal to fast)
    */
   getScrollSpeedMultiplier(): number {
     // Use actual cursor position (not the mapped player position)
     const cursorX = this.lastCursorX;
 
     // Calculate screen percentages
-    const screen10Percent = this.screenWidth * 0.10;
     const screen25Percent = this.screenWidth * 0.25;
-    const screen50Percent = this.screenWidth * 0.50;
+    const screen70Percent = this.screenWidth * 0.70;
 
-    const minSpeed = 0.1; // 10% speed at far left
-    const walkSpeed = 1.5; // Default walking speed
-    const maxSpeed = 3.0; // Sprint speed
+    const minSpeed = 0.05; // Near stop at far left
+    const walkSpeed = 2.25; // Default walking speed
+    const maxSpeed = 3.8; // Sprint speed
 
     if (cursorX <= 0) {
       return minSpeed;
-    } else if (cursorX <= screen10Percent) {
-      // 0% to 10% screen: 0.1 → 1.5 (fast ramp to walk)
-      const progress = cursorX / screen10Percent;
-      return minSpeed + progress * (walkSpeed - minSpeed);
     } else if (cursorX <= screen25Percent) {
-      // 10% to 25% screen: 1.5 (maintain walk speed)
+      // 0% to 25% screen: 0.05 → 1.5 (slow ramp to normal)
+      const progress = cursorX / screen25Percent;
+      return minSpeed + progress * (walkSpeed - minSpeed);
+    } else if (cursorX <= screen70Percent) {
+      // 25% to 70% screen: 1.5 (maintain normal speed)
       return walkSpeed;
-    } else if (cursorX <= screen50Percent) {
-      // 25% to 50% screen: 1.5 → 3.0 (walk to sprint)
-      const progress = (cursorX - screen25Percent) / (screen50Percent - screen25Percent);
-      return walkSpeed + progress * (maxSpeed - walkSpeed);
     } else {
-      // Beyond 50% screen: 3.0 (max sprint speed)
-      return maxSpeed;
+      // 70% to 100% screen: 1.5 → 3.0 (normal to fast)
+      const progress = (cursorX - screen70Percent) / Math.max(1, this.screenWidth - screen70Percent);
+      return walkSpeed + progress * (maxSpeed - walkSpeed);
     }
   }
 

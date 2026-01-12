@@ -298,6 +298,7 @@ const init = async () => {
   let platformSpawnType: 'large' | 'small' = 'large'; // Tracks which platform type to spawn next
   let holePlatformSpawnType: 'large' | 'small' = 'small'; // Tracks which hole-platform type to spawn next
   let activePlatformId: number | null = null;
+  let lastLeftPlatformId: number | null = null;
   // Meteor hitbox for landing on the meteor overlay
   let meteorHitbox: { x: number; width: number; surfaceY: number } | null = null;
   const PLATFORM_LANDING_OFFSET = 30; // Extra pixels to sink into platform at rest
@@ -367,6 +368,9 @@ const init = async () => {
   let redEnemyVelocityY = 0;
   let redEnemyVelocityX = 0;
   let enemyEverVisible = false; // Track if enemy has ever been shown (for player movement range)
+  let enemyIntroMoveActive = false;
+  let enemyIntroMoveStartX = 0;
+  let enemyIntroMoveStartTime = 0;
   let playerReturnStartTime = 0; // When player started returning to left half
   let playerReturnStartX = 0; // Player X when return animation started
   let playerReturnTargetX = 0; // Target X for return animation
@@ -512,6 +516,12 @@ const init = async () => {
   const postIntroEaseDuration = 1.5; // 1.5 seconds to ease into full speed
   let postIntroInitialMouseX = 0; // Store initial mouse X when control is enabled
   let postIntroPlayerStartX = 0; // Store player X when control is enabled
+
+  // Parallax boost on jump near the right edge
+  const PARALLAX_BOOST_MAX_DURATION_MS = 750;
+  const PARALLAX_BOOST_MULTIPLIER = 7;
+  let parallaxBoostActive = false;
+  let parallaxBoostStartTime = 0;
 
   // Calculate cottage door position in world coordinates
   // Cottage image is 2048x900, player starts at 655px from left (door position)
@@ -676,6 +686,19 @@ const init = async () => {
   const SHOW_DEBUG_UI = import.meta.env.VITE_SHOW_DEBUG_UI === 'true';
   const SHOW_HITBOXES = import.meta.env.VITE_SHOW_HITBOXES === 'true';
   const DEBUG_DRAW_HITBOXES = SHOW_DEBUG_UI && SHOW_HITBOXES;
+  const DEBUG_PLATFORM_SNAP = SHOW_DEBUG_UI;
+  let platformSnapLogTime = 0;
+  const logPlatformSnap = (message: string, data?: Record<string, unknown>, throttleMs?: number) => {
+    if (!DEBUG_PLATFORM_SNAP) return;
+    const now = performance.now();
+    if (throttleMs !== undefined && now - platformSnapLogTime < throttleMs) return;
+    if (throttleMs !== undefined) platformSnapLogTime = now;
+    if (data) {
+      console.log(`[PLATFORM SNAP] ${message}`, data);
+    } else {
+      console.log(`[PLATFORM SNAP] ${message}`);
+    }
+  };
 
   debugPlatformHitboxContainer.visible = DEBUG_DRAW_HITBOXES;
 
@@ -780,6 +803,8 @@ const init = async () => {
     const adjustedX = screenX - scene.position.x - cameraPanX;
     return adjustedX / safeZoom;
   };
+
+  const getEnemyTargetX = () => screenToWorldX(app.renderer.width * 0.9);
 
   const isPointerOverMinimap = (event: PointerEvent): boolean => {
     if (!SHOW_DEBUG_UI || !minimapSprite) return false;
@@ -1391,6 +1416,7 @@ const init = async () => {
         // Keep at normal size and stay at landed position
         ball.clear();
         ball.circle(0, 0, playerRadius).fill({ color: currentBallColor });
+        ball.scale.set(1, 1);
 
         // Keep position locked where we landed (don't move to center)
         const groundY = computePlayerGround() - playerRadius;
@@ -1398,6 +1424,7 @@ const init = async () => {
         // X position stays where we landed from jumps
         physics.setPosition(ball.position.x, ball.position.y);
         physics.forceVelocity(0);
+        physics.resetScale();
 
         // Wait 2 seconds before giving control
         if (elapsed > 2.0) {
@@ -1482,6 +1509,17 @@ const init = async () => {
       }
     }
 
+    if (!playerIntroActive && respawnState === 'normal' && parallaxBoostActive) {
+      const now = performance.now();
+      const elapsed = now - parallaxBoostStartTime;
+      const holdActive = physics.isChargingJump();
+      if (!holdActive || elapsed >= PARALLAX_BOOST_MAX_DURATION_MS) {
+        parallaxBoostActive = false;
+      } else {
+        speedMultiplier = Math.max(speedMultiplier, PARALLAX_BOOST_MULTIPLIER);
+      }
+    }
+
     // Update spawn indices based on player position (for smart culling)
     updateSpawnIndices();
 
@@ -1533,7 +1571,14 @@ const init = async () => {
 
     // Update platforms with ground scroll speed (72 px/sec * speedMultiplier)
     const groundScrollSpeed = BASE_GROUND_SCROLL_SPEED * speedMultiplier;
-    platforms.update(deltaSeconds, groundScrollSpeed, shouldCullObject);
+    platforms.update(
+      deltaSeconds,
+      groundScrollSpeed,
+      shouldCullObject,
+      computePlayerGround(),
+      playerDiameter,
+      PLATFORM_LANDING_OFFSET
+    );
     holes.update(deltaSeconds, groundScrollSpeed, shouldCullObject);
     groundHoles.update(deltaSeconds, groundScrollSpeed, shouldCullObject);
 
@@ -2199,30 +2244,22 @@ const init = async () => {
       // First time entering rolling state - constrain player to left half and show score UI
       if (!enemyEverVisible) {
         enemyEverVisible = true;
-        playerRangeMode = 'leftHalf';
-
-        // If player is too far right (beyond 45% screen), start smooth return animation
-        const playerScreenPercent = state.x / app.renderer.width;
-        const maxAllowedPercent = 0.45; // 45% of screen (right boundary of left half)
-        if (playerScreenPercent > maxAllowedPercent) {
-          playerReturnStartTime = performance.now();
-          playerReturnStartX = state.x;
-          playerReturnTargetX = app.renderer.width * 0.40; // Move to 40% (safely in left half)
-          console.log(`[PLAYER RANGE] Player at ${(playerScreenPercent * 100).toFixed(0)}%, animating to 40%`);
-        }
 
         showScoreUI();
-        console.log('[PLAYER RANGE] Enemy appearing, constraining to left half');
+        console.log('[PLAYER RANGE] Enemy appearing, keeping full range');
       }
 
       // Roll to the right
       enemyBall.position.x += RED_ENEMY_ROLL_SPEED * deltaSeconds;
 
       // Stop at 90% of screen width (final enemy position)
-      const targetX = app.renderer.width * 0.9;
+      const targetX = getEnemyTargetX();
       if (enemyBall.position.x >= targetX) {
         enemyBall.position.x = targetX;
         redEnemyState = 'jumping_intro';
+        enemyIntroMoveActive = enemyBall.position.x < targetX - 1;
+        enemyIntroMoveStartX = enemyBall.position.x;
+        enemyIntroMoveStartTime = performance.now();
         // Trigger the existing enemy intro animation system
         enemyMode = 'physics';
         enemyPhysics.startJumpSequence();
@@ -2285,6 +2322,28 @@ const init = async () => {
       physics.getJumpedThroughPlatforms() // Pass Set of platforms jumped through
     );
 
+    if (supportingPlatform && lastLeftPlatformId !== null && supportingPlatform.id === lastLeftPlatformId) {
+      const playerHeight = playerBounds.bottom - playerBounds.top;
+      const tolerance = Math.max(2, playerHeight * 0.05);
+      const isBelowSurface = playerBounds.top > supportingPlatform.surfaceY + tolerance;
+      if (isBelowSurface) {
+        logPlatformSnap('Blocked reattach to last-left platform', {
+          id: supportingPlatform.id,
+          vy: verticalVelocity,
+          playerTop: playerBounds.top,
+          platformSurface: supportingPlatform.surfaceY,
+        });
+        supportingPlatform = null;
+      } else {
+        logPlatformSnap('Allowed reattach to last-left platform', {
+          id: supportingPlatform.id,
+          vy: verticalVelocity,
+          playerTop: playerBounds.top,
+          platformSurface: supportingPlatform.surfaceY,
+        });
+      }
+    }
+
     // Check for meteor hitbox collision if no platform found
     if (!supportingPlatform && meteorHitbox) {
       const hitboxLeft = meteorHitbox.x;
@@ -2344,6 +2403,9 @@ const init = async () => {
         // Player is on a platform - set surface override
         const isNewLanding = activePlatformId !== supportingPlatform.id;
         activePlatformId = supportingPlatform.id;
+        if (isNewLanding && supportingPlatform.id >= 0) {
+          lastLeftPlatformId = null;
+        }
         // Convert stored platform surface (player top) to the center y the physics uses, and sink slightly for visuals
         const landingY = supportingPlatform.surfaceY + playerRadius + PLATFORM_LANDING_OFFSET;
         physics.landOnSurface(landingY, supportingPlatform.id); // Pass platform ID to clear from jumped-through list
@@ -2391,7 +2453,21 @@ const init = async () => {
 
           // Fall through if walked off edge OR if pressing Down key
           if ((walkedOff || isPressingDown) && !inJumpGracePeriod) {
+            logPlatformSnap('Clearing override after walk-off', {
+              id: supportingPlatform.id,
+              walkedOff,
+              down: isPressingDown,
+              vy: verticalVelocity,
+              playerLeft: playerBounds.left,
+              playerRight: playerBounds.right,
+              platLeft: supportingPlatform.left,
+              platRight: supportingPlatform.right,
+            });
             physics.clearSurfaceOverride();
+            if (supportingPlatform.id >= 0) {
+              physics.clearPlatformJumpedThrough(supportingPlatform.id);
+              lastLeftPlatformId = supportingPlatform.id;
+            }
             activePlatformId = null;
           }
         }
@@ -2407,6 +2483,10 @@ const init = async () => {
         // If platform has been culled (scrolled away), release the player
         if (!livePlatform) {
           physics.clearSurfaceOverride();
+          if (activePlatformId !== null && activePlatformId >= 0) {
+            physics.clearPlatformJumpedThrough(activePlatformId);
+            lastLeftPlatformId = activePlatformId;
+          }
           activePlatformId = null;
         } else {
           const stillOverPlatform =
@@ -2419,17 +2499,45 @@ const init = async () => {
 
           // If we're deliberately pressing Down, force a fall-through (unless in grace)
           if (stillOverPlatform && !isCharging && Math.abs(verticalVelocity) < 5) {
+            if (verticalVelocity > 0) {
+              logPlatformSnap('Maintenance lock while falling', {
+                id: activePlatformId,
+                vy: verticalVelocity,
+                playerBottom: playerBounds.bottom,
+                platSurface: livePlatform.surfaceY,
+              }, 200);
+            }
             const updatedSurfaceY = livePlatform.surfaceY + playerRadius + PLATFORM_LANDING_OFFSET;
             physics.landOnSurface(updatedSurfaceY, activePlatformId);
           }
 
           if (isPressingDown && !inJumpGracePeriod) {
             physics.clearSurfaceOverride();
+            logPlatformSnap('Clearing override via down press', {
+              id: activePlatformId,
+              vy: verticalVelocity,
+            });
+            if (activePlatformId !== null && activePlatformId >= 0) {
+              physics.clearPlatformJumpedThrough(activePlatformId);
+              lastLeftPlatformId = activePlatformId;
+            }
             activePlatformId = null;
           } else if (!stillOverPlatform && !inJumpGracePeriod) {
             // If we've drifted off the platform horizontally, drop the override so we can fall
             // BUT: Skip this check during jump grace period to prevent fall-through on jump execution
             physics.clearSurfaceOverride();
+            logPlatformSnap('Clearing override after drift off', {
+              id: activePlatformId,
+              vy: verticalVelocity,
+              playerLeft: playerBounds.left,
+              playerRight: playerBounds.right,
+              platLeft: livePlatform.left,
+              platRight: livePlatform.right,
+            });
+            if (activePlatformId !== null && activePlatformId >= 0) {
+              physics.clearPlatformJumpedThrough(activePlatformId);
+              lastLeftPlatformId = activePlatformId;
+            }
             activePlatformId = null;
           }
         }
@@ -2444,6 +2552,7 @@ const init = async () => {
       Math.abs(verticalVelocity) < 25;
 
     if (isOnBaselineGround) {
+      lastLeftPlatformId = null;
       platformAscendBonus = 0; // Reset climb when returning to ground
     }
 
@@ -2842,9 +2951,27 @@ const init = async () => {
       const enemyState = enemyPhysics.update(deltaSeconds);
       enemyBall.position.y = enemyState.y;
       enemyBall.scale.set(enemyState.scaleX, enemyState.scaleY);
+      if (redEnemyState === 'jumping_intro' && enemyIntroMoveActive) {
+        const targetX = getEnemyTargetX();
+        const elapsed = (performance.now() - enemyIntroMoveStartTime) / 1000;
+        const moveDuration = 1.6;
+        const t = Math.min(1, elapsed / moveDuration);
+        const ease = 1 - Math.pow(1 - t, 3);
+        enemyBall.position.x = enemyIntroMoveStartX + (targetX - enemyIntroMoveStartX) * ease;
+        if (t >= 1) {
+          enemyIntroMoveActive = false;
+        }
+      }
+      if (redEnemyState === 'jumping_intro' && !enemyIntroMoveActive) {
+        enemyBall.position.x = getEnemyTargetX();
+      }
 
       // Check if ready to transition to hover mode
       if (enemyPhysics.isReadyForHover()) {
+        if (redEnemyState === 'jumping_intro') {
+          enemyBall.position.x = getEnemyTargetX();
+          enemyIntroMoveActive = false;
+        }
         const velocity = enemyPhysics.enableHoverMode();
         enemyMovement.startTransition(velocity, enemyState.y);
         enemyMode = 'hover';
@@ -2854,6 +2981,7 @@ const init = async () => {
       const enemyState = enemyMovement.update(deltaSeconds);
       enemyBall.position.y = enemyState.y;
       enemyBall.scale.set(enemyState.scaleX, enemyState.scaleY);
+      enemyBall.position.x = getEnemyTargetX();
     }
 
     const laserResult = laserPhysics.update({
@@ -3104,6 +3232,10 @@ const init = async () => {
     const jumpExecuted = physics.startJump();
     if (jumpExecuted) {
       lastJumpTime = performance.now();
+      if (physics.getCursorScreenPercent() >= 0.7 && physics.getJumpCount() >= 2) {
+        parallaxBoostActive = true;
+        parallaxBoostStartTime = performance.now();
+      }
 
       // ALWAYS mark platforms above when jumping, unless firmly on baseline ground
       // This catches ALL cases: double jumps, rolling off platforms, falling and jumping
@@ -3558,11 +3690,39 @@ const init = async () => {
   scoreDisplay.style.textShadow = '0px 2px 10px rgba(0,0,0,0.75)';
   scoreDisplay.style.zIndex = '1000';
   scoreDisplay.style.pointerEvents = 'none'; // Allow clicks to pass through to buttons below
+  scoreDisplay.style.opacity = '0';
+  scoreDisplay.style.transform = 'scale(0)';
+  scoreDisplay.style.transformOrigin = 'center top';
+  scoreDisplay.style.willChange = 'transform, opacity';
   scoreDisplay.textContent = `${laserScore} Jumps`;
   document.body.appendChild(scoreDisplay);
 
+  let jumpsDisplayRevealed = false;
+  const revealJumpsDisplay = () => {
+    if (jumpsDisplayRevealed) return;
+    jumpsDisplayRevealed = true;
+    scoreDisplay.style.opacity = '1';
+    scoreDisplay.animate(
+      [
+        { transform: 'scale(0)', opacity: 0 },
+        { transform: 'scale(1.15)', opacity: 1, offset: 0.75 },
+        { transform: 'scale(0.95)', opacity: 1, offset: 0.87 },
+        { transform: 'scale(1)', opacity: 1 },
+      ],
+      {
+        duration: 1800,
+        easing: 'cubic-bezier(0.3, 0, 0.2, 1)',
+        fill: 'forwards',
+      }
+    );
+    scoreDisplay.style.transform = 'scale(1)';
+  };
+
   const updateScoreDisplay = () => {
     scoreDisplay.textContent = `${laserScore} Jumps`;
+    if (laserScore > 0) {
+      revealJumpsDisplay();
+    }
   };
 
   // Platform spawn button
@@ -3768,7 +3928,8 @@ const init = async () => {
           const holeStartX = seg.x + seg.width - holeWidth;
           const entryPlatformX = holeStartX + 5;
           const entryGroundY = computePlayerGround();
-          platforms.spawn(entryPlatformX, entryGroundY, playerRadius, 'small', FIRST_PLATFORM_HEIGHT - FIRST_PLATFORM_DROP);
+          const entryPlatformOffset = Math.max(0, FIRST_PLATFORM_HEIGHT - FIRST_PLATFORM_DROP);
+          platforms.spawn(entryPlatformX, entryGroundY, playerRadius, 'small', entryPlatformOffset);
           isFirstPlatformSpawned = true;
           totalPlatformsSpawned = Math.max(1, totalPlatformsSpawned + 1);
           entryPlatformSpawned = true;

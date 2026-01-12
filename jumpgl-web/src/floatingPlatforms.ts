@@ -218,7 +218,14 @@ export class FloatingPlatforms {
    * @param groundSpeed Ground scroll speed in pixels/second
    * @param shouldCull Optional callback to determine if platform should be culled
    */
-  update(deltaSeconds: number, groundSpeed: number, shouldCull?: (x: number, w: number) => boolean): void {
+  update(
+    deltaSeconds: number,
+    groundSpeed: number,
+    shouldCull?: (x: number, w: number) => boolean,
+    groundSurfaceY?: number,
+    playerDiameter?: number,
+    platformLandingOffset: number = 0
+  ): void {
     // Update elapsed time for oscillation
     this.elapsedTime += deltaSeconds;
 
@@ -315,6 +322,16 @@ export class FloatingPlatforms {
         // Static platforms stay at their base positions
         platform.surfaceY = platform.baseSurfaceY;
         platform.renderY = platform.baseRenderY;
+      }
+
+      // Prevent platforms from oscillating below the baseline ground
+      if (groundSurfaceY !== undefined && playerDiameter !== undefined) {
+        const minSurfaceY = groundSurfaceY - playerDiameter - platformLandingOffset;
+        if (platform.surfaceY > minSurfaceY) {
+          const clampDelta = platform.surfaceY - minSurfaceY;
+          platform.surfaceY = minSurfaceY;
+          platform.renderY -= clampDelta;
+        }
       }
 
       // Apply landing compression animation (visual squash effect)
