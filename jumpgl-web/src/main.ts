@@ -558,7 +558,7 @@ const init = async () => {
   };
 
   const updatePlayerHorizontalRangeForCamera = (cameraX: number, zoom: number) => {
-    const bounds = playerRangeMode === 'leftHalf' ? playerRangeBounds.leftHalf : playerRangeBounds.full;
+    const bounds = playerRangeBounds[playerRangeMode];
     const safeZoom = Math.max(0.0001, zoom);
     const worldLeft = (bounds.left - cameraX) / safeZoom;
     const worldRight = (bounds.right - cameraX) / safeZoom;
