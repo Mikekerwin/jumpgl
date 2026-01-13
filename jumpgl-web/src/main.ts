@@ -577,7 +577,6 @@ const init = async () => {
   let scoreVisible = false;
   let revealEnergyBar: (() => void) | null = null;
   const HITS_PER_OUT = 20;
-  let scenarioButton: HTMLButtonElement | null = null;
   let autoScenarioPending = false;
   let autoScenarioTriggered = false;
   let butterfliesSpawned = false;
@@ -2166,9 +2165,8 @@ const init = async () => {
           redOuts = Math.min(10, redOuts + outsGained);
           redHits = redHits % HITS_PER_OUT;
         }
-        if (!firstOutMade && (redOuts + blueOuts) > 0 && scenarioButton) {
+        if (!firstOutMade && (redOuts + blueOuts) > 0) {
           firstOutMade = true;
-          scenarioButton.disabled = false;
         }
         if (redOuts > 0 && !autoScenarioTriggered) {
           autoScenarioPending = true;
@@ -2250,8 +2248,6 @@ const init = async () => {
 
       // Tutorial system progression
       if (tutorialActive && !cometHoleLevelActive) {
-        const tutorialNow = performance.now();
-
         // Stage 1: Double Jump Tutorial - Show after cottage has left the screen
         if (tutorialStage === 'waiting' && !playerIntroActive) {
           // Check if cottage segment has moved off screen (cottage is at negative X when off screen left)
@@ -2534,9 +2530,8 @@ const init = async () => {
               redOuts = Math.min(10, redOuts + outsGained);
               redHits = redHits % HITS_PER_OUT;
             }
-            if (!firstOutMade && (redOuts + blueOuts) > 0 && scenarioButton) {
+            if (!firstOutMade && (redOuts + blueOuts) > 0) {
               firstOutMade = true;
-              scenarioButton.disabled = false;
             }
             if (redOuts > 0 && !autoScenarioTriggered) {
               autoScenarioPending = true;
@@ -3681,9 +3676,8 @@ const init = async () => {
         blueOuts = Math.min(10, blueOuts + outsGained);
         redHits = redHits % HITS_PER_OUT;
       }
-      if (!firstOutMade && (blueOuts + redOuts) > 0 && scenarioButton) {
+      if (!firstOutMade && (blueOuts + redOuts) > 0) {
         firstOutMade = true;
-        scenarioButton.disabled = false;
       }
       if (redOuts > 0 && !autoScenarioTriggered) {
         autoScenarioPending = true;
