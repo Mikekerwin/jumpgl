@@ -1,5 +1,5 @@
 import './style.css';
-import { Application, Container, Graphics, Sprite, Texture, Ticker, RenderTexture } from 'pixi.js';
+import { Application, Container, Graphics, Sprite, Texture, Ticker, RenderTexture, Text, TextStyle } from 'pixi.js';
 import { PlayerPhysics } from './playerPhysics';
 import { EnemyPhysics } from './enemyPhysics';
 import { EnemyMovement } from './enemyMovement';
@@ -117,6 +117,168 @@ const init = async () => {
   loadingOverlay.appendChild(loadingBar);
   document.body.appendChild(loadingOverlay);
 
+  // Tutorial UI elements
+  const tutorialContainer = document.createElement('div');
+  tutorialContainer.style.position = 'fixed';
+  tutorialContainer.style.inset = '0';
+  tutorialContainer.style.display = 'flex';
+  tutorialContainer.style.flexDirection = 'column';
+  tutorialContainer.style.alignItems = 'center';
+  tutorialContainer.style.justifyContent = 'flex-start';
+  tutorialContainer.style.paddingTop = '10vh';
+  tutorialContainer.style.pointerEvents = 'none';
+  tutorialContainer.style.zIndex = '1000';
+  tutorialContainer.style.opacity = '0';
+  tutorialContainer.style.transition = 'opacity 1.6s ease';
+
+  // Double Jump tutorial elements
+  const doubleJumpContainer = document.createElement('div');
+  doubleJumpContainer.style.display = 'none';
+  doubleJumpContainer.style.flexDirection = 'column';
+  doubleJumpContainer.style.alignItems = 'center';
+  doubleJumpContainer.style.gap = '20px';
+
+  const doubleJumpHeading = document.createElement('div');
+  doubleJumpHeading.textContent = 'Double Jump';
+  doubleJumpHeading.style.fontFamily = '"Times New Roman", Times, serif';
+  doubleJumpHeading.style.fontSize = '5rem';
+  doubleJumpHeading.style.fontWeight = 'bold';
+  doubleJumpHeading.style.color = '#fff';
+  doubleJumpHeading.style.textShadow = '0 0 20px rgba(255, 255, 255, 0.8)';
+  doubleJumpHeading.style.letterSpacing = '2px';
+
+  const doubleJumpSubtext = document.createElement('div');
+  doubleJumpSubtext.textContent = 'Press Twice to Double Jump!';
+  doubleJumpSubtext.style.fontFamily = 'Arial, sans-serif';
+  doubleJumpSubtext.style.fontSize = '1.5rem';
+  doubleJumpSubtext.style.color = '#fff';
+  doubleJumpSubtext.style.textAlign = 'center';
+
+  const upArrow = document.createElement('div');
+  upArrow.textContent = '↑';
+  upArrow.style.fontSize = '8rem';
+  upArrow.style.color = '#fff';
+  upArrow.style.fontWeight = 'bold';
+  upArrow.style.textShadow = '0 0 30px rgba(255, 255, 255, 0.9)';
+  upArrow.style.animation = 'bobUp 1.5s ease-in-out infinite';
+  const upArrowContainer = document.createElement('div');
+  upArrowContainer.style.marginTop = 'calc(4vh - 8px)';
+  upArrowContainer.style.transition = 'transform 0.25s ease';
+  upArrowContainer.appendChild(upArrow);
+
+  doubleJumpContainer.appendChild(doubleJumpHeading);
+  doubleJumpContainer.appendChild(doubleJumpSubtext);
+  doubleJumpContainer.appendChild(upArrowContainer);
+
+  // Dash Jump tutorial elements
+  const dashJumpContainer = document.createElement('div');
+  dashJumpContainer.style.display = 'none';
+  dashJumpContainer.style.flexDirection = 'column';
+  dashJumpContainer.style.alignItems = 'center';
+  dashJumpContainer.style.gap = '20px';
+
+  const dashJumpHeading = document.createElement('div');
+  dashJumpHeading.textContent = 'Dash Jump';
+  dashJumpHeading.style.fontFamily = '"Times New Roman", Times, serif';
+  dashJumpHeading.style.fontSize = '5rem';
+  dashJumpHeading.style.fontWeight = 'bold';
+  dashJumpHeading.style.color = '#fff';
+  dashJumpHeading.style.textShadow = '0 0 20px rgba(255, 255, 255, 0.8)';
+  dashJumpHeading.style.letterSpacing = '2px';
+
+  const dashJumpSubtext = document.createElement('div');
+  dashJumpSubtext.textContent = 'Double Jump near the front of Screen';
+  dashJumpSubtext.style.fontFamily = 'Arial, sans-serif';
+  dashJumpSubtext.style.fontSize = '1.5rem';
+  dashJumpSubtext.style.color = '#fff';
+  dashJumpSubtext.style.textAlign = 'center';
+  dashJumpSubtext.style.maxWidth = '600px';
+
+  const rightArrowContainer = document.createElement('div');
+  rightArrowContainer.style.position = 'absolute';
+  rightArrowContainer.style.left = '50%';
+  rightArrowContainer.style.top = '50%';
+  rightArrowContainer.style.transform = 'translate(-50%, -50%)';
+  rightArrowContainer.style.transition = 'transform 0.25s ease';
+
+  const rightArrow = document.createElement('div');
+  rightArrow.textContent = '→';
+  rightArrow.style.fontSize = '8rem';
+  rightArrow.style.color = '#fff';
+  rightArrow.style.fontWeight = 'bold';
+  rightArrow.style.textShadow = '0 0 30px rgba(255, 255, 255, 0.9)';
+  rightArrow.style.animation = 'bobRight 1.5s ease-in-out infinite';
+
+  rightArrowContainer.appendChild(rightArrow);
+  dashJumpContainer.appendChild(dashJumpHeading);
+  dashJumpContainer.appendChild(dashJumpSubtext);
+  dashJumpContainer.appendChild(rightArrowContainer);
+
+  tutorialContainer.appendChild(doubleJumpContainer);
+  tutorialContainer.appendChild(dashJumpContainer);
+  document.body.appendChild(tutorialContainer);
+
+  const nudgeUpArrow = () => {
+    upArrow.style.animation = 'none';
+    upArrowContainer.getAnimations().forEach(anim => anim.cancel());
+    upArrowContainer.animate(
+      [
+        { transform: 'translateY(0)', opacity: 1, offset: 0 },
+        { transform: 'translateY(-20px)', opacity: 0, offset: 0.55 },
+        { transform: 'translateY(-70px)', opacity: 0, offset: 1 },
+      ],
+      { duration: 950, easing: 'ease-out', fill: 'forwards' }
+    );
+  };
+  let dashArrowSlid = false;
+  let dashArrowNudged = false;
+  const startDashArrowSlide = () => {
+    if (dashArrowSlid) return;
+    dashArrowSlid = true;
+    rightArrowContainer.getAnimations().forEach(anim => anim.cancel());
+    rightArrowContainer.style.left = '50%';
+    rightArrowContainer.style.transform = 'translate(-50%, -50%)';
+    rightArrowContainer.animate(
+      [
+        { left: '50%', transform: 'translate(-50%, -50%)' },
+        { left: '88%', transform: 'translate(-50%, -50%)' },
+      ],
+      { duration: 1200, easing: 'ease-out', fill: 'forwards' }
+    );
+  };
+  const startDashArrowNudge = () => {
+    if (dashArrowNudged) return;
+    dashArrowNudged = true;
+    rightArrow.style.animation = 'none';
+    rightArrowContainer.getAnimations().forEach(anim => anim.cancel());
+    rightArrowContainer.animate(
+      [
+        { left: '88%', transform: 'translate(-50%, -50%)', opacity: 1, offset: 0 },
+        { left: '94%', transform: 'translate(-50%, -50%)', opacity: 0, offset: 0.5 },
+        { left: '98%', transform: 'translate(-50%, -50%)', opacity: 0, offset: 1 },
+      ],
+      { duration: 900, easing: 'ease-out', fill: 'forwards' }
+    );
+  };
+  const nudgeRightArrow = () => {
+    startDashArrowSlide();
+    startDashArrowNudge();
+  };
+
+  // Add CSS animations for bobbing
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes bobUp {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-15px); }
+    }
+    @keyframes bobRight {
+      0%, 100% { transform: translateX(0); }
+      50% { transform: translateX(15px); }
+    }
+  `;
+  document.head.appendChild(style);
+
   const animateLoadingBar = () => {
     if (!loadingScreenActive) return;
     const elapsed = performance.now() - loadingStartTime;
@@ -128,6 +290,8 @@ const init = async () => {
 
   const scene = new Container();
   app.stage.addChild(scene);
+  const uiContainer = new Container();
+  app.stage.addChild(uiContainer);
 
   const backgroundContainer = new Container();
   const overlayContainer = new Container();
@@ -363,8 +527,6 @@ const init = async () => {
     yPosition: 0.667, // 2/3 down from top (1/3 from bottom)
     scale: 0.85, // 15% smaller
   });
-  let platformSpawnType: 'large' | 'small' = 'large'; // Tracks which platform type to spawn next
-  let holePlatformSpawnType: 'large' | 'small' = 'small'; // Tracks which hole-platform type to spawn next
   let activePlatformId: number | null = null;
   let lastLeftPlatformId: number | null = null;
   // Meteor hitbox for landing on the meteor overlay
@@ -374,8 +536,6 @@ const init = async () => {
   let platformAscendBonus = 0; // Additional vertical offset for successive spawns after landings
   const PLATFORM_ASCEND_STEP = 40; // Pixels higher per qualifying landing
   const PLATFORM_ASCEND_MAX = Number.POSITIVE_INFINITY; // Cap climb bonus (effectively unlimited)
-  const SMALL_PLATFORM_EXTRA = 100; // Extra height for small platforms (applied 50% of the time)
-  const SMALL_PLATFORM_CHANCE = 0.5;
   const HOLE_PLATFORM_OFFSET = 115; // Further lowered platforms with holes (100px lower than before)
   const HOLE_ALIGNMENT_TWEAK = 25; // Shift hole right to better center on platform art
   let isOnBaselineGround = true; // Tracks when player is resting on main ground
@@ -432,6 +592,7 @@ const init = async () => {
 
   // Red enemy state for hole level
   let redEnemyActive = false;
+  let forceEnemyJumpOut = false;
   let redEnemyState: 'on_platform' | 'falling' | 'rolling_in' | 'jumping_intro' | 'shooting' = 'on_platform';
   let redEnemyVelocityY = 0;
   let redEnemyVelocityX = 0;
@@ -456,6 +617,10 @@ const init = async () => {
   let spawnPoints: number[] = []; // Array of spawn X positions (sorted left to right)
   let currentSpawnIndex = -1; // Which spawn player is "after" (-1 means before first spawn)
   let nextSpawnIndex = 0; // Next spawn ahead
+  let debugFastForwardToSecondSpawn = false;
+  let debugSpawnDropPending = false;
+  const DEBUG_FAST_FORWARD_MIN = 12;
+  const DEBUG_FAST_FORWARD_MAX = 50;
   let spawnPointX = 0; // X position to respawn at (start of meteor transition) - FIXED, set once when meteor spawns
   let deathPlayerX = 0; // Player's world X position when they died
   let remainingRewindDistance = 0; // Fixed distance to scroll back to spawn (updated each frame by deltaX)
@@ -584,12 +749,55 @@ const init = async () => {
   const postIntroEaseDuration = 1.5; // 1.5 seconds to ease into full speed
   let postIntroInitialMouseX = 0; // Store initial mouse X when control is enabled
   let postIntroPlayerStartX = 0; // Store player X when control is enabled
+  let respawnEaseActive = false;
+  let respawnEaseStartTime = 0;
+  let respawnEaseStartX = 0;
+  const RESPAWN_EASE_DURATION = 1.2;
 
   // Parallax boost on jump near the right edge
   const PARALLAX_BOOST_MAX_DURATION_MS = 750;
   const PARALLAX_BOOST_MULTIPLIER = 7;
   let parallaxBoostActive = false;
   let parallaxBoostStartTime = 0;
+  // Dash charge attack once enemy lasers are active
+  const DASH_CHARGE_DURATION = 0.22;
+  const DASH_RETURN_DURATION = 0.28;
+  const DASH_TARGET_BUFFER = playerRadius * 0.8;
+  const DASH_HIT_SHAKE_MS = 220;
+  const DASH_HIT_SQUISH_MS = 220;
+  let dashChargeActive = false;
+  let dashChargeReturning = false;
+  let dashChargeStartTime = 0;
+  let dashChargeReturnStartTime = 0;
+  let dashChargeStartX = 0;
+  let dashChargeTargetX = 0;
+  let dashChargeReturnFromX = 0;
+  let dashChargeReturnToX = 0;
+  let dashReturnEaseActive = false;
+  let dashReturnEaseStartTime = 0;
+  const DASH_RETURN_EASE_DURATION = 3;
+  let enemyHasFiredLasers = false;
+  let enemySquishUntil = 0;
+
+  // Tutorial system state
+  let tutorialActive = true;
+  let tutorialStage: 'waiting' | 'doubleJump' | 'dashJump' | 'complete' = 'waiting';
+  let tutorialDashJumpShown = false;
+  let tutorialDoubleJumpCompleted = false;
+  let tutorialDashJumpCompleted = false;
+
+  // Tutorial parallax control
+  let tutorialParallaxStopped = false;
+  let tutorialParallaxSlowFactor = 1;
+
+  // Meeting title reveal (Pixi UI)
+  const MEETING_REVEAL_DURATION_MS = 3200;
+  const MEETING_RISE_PX = 12;
+  let meetingRevealActive = false;
+  let meetingRevealStartTime = 0;
+  let meetingTitleBaseY = 64;
+  let meetingTitleContainer: Container | null = null;
+  let meetingTitleText: Text | null = null;
 
   // Calculate cottage door position in world coordinates
   // Cottage image is 2048x900, player starts at 655px from left (door position)
@@ -736,6 +944,8 @@ const init = async () => {
     physics.clearSurfaceOverride();
     physics.setGroundCollisionEnabled(false);
     physics.forceVelocity(Math.max(300, Math.abs(currentVelocity) + 150));
+    dashChargeActive = false;
+    dashChargeReturning = false;
     hasLandedOnFirstPlatform = false;
     firstZoomProgress = 0;
     lateZoomProgress = 0;
@@ -802,6 +1012,10 @@ const init = async () => {
   const CAMERA_FOLLOW_THRESHOLD = 20; // How far below floor before camera starts following down
   const CAMERA_TOP_MARGIN = 100; // Keep player at least this many pixels from top of screen
   let backgroundParallaxY = 0; // Smoothed sky parallax to prevent jumpy camera transitions
+  let backgroundZoomCurrent = 1.0;
+  let holeExitCameraEaseActive = false;
+  let holeExitCameraEaseStart = 0;
+  const HOLE_EXIT_CAMERA_EASE_DURATION = 2.5; // seconds
   const RESPAWN_HOLD_ZOOM_DURATION = 4; // Seconds to ease toward 0.9 after falling in
   const RESPAWN_LAND_ZOOM_DURATION = 2.5; // Seconds to ease from 0.9 -> 1.0 after landing
   const RESPAWN_HOLD_ZOOM = 0.9; // Hold zoom during respawn until player is set down
@@ -873,6 +1087,23 @@ const init = async () => {
   };
 
   const getEnemyTargetX = () => screenToWorldX(app.renderer.width * 0.9);
+  const startRespawnEaseToCursor = () => {
+    respawnEaseActive = true;
+    respawnEaseStartTime = performance.now();
+    respawnEaseStartX = physics.getState().x;
+    const pointerX = app.renderer.events.pointer?.global?.x ?? app.renderer.width * 0.5;
+    physics.setSoftFollowMode(true);
+    physics.setMousePosition(screenToWorldX(pointerX));
+  };
+  const startDashCharge = (startX: number) => {
+    dashChargeActive = true;
+    dashChargeReturning = false;
+    dashChargeStartTime = performance.now();
+    dashChargeStartX = startX;
+    const targetX = enemyBall.position.x - (playerRadius + DASH_TARGET_BUFFER);
+    dashChargeTargetX = Math.max(startX, targetX);
+    parallaxBoostActive = false;
+  };
 
   const isPointerOverMinimap = (event: PointerEvent): boolean => {
     if (!SHOW_DEBUG_UI || !minimapSprite) return false;
@@ -995,6 +1226,8 @@ const init = async () => {
       if (currentSpawnIndex === 1) {
         console.log(`[SECOND SPAWN] ✅✅✅ PASSED SECOND SPAWN! Now culling should begin for old assets.`);
         cometHoleLevelActive = false; // Disable hole area protection so spawn-based culling works
+        holeExitCameraEaseActive = true;
+        holeExitCameraEaseStart = performance.now();
         console.log(`[CULLING] Hole area protection disabled - old assets can now be culled`);
         console.log(`[CULLING] Current spawn points:`, spawnPoints.map(x => x.toFixed(0)));
         console.log(`[CULLING] Player X: ${playerX.toFixed(0)}, currentSpawnIndex: ${currentSpawnIndex}, nextSpawnIndex: ${nextSpawnIndex}`);
@@ -1091,6 +1324,19 @@ const init = async () => {
       playerIntroStartTime = performance.now();
       playerIntroActive = true;
       pendingIntroReset = false;
+    }
+
+    if (meetingRevealActive && meetingTitleContainer) {
+      const now = performance.now();
+      const elapsed = Math.max(0, now - meetingRevealStartTime);
+      const revealProgress = Math.min(1, elapsed / MEETING_REVEAL_DURATION_MS);
+      const revealEase = 1 - Math.pow(1 - revealProgress, 3);
+      meetingTitleContainer.alpha = revealEase;
+      meetingTitleContainer.position.y = meetingTitleBaseY + (1 - revealEase) * MEETING_RISE_PX;
+
+      if (revealProgress >= 1) {
+        meetingRevealActive = false;
+      }
     }
     // Apply screen shake if active
     if (shakeActive) {
@@ -1190,11 +1436,23 @@ const init = async () => {
 
     if (respawnState === 'animating_back') {
       // Fixed distance-based rewind: drive speed from fixed remaining distance counter
-      const RESPAWN_MAX_SPEED_MULTIPLIER = 12; // 5x reverse speed at peak
+      const RESPAWN_BASE_SPEED_MULTIPLIER = 12; // Base reverse speed
+      const RESPAWN_BOOST_START_DISTANCE = 2000; // px before speed boost kicks in
+      const RESPAWN_BOOST_DISTANCE_RANGE = 2000; // px range to ramp boost
+      const RESPAWN_MAX_BOOST_MULTIPLIER = 2.0; // Up to 2x base speed at long distances
       const EASE_DISTANCE = 300; // Distance over which to ease out
+      const RESPAWN_BACK_RAMP_DURATION = 0.5; // seconds to ease into rewind
 
       const absRemaining = Math.abs(remainingRewindDistance);
       const direction = remainingRewindDistance >= 0 ? 1 : -1; // negative remaining = scroll backward (negative speed)
+      const boostProgress = Math.min(
+        1,
+        Math.max(0, (absRemaining - RESPAWN_BOOST_START_DISTANCE) / RESPAWN_BOOST_DISTANCE_RANGE)
+      );
+      const boostCurve = Math.pow(boostProgress, 2.2); // Exponential feel
+      const maxSpeedMult =
+        RESPAWN_BASE_SPEED_MULTIPLIER *
+        (1 + boostCurve * (RESPAWN_MAX_BOOST_MULTIPLIER - 1));
 
       // Calculate speed multiplier based on remaining distance with easing
       let targetSpeedMult: number;
@@ -1203,13 +1461,16 @@ const init = async () => {
         // Close to target: ease out (speed proportional to distance)
         const minSpeedFactor = 0.1;
         const easeProgress = absRemaining / EASE_DISTANCE; // 1 → 0 as we approach
-        targetSpeedMult = direction * RESPAWN_MAX_SPEED_MULTIPLIER * (minSpeedFactor + easeProgress * (1 - minSpeedFactor));
+        targetSpeedMult = direction * maxSpeedMult * (minSpeedFactor + easeProgress * (1 - minSpeedFactor));
       } else {
         // Far from target: full speed
-        targetSpeedMult = direction * RESPAWN_MAX_SPEED_MULTIPLIER;
+        targetSpeedMult = direction * maxSpeedMult;
       }
 
-      speedMultiplier = targetSpeedMult;
+      respawnTimer += deltaSeconds;
+      const rampProgress = Math.min(1, respawnTimer / RESPAWN_BACK_RAMP_DURATION);
+      const rampEase = 1 - Math.pow(1 - rampProgress, 3); // ease-in
+      speedMultiplier = targetSpeedMult * rampEase;
 
       // Advance remaining distance by actual scroll this frame
       // speedMultiplier < 0 moves world backward (deltaX negative)
@@ -1220,9 +1481,9 @@ const init = async () => {
       const absRemainingUpdated = Math.abs(remainingRewindDistance);
 
       // Debug logging every ~0.2s
-      if (Math.random() < 0.05) {
-        console.log(`[RESPAWN ANIM] remaining=${absRemainingUpdated.toFixed(0)}px, speed=${speedMultiplier.toFixed(2)}x, deltaX=${deltaX.toFixed(1)}`);
-      }
+    if (Math.random() < 0.05) {
+      console.log(`[RESPAWN ANIM] remaining=${absRemainingUpdated.toFixed(0)}px, speed=${speedMultiplier.toFixed(2)}x, deltaX=${deltaX.toFixed(1)}`);
+    }
 
       // Check if we've reached or crossed the target (within 2px tolerance)
       if (absRemainingUpdated <= 2) {
@@ -1244,10 +1505,11 @@ const init = async () => {
         physics.setGroundCollisionEnabled(true);
         console.log(`[RESPAWN] Player respawning at original X=${playerInitialX.toFixed(0)}, final remaining=${remainingRewindDistance.toFixed(1)}px`);
 
-        // Force player Y position above screen
+        // Spawn above the screen so the player drops back in
         physics.forceVelocity(0);
-        const currentState = physics.getState();
-        ball.position.set(currentState.x, RESPAWN_HEIGHT_ABOVE_SCREEN);
+        physics.setPosition(playerInitialX, RESPAWN_HEIGHT_ABOVE_SCREEN);
+        ball.position.set(playerInitialX, RESPAWN_HEIGHT_ABOVE_SCREEN);
+        startRespawnEaseToCursor();
 
         // CRITICAL: Show player and shadow again
         ball.visible = true;
@@ -1577,7 +1839,7 @@ const init = async () => {
         postIntroEaseActive = false;
 
         // Only disable soft follow if not using touch input
-        if (currentInputType !== 'touch') {
+        if (currentInputType !== 'touch' && !respawnEaseActive && !dashReturnEaseActive) {
           physics.setSoftFollowMode(false);
           console.log('[POST-INTRO] Easing complete - full speed enabled (mouse mode)');
         } else {
@@ -1586,7 +1848,34 @@ const init = async () => {
       }
     }
 
-    if (!playerIntroActive && respawnState === 'normal' && parallaxBoostActive) {
+    if (respawnEaseActive) {
+      const currentTime = performance.now();
+      const elapsed = (currentTime - respawnEaseStartTime) / 1000;
+      const t = Math.min(1, elapsed / RESPAWN_EASE_DURATION);
+      const easeOut = 1 - Math.pow(1 - t, 2);
+      const pointerX = app.renderer.events.pointer?.global?.x ?? app.renderer.width * 0.5;
+      const targetX = screenToWorldX(pointerX);
+      const easedX = respawnEaseStartX + (targetX - respawnEaseStartX) * easeOut;
+      physics.setMousePosition(easedX);
+      if (t >= 1) {
+        respawnEaseActive = false;
+        if (currentInputType !== 'touch' && !postIntroEaseActive && !dashReturnEaseActive) {
+          physics.setSoftFollowMode(false);
+        }
+      }
+    }
+
+    if (dashReturnEaseActive) {
+      const elapsed = (performance.now() - dashReturnEaseStartTime) / 1000;
+      if (elapsed >= DASH_RETURN_EASE_DURATION) {
+        dashReturnEaseActive = false;
+        if (currentInputType !== 'touch' && !postIntroEaseActive && !respawnEaseActive) {
+          physics.setSoftFollowMode(false);
+        }
+      }
+    }
+
+    if (!playerIntroActive && respawnState === 'normal' && parallaxBoostActive && !dashChargeActive && !dashChargeReturning) {
       const now = performance.now();
       const elapsed = now - parallaxBoostStartTime;
       const holdActive = physics.isChargingJump();
@@ -1597,8 +1886,59 @@ const init = async () => {
       }
     }
 
+    // Tutorial parallax speed modification - slow/stop near fence butterfly
+    if (tutorialActive && !tutorialDashJumpCompleted) {
+      if (tutorialParallaxStopped) {
+        speedMultiplier = 0;
+      } else if (tutorialParallaxSlowFactor < 1) {
+        speedMultiplier *= tutorialParallaxSlowFactor;
+      }
+    }
+
+    if (debugFastForwardToSecondSpawn) {
+      const segments = grounds.getSegments();
+      const holeBackSegment = segments.find((seg: { type: string }) => seg.type === 'hole_transition_back');
+      if (holeBackSegment) {
+        const secondSpawnX = holeBackSegment.x + holeBackSegment.width - 100;
+        const playerX = physics.getState().x;
+        const remaining = secondSpawnX - playerX;
+        if (remaining > 0) {
+          const boost = Math.min(DEBUG_FAST_FORWARD_MAX, Math.max(DEBUG_FAST_FORWARD_MIN, remaining / 120));
+          speedMultiplier = Math.max(speedMultiplier, boost);
+        } else {
+          debugFastForwardToSecondSpawn = false;
+        }
+      }
+    }
+
     // Update spawn indices based on player position (for smart culling)
     updateSpawnIndices();
+
+    if (debugSpawnDropPending && currentSpawnIndex >= 1) {
+      debugSpawnDropPending = false;
+      const groundY = computePlayerGround();
+      respawnState = 'respawning';
+      respawnTimer = 0;
+      fallingIntoHole = false;
+      activePlatformId = null;
+      meteorHitbox = null;
+      physics.clearSurfaceOverride();
+      physics.respawn(playerInitialX, groundY);
+      physics.setGroundCollisionEnabled(true);
+      physics.setGroundSurface(groundY);
+      currentGroundSurface = groundY;
+      physics.forceVelocity(0);
+      physics.resetScale();
+      physics.setPosition(playerInitialX, RESPAWN_HEIGHT_ABOVE_SCREEN);
+      physics.setMousePosition(playerInitialX);
+      ball.position.set(playerInitialX, RESPAWN_HEIGHT_ABOVE_SCREEN);
+      ball.visible = true;
+      ball.alpha = 1.0;
+      playerShadow.getView().visible = true;
+      playerShadow.getView().alpha = 1.0;
+      startRespawnEaseToCursor();
+      speedMultiplier = 0;
+    }
 
     backgrounds.update(deltaSeconds, speedMultiplier);
     grounds.update(deltaSeconds, speedMultiplier, shouldCullObject);
@@ -1907,6 +2247,119 @@ const init = async () => {
           }
         }
       }
+
+      // Tutorial system progression
+      if (tutorialActive && !cometHoleLevelActive) {
+        const tutorialNow = performance.now();
+
+        // Stage 1: Double Jump Tutorial - Show after cottage has left the screen
+        if (tutorialStage === 'waiting' && !playerIntroActive) {
+          // Check if cottage segment has moved off screen (cottage is at negative X when off screen left)
+          const segments = grounds.getSegments();
+          const cottageSegment = segments.find(seg => seg.type === 'cottage_start');
+          const butterfliesPastHalfway = (() => {
+            if (!butterflyManager) return false;
+            const sprites = butterflyManager.getSprites();
+            if (sprites.length < 3) return false;
+            const thresholdX = app.renderer.width * 0.5;
+            for (let i = 0; i < 3; i++) {
+              if (sprites[i].getGlobalPosition().x < thresholdX) {
+                return false;
+              }
+            }
+            return true;
+          })();
+
+          if (cottageSegment && cottageSegment.x < -500 && butterfliesPastHalfway) {
+            // Cottage is well off screen, show double jump tutorial
+            tutorialStage = 'doubleJump';
+            doubleJumpContainer.style.display = 'flex';
+            tutorialContainer.style.opacity = '1';
+            console.log('[TUTORIAL] Stage 1: Double Jump tutorial shown');
+          }
+        }
+
+        // Check if player has completed double jump
+        if (tutorialStage === 'doubleJump' && !tutorialDoubleJumpCompleted) {
+          const jumpCount = physics.getJumpCount();
+          if (jumpCount >= 2) {
+            // Player performed double jump! Fade out double jump message and show dash jump
+            tutorialDoubleJumpCompleted = true;
+            tutorialContainer.style.opacity = '0';
+            setTimeout(() => {
+              doubleJumpContainer.style.display = 'none';
+              // Show dash jump message
+              dashJumpContainer.style.display = 'flex';
+              tutorialContainer.style.opacity = '1';
+              tutorialDashJumpShown = true;
+              dashArrowSlid = false;
+              dashArrowNudged = false;
+              setTimeout(() => {
+                if (dashJumpContainer.style.display !== 'none') {
+                  startDashArrowSlide();
+                }
+              }, 200);
+            }, 800); // Wait for fade out
+            console.log('[TUTORIAL] Stage 1 complete: Player double jumped, showing dash jump tutorial');
+
+            // Move to next stage
+            tutorialStage = 'dashJump';
+          }
+        }
+
+        // Butterfly-based parallax control - slow only near target and stop at 20% from right
+        // Parallax continues until butterfly reaches 20% from right, then stops UNLESS player has dash jumped
+        if (!tutorialDashJumpCompleted) {
+          const butterflyX = grounds.getButterflyX();
+          if (butterflyX !== null) {
+            const butterflyScreenX = butterflyX;
+            const targetScreenX = app.renderer.width * 0.8; // 80% from left (20% from right)
+            const distanceToTarget = butterflyScreenX - targetScreenX;
+            const slowRange = 500;
+
+            if (Math.random() < 0.02) {
+              console.log(`[TUTORIAL DEBUG] Butterfly tracking: butterflyX=${butterflyScreenX.toFixed(0)}, target=${targetScreenX.toFixed(0)}, distance=${distanceToTarget.toFixed(0)}`);
+            }
+
+            if (distanceToTarget <= 0) {
+              tutorialParallaxStopped = true;
+              tutorialParallaxSlowFactor = 0;
+            } else {
+              tutorialParallaxStopped = false;
+              tutorialParallaxSlowFactor = Math.min(1, Math.max(0, distanceToTarget / slowRange));
+            }
+          } else {
+            tutorialParallaxStopped = false;
+            tutorialParallaxSlowFactor = 1;
+          }
+        } else {
+          tutorialParallaxStopped = false;
+          tutorialParallaxSlowFactor = 1;
+        }
+
+        // Check if player has completed dash jump AND is past the fence
+        if (tutorialDashJumpShown && !tutorialDashJumpCompleted) {
+          const fenceX = grounds.getFenceX();
+
+          // Player must dash jump AND be past the fence position
+          if (parallaxBoostActive && fenceX !== null && playerX > fenceX) {
+            tutorialDashJumpCompleted = true;
+            tutorialContainer.style.opacity = '0';
+            setTimeout(() => {
+              dashJumpContainer.style.display = 'none';
+            }, 800); // Wait for fade out
+            console.log('[TUTORIAL] Stage 2 complete: Player dash jumped past fence');
+
+            // Tutorial complete - butterfly will fly off automatically via checkButterflyProximity
+            tutorialStage = 'complete';
+            tutorialActive = false;
+
+            // Resume normal parallax
+            tutorialParallaxStopped = false;
+            tutorialParallaxSlowFactor = 1;
+          }
+        }
+      }
     }
 
     if (butterflyManager) {
@@ -2022,6 +2475,95 @@ const init = async () => {
       if (progress >= 1.0) {
         playerReturnStartTime = 0;
         console.log('[PLAYER RANGE] Return animation complete');
+      }
+    }
+
+    if (dashChargeActive || dashChargeReturning) {
+      if (respawnState !== 'normal' || fallingIntoHole || playerIntroActive) {
+        dashChargeActive = false;
+        dashChargeReturning = false;
+      } else {
+        const dashNow = performance.now();
+        const fromX = dashChargeReturning ? dashChargeReturnFromX : dashChargeStartX;
+        const toX = dashChargeReturning ? dashChargeReturnToX : dashChargeTargetX;
+        const duration = dashChargeReturning ? DASH_RETURN_DURATION : DASH_CHARGE_DURATION;
+        const startTime = dashChargeReturning ? dashChargeReturnStartTime : dashChargeStartTime;
+        const elapsed = Math.max(0, (dashNow - startTime) / 1000);
+        const t = Math.min(1, elapsed / Math.max(0.0001, duration));
+        const ease = 1 - Math.pow(1 - t, 3);
+        const dashX = fromX + (toX - fromX) * ease;
+
+        state.x = dashX;
+        physics.setPosition(dashX, state.y);
+
+        if (!dashChargeReturning) {
+          const playerBounds = {
+            left: dashX - playerRadius,
+            right: dashX + playerRadius,
+            top: state.y - playerRadius,
+            bottom: state.y + playerRadius,
+          };
+          const enemyBox = enemyBounds();
+          const overlapsX = playerBounds.right > enemyBox.left && playerBounds.left < enemyBox.right;
+          const overlapsY = playerBounds.bottom > enemyBox.top && playerBounds.top < enemyBox.bottom;
+
+          if (overlapsX && overlapsY) {
+            dashChargeActive = false;
+            dashChargeReturning = true;
+            dashChargeReturnStartTime = dashNow;
+            dashChargeReturnFromX = dashX;
+            dashChargeReturnToX = screenToWorldX(app.renderer.width * 0.3);
+
+            enemySquishUntil = dashNow + DASH_HIT_SQUISH_MS;
+            enemyFlashUntil = dashNow + 250;
+            sparkParticles.spawn(enemyBall.position.x, enemyBall.position.y, 'blue');
+            shakeActive = true;
+            shakeEndTime = dashNow + DASH_HIT_SHAKE_MS;
+
+            energy = Math.min(100, energy + 7);
+            if (energy >= 100 && !shootUnlocked) {
+              canShoot = true;
+              shootUnlocked = true;
+              console.log('[SHOOT UNLOCK] Reached 100% energy');
+            }
+            updateEnergyUI();
+
+            redHits += 5;
+            if (redHits >= HITS_PER_OUT) {
+              const outsGained = Math.floor(redHits / HITS_PER_OUT);
+              redOuts = Math.min(10, redOuts + outsGained);
+              redHits = redHits % HITS_PER_OUT;
+            }
+            if (!firstOutMade && (redOuts + blueOuts) > 0 && scenarioButton) {
+              firstOutMade = true;
+              scenarioButton.disabled = false;
+            }
+            if (redOuts > 0 && !autoScenarioTriggered) {
+              autoScenarioPending = true;
+              autoScenarioTriggered = true;
+            }
+            updateScoreUI();
+          }
+        }
+
+        if (t >= 1) {
+          if (!dashChargeReturning) {
+            dashChargeActive = false;
+            dashChargeReturning = true;
+            dashChargeReturnStartTime = dashNow;
+            dashChargeReturnFromX = dashX;
+            dashChargeReturnToX = dashChargeStartX;
+          } else {
+            dashChargeReturning = false;
+            physics.setPosition(dashChargeReturnToX, state.y);
+            physics.setMousePosition(dashChargeReturnToX);
+            dashReturnEaseActive = true;
+            dashReturnEaseStartTime = performance.now();
+            if (currentInputType !== 'touch') {
+              physics.setSoftFollowMode(true);
+            }
+          }
+        }
       }
     }
 
@@ -2240,6 +2782,13 @@ const init = async () => {
       enemyBall.visible = true;
       redEnemyActive = true;
       redEnemyState = 'on_platform'; // Using 'on_platform' state but enemy is in meteor
+      if (forceEnemyJumpOut) {
+        redEnemyState = 'falling';
+        redEnemyVelocityX = 300; // Jump out to the right
+        redEnemyVelocityY = -400; // Jump up and out
+        forceEnemyJumpOut = false;
+        console.log('[RED ENEMY] Auto-jump out of meteor');
+      }
       console.log(
         `[RED ENEMY] Spawned inside meteor at x=${enemyX.toFixed(0)} y=${enemyY.toFixed(0)} (overlay: ${meteorBounds.width.toFixed(0)}x${meteorBounds.height.toFixed(0)})`
       );
@@ -2760,14 +3309,32 @@ const init = async () => {
     // Check if player is jumping too high (approaching top of screen)
     // Player position is in world space, but we need to check screen space (with camera offset)
     const playerTopInScreenSpace = (state.y - playerRadius) + cameraY;
-    if (playerTopInScreenSpace < CAMERA_TOP_MARGIN) {
+    const suppressTopClamp = respawnState === 'respawning' && playerTopInScreenSpace < 0;
+    if (!suppressTopClamp && playerTopInScreenSpace < CAMERA_TOP_MARGIN) {
       // Player is too close to top of screen - push camera up
       const upwardPush = CAMERA_TOP_MARGIN - playerTopInScreenSpace;
       targetCameraY += upwardPush;
     }
 
+    let cameraLerpSpeed = CAMERA_LERP_SPEED;
+    let panResetSpeed = 0.05;
+    let zoomResetSpeed = 0.004;
+    let bgParallaxSpeed = 120;
+    if (holeExitCameraEaseActive) {
+      const exitElapsed = (performance.now() - holeExitCameraEaseStart) / 1000;
+      const exitT = Math.min(1, exitElapsed / HOLE_EXIT_CAMERA_EASE_DURATION);
+      const exitEase = 1 - Math.pow(1 - exitT, 2);
+      cameraLerpSpeed = 0.03 + (CAMERA_LERP_SPEED - 0.03) * exitEase;
+      panResetSpeed = 0.012 + (0.05 - 0.012) * exitEase;
+      zoomResetSpeed = 0.002 + (0.004 - 0.002) * exitEase;
+      bgParallaxSpeed = 50 + (120 - 50) * exitEase;
+      if (exitT >= 1) {
+        holeExitCameraEaseActive = false;
+      }
+    }
+
     // Smoothly interpolate camera to target position
-    cameraY += (targetCameraY - cameraY) * CAMERA_LERP_SPEED;
+    cameraY += (targetCameraY - cameraY) * cameraLerpSpeed;
 
     // Camera zoom (comet hole level ONLY) - progressive zoom revealing meteor
     if (cometHoleLevelActive) {
@@ -2876,10 +3443,6 @@ const init = async () => {
       cameraPanX = -160 * panEase; // Shift view right
       cameraPanY = -90 * panEase;  // Shift view down
 
-      // Apply zoom with parallax depth - background zooms less for realistic parallax
-      const backgroundZoom = 1.0 - (1.0 - cameraZoom) * 0.2; // Only 20% of the zoom
-      backgroundContainer.scale.set(backgroundZoom);
-
       // Foreground elements (ground, platforms, player) get full zoom
       groundContainer.scale.set(cameraZoom);
       platformContainer.scale.set(cameraZoom);
@@ -2891,8 +3454,7 @@ const init = async () => {
     } else {
       // Reset zoom when not in comet hole level
       if (cameraZoom !== 1.0) {
-        cameraZoom += (1.0 - cameraZoom) * 0.015;
-        backgroundContainer.scale.set(cameraZoom);
+        cameraZoom += (1.0 - cameraZoom) * zoomResetSpeed;
         groundContainer.scale.set(cameraZoom);
         platformContainer.scale.set(cameraZoom);
         playfieldContainer.scale.set(cameraZoom);
@@ -2902,10 +3464,16 @@ const init = async () => {
         gradientSprite.scale.set(gradientScale);
       }
       if (cameraPanX !== 0 || cameraPanY !== 0) {
-        cameraPanX += (0 - cameraPanX) * 0.05;
-        cameraPanY += (0 - cameraPanY) * 0.05;
+        cameraPanX += (0 - cameraPanX) * panResetSpeed;
+        cameraPanY += (0 - cameraPanY) * panResetSpeed;
       }
     }
+
+    // Apply zoom with parallax depth - background zooms less for realistic parallax
+    const backgroundZoomTarget = 1.0 - (1.0 - cameraZoom) * 0.2; // Only 20% of the zoom
+    const backgroundZoomLerp = holeExitCameraEaseActive ? 0.06 : 0.12;
+    backgroundZoomCurrent += (backgroundZoomTarget - backgroundZoomCurrent) * backgroundZoomLerp;
+    backgroundContainer.scale.set(backgroundZoomCurrent);
 
     // Apply camera position with parallax
     // Background moves less (30% of camera movement) for depth effect
@@ -2943,8 +3511,7 @@ const init = async () => {
     // Background follows the ground/camera motion for parallax without snapping
     backgroundContainer.position.x = totalCameraX * 0.3;
     const targetBackgroundY = clampedGroundCameraY * 0.3;
-    const BG_PARALLAX_SPEED = 120; // px/sec clamp to keep sky from snapping
-    const maxParallaxStep = BG_PARALLAX_SPEED * deltaSeconds;
+    const maxParallaxStep = bgParallaxSpeed * deltaSeconds;
     const deltaParallaxY = targetBackgroundY - backgroundParallaxY;
     if (Math.abs(deltaParallaxY) <= maxParallaxStep) {
       backgroundParallaxY = targetBackgroundY;
@@ -3024,10 +3591,13 @@ const init = async () => {
     playerShadow.update(ball.position.x, ball.position.y, shadowSurface);
 
     // Update enemy based on current mode
+    const enemySquishActive = enemySquishUntil > performance.now();
+    const enemySquishScaleX = enemySquishActive ? 1.25 : 1;
+    const enemySquishScaleY = enemySquishActive ? 0.7 : 1;
     if (enemyMode === 'physics') {
       const enemyState = enemyPhysics.update(deltaSeconds);
       enemyBall.position.y = enemyState.y;
-      enemyBall.scale.set(enemyState.scaleX, enemyState.scaleY);
+      enemyBall.scale.set(enemyState.scaleX * enemySquishScaleX, enemyState.scaleY * enemySquishScaleY);
       if (redEnemyState === 'jumping_intro' && enemyIntroMoveActive) {
         const targetX = getEnemyTargetX();
         const elapsed = (performance.now() - enemyIntroMoveStartTime) / 1000;
@@ -3057,7 +3627,7 @@ const init = async () => {
     } else if (enemyMode === 'hover') {
       const enemyState = enemyMovement.update(deltaSeconds);
       enemyBall.position.y = enemyState.y;
-      enemyBall.scale.set(enemyState.scaleX, enemyState.scaleY);
+      enemyBall.scale.set(enemyState.scaleX * enemySquishScaleX, enemyState.scaleY * enemySquishScaleY);
       enemyBall.position.x = getEnemyTargetX();
     }
 
@@ -3095,6 +3665,9 @@ const init = async () => {
     }
     if (laserResult.laserFired && laserResult.targetY !== null) {
       enemyMovement.setTarget(laserResult.targetY);
+    }
+    if (laserResult.laserFired) {
+      enemyHasFiredLasers = true;
     }
     if (laserResult.hitPosition) {
       // Enemy lasers = red sparks - reduce energy by 1.5% per hit
@@ -3288,6 +3861,7 @@ const init = async () => {
   const triggerJump = (event?: PointerEvent | KeyboardEvent) => {
     // Disable input during intro
     if (playerIntroActive) return;
+    if (tutorialActive && tutorialStage === 'waiting' && physics.getJumpCount() >= 1) return;
 
     // Detect input type on pointer events (touch, mouse, pen)
     if (event && 'pointerType' in event) {
@@ -3309,9 +3883,19 @@ const init = async () => {
     const jumpExecuted = physics.startJump();
     if (jumpExecuted) {
       lastJumpTime = performance.now();
+      if (physics.getJumpCount() >= 2 && tutorialStage === 'doubleJump' && doubleJumpContainer.style.display !== 'none') {
+        nudgeUpArrow();
+      }
       if (physics.getCursorScreenPercent() >= 0.7 && physics.getJumpCount() >= 2) {
-        parallaxBoostActive = true;
-        parallaxBoostStartTime = performance.now();
+        if (tutorialStage === 'dashJump' && dashJumpContainer.style.display !== 'none') {
+          nudgeRightArrow();
+        }
+        if (enemyHasFiredLasers && enemyMode === 'hover' && !dashChargeActive && !dashChargeReturning) {
+          startDashCharge(physics.getState().x);
+        } else {
+          parallaxBoostActive = true;
+          parallaxBoostStartTime = performance.now();
+        }
       }
 
       // ALWAYS mark platforms above when jumping, unless firmly on baseline ground
@@ -3531,6 +4115,11 @@ const init = async () => {
 
     // Update comet dimensions
     cometManager.updateDimensions(app.renderer.width, app.renderer.height);
+
+    if (meetingTitleContainer && meetingTitleText) {
+      meetingTitleBaseY = 64;
+      meetingTitleContainer.position.set(app.renderer.width / 2, meetingTitleBaseY + MEETING_RISE_PX);
+    }
   };
 
   window.addEventListener('resize', handleResize);
@@ -3759,7 +4348,7 @@ const init = async () => {
   scoreDisplay.style.top = '20px';
   scoreDisplay.style.width = '100%';
   scoreDisplay.style.textAlign = 'center';
-  scoreDisplay.style.fontSize = '2rem';
+  scoreDisplay.style.fontSize = '1.85rem';
   scoreDisplay.style.fontWeight = 'bold';
   scoreDisplay.style.fontFamily = '"Times New Roman", Times, serif';
   scoreDisplay.style.color = 'white';
@@ -3774,7 +4363,30 @@ const init = async () => {
   scoreDisplay.textContent = `${laserScore} Jumps`;
   document.body.appendChild(scoreDisplay);
 
+  const meetingTextStyle = new TextStyle({
+    fontFamily: '"Times New Roman", Times, serif',
+    fontSize: 46,
+    fontWeight: '700',
+    fill: 0xffffff,
+    letterSpacing: 1,
+    dropShadow: {
+      color: 0x000000,
+      alpha: 0.65,
+      blur: 10,
+      distance: 0,
+    },
+  });
+  meetingTitleText = new Text('The Meeting', meetingTextStyle);
+  meetingTitleText.anchor.set(0.5, 0);
+
+  meetingTitleContainer = new Container();
+  meetingTitleContainer.alpha = 0;
+  meetingTitleContainer.addChild(meetingTitleText);
+  meetingTitleContainer.position.set(app.renderer.width / 2, meetingTitleBaseY + MEETING_RISE_PX);
+  uiContainer.addChild(meetingTitleContainer);
+
   let jumpsDisplayRevealed = false;
+  let meetingTitleRevealed = false;
   const revealJumpsDisplay = () => {
     if (jumpsDisplayRevealed) return;
     jumpsDisplayRevealed = true;
@@ -3793,6 +4405,15 @@ const init = async () => {
       }
     );
     scoreDisplay.style.transform = 'scale(1)';
+
+    if (!meetingTitleRevealed) {
+      meetingTitleRevealed = true;
+      if (meetingTitleContainer) {
+        meetingTitleContainer.alpha = 0;
+        meetingRevealStartTime = performance.now() + 2000;
+        meetingRevealActive = true;
+      }
+    }
   };
 
   const updateScoreDisplay = () => {
@@ -3801,83 +4422,6 @@ const init = async () => {
       revealJumpsDisplay();
     }
   };
-
-  // Platform spawn button
-  const spawnPlatform = () => {
-    // Spawn off-screen to the right (so it animates in like the ground)
-    const spawnX = app.renderer.width + 100; // Off-screen right
-    const groundY = computePlayerGround();
-    const isSmall = platformSpawnType === 'small';
-    const smallBonus = isSmall && Math.random() < SMALL_PLATFORM_CHANCE ? SMALL_PLATFORM_EXTRA : 0;
-    const baseOffset = PLATFORM_VERTICAL_OFFSET + smallBonus;
-    const adjustedOffset = Math.min(baseOffset + platformAscendBonus, baseOffset + PLATFORM_ASCEND_MAX);
-    platforms.spawn(spawnX, groundY, playerRadius, platformSpawnType, adjustedOffset);
-
-    console.log(`[PLATFORM SPAWN] Spawned ${platformSpawnType} platform at X=${spawnX}`);
-
-    // Climb bonus now increments on successful landings; reset handled when grounded
-
-    // Alternate between large and small platforms
-    platformSpawnType = platformSpawnType === 'large' ? 'small' : 'large';
-
-    // Update button text to show next platform type (dev only)
-    if (SHOW_DEBUG_UI) {
-      const platformButton = document.getElementById('platformButton') as HTMLButtonElement;
-      if (platformButton) {
-        platformButton.textContent = `Spawn ${platformSpawnType === 'large' ? 'Large' : 'Small'} Platform`;
-      }
-    }
-  };
-
-  // Platform + hole spawn button
-  const spawnPlatformWithHole = () => {
-    const spawnX = app.renderer.width + 100;
-    const groundY = computePlayerGround();
-    const holeType = holePlatformSpawnType;
-    const baseOffset = HOLE_PLATFORM_OFFSET;
-
-    // Center the hole relative to the platform art widths
-    let holeX = spawnX;
-    const platformDims = platforms.getImageDimensions(holeType);
-    const holeDims = holes.getImageDimensions(holeType);
-    if (platformDims && holeDims) {
-      holeX = spawnX + (platformDims.width - holeDims.width) / 2 + HOLE_ALIGNMENT_TWEAK;
-    }
-
-    platforms.spawn(spawnX, groundY, playerRadius, holeType, baseOffset);
-    holes.spawn(holeX, groundY, holeType);
-
-    console.log(`[PLATFORM+HOLE SPAWN] Spawned ${holeType} platform with hole at X=${spawnX}`);
-
-    holePlatformSpawnType = holePlatformSpawnType === 'large' ? 'small' : 'large';
-    if (SHOW_DEBUG_UI) {
-      const platformHoleButton = document.getElementById('platformHoleButton') as HTMLButtonElement;
-      if (platformHoleButton) {
-        platformHoleButton.textContent = `Spawn ${holePlatformSpawnType === 'large' ? 'Large' : 'Small'} Platform + Hole`;
-      }
-    }
-  };
-
-  // Create debug buttons (dev only)
-  if (SHOW_DEBUG_UI) {
-    const platformButton = document.createElement('button');
-    platformButton.id = 'platformButton';
-    platformButton.className = 'transition-btn';
-    platformButton.textContent = 'Spawn Large Platform';
-    platformButton.type = 'button';
-    platformButton.style.top = '62px'; // Position below transition button
-    platformButton.addEventListener('click', spawnPlatform);
-    document.body.appendChild(platformButton);
-
-    const platformHoleButton = document.createElement('button');
-    platformHoleButton.id = 'platformHoleButton';
-    platformHoleButton.className = 'transition-btn';
-    platformHoleButton.textContent = 'Spawn Small Platform + Hole';
-    platformHoleButton.type = 'button';
-    platformHoleButton.style.top = '104px'; // Stack below the regular platform button
-    platformHoleButton.addEventListener('click', spawnPlatformWithHole);
-    document.body.appendChild(platformHoleButton);
-  }
 
   // Scenario button: small platform + hole, then large platform, trigger mega laser
   const startScenario = () => {
@@ -3898,17 +4442,6 @@ const init = async () => {
     console.log('[SCENARIO] Small+hole then large spawned; awaiting jump range');
   };
 
-  if (SHOW_DEBUG_UI) {
-    scenarioButton = document.createElement('button');
-    scenarioButton.className = 'transition-btn';
-    scenarioButton.textContent = 'Run Mega Laser Scenario';
-    scenarioButton.type = 'button';
-    scenarioButton.style.top = '146px';
-    scenarioButton.addEventListener('click', startScenario);
-    scenarioButton.disabled = true; // enable after first out
-    document.body.appendChild(scenarioButton);
-  }
-
   // Auto trigger scenario when pending (e.g., after first red out)
   ticker.add(() => {
     if (autoScenarioPending && !scenarioActive) {
@@ -3916,6 +4449,74 @@ const init = async () => {
       startScenario();
     }
   });
+
+  const spawnAtSecondSpawn = () => {
+    let segments = grounds.getSegments();
+    let holeBackSegment = segments.find((seg: { type: string }) => seg.type === 'hole_transition_back');
+    if (!holeBackSegment) {
+      startCometHoleLevel(5);
+      segments = grounds.getSegments();
+      holeBackSegment = segments.find((seg: { type: string }) => seg.type === 'hole_transition_back');
+    }
+    if (!holeBackSegment) {
+      console.log('[DEBUG] Second spawn unavailable - hole_transition_back not found');
+      return;
+    }
+
+    tutorialActive = false;
+    tutorialStage = 'complete';
+    tutorialDoubleJumpCompleted = true;
+    tutorialDashJumpCompleted = true;
+    tutorialParallaxStopped = false;
+    tutorialParallaxSlowFactor = 1;
+    tutorialContainer.style.opacity = '0';
+    doubleJumpContainer.style.display = 'none';
+    dashJumpContainer.style.display = 'none';
+
+    playerIntroActive = false;
+    freezePlayer = false;
+    respawnEaseActive = false;
+    postIntroEaseActive = false;
+    parallaxBoostActive = false;
+    dashChargeActive = false;
+    dashChargeReturning = false;
+    respawnState = 'normal';
+    fallingIntoHole = false;
+
+    cometHoleLevelActive = true;
+    forceEnemyJumpOut = true;
+    redEnemyActive = false;
+    redEnemyState = 'on_platform';
+    enemyMode = 'sleep';
+    introComplete = false;
+    enemyHasFiredLasers = false;
+    enemyBall.visible = false;
+    enemyIntroMoveActive = false;
+    enemyIntroMoveStartX = 0;
+    enemyIntroMoveStartTime = 0;
+    const groundY = computePlayerGround();
+    enemyPhysics.setGroundSurface(groundY - playerRadius);
+    enemyPhysics.enablePhysicsMode(groundY - playerRadius, 0);
+    enemyMovement.startTransition(0, groundY - playerRadius);
+    enemyMovement.setTarget(groundY - playerRadius);
+
+    debugFastForwardToSecondSpawn = true;
+    debugSpawnDropPending = true;
+    ball.visible = false;
+    playerShadow.getView().visible = false;
+
+    console.log('[DEBUG] Fast-forwarding to second spawn (auto enemy jump-out)');
+  };
+
+  if (SHOW_DEBUG_UI) {
+    const spawnSecondButton = document.createElement('button');
+    spawnSecondButton.className = 'transition-btn';
+    spawnSecondButton.textContent = 'Spawn at Second Spawn';
+    spawnSecondButton.type = 'button';
+    spawnSecondButton.style.top = '146px';
+    spawnSecondButton.addEventListener('click', spawnAtSecondSpawn);
+    document.body.appendChild(spawnSecondButton);
+  }
 
   // Comet button (dev only)
   const spawnComet = () => {
@@ -3954,7 +4555,7 @@ const init = async () => {
     document.body.appendChild(energyButton);
   }
 
-  // Comet Hole Level button - now supports variable hole counts
+  // Comet Hole Level helper - now supports variable hole counts
   const startCometHoleLevel = (holeCount: number = 5) => {
     console.log(`[START COMET HOLE LEVEL] ========== STARTING WITH ${holeCount} HOLES ==========`);
     grounds.startHoleSequence(holeCount);
@@ -4052,34 +4653,6 @@ const init = async () => {
     console.log(`[COMET HOLE LEVEL] Started hole sequence with ${holeCount} holes - platforms will spawn dynamically over holes`);
   };
 
-  // Create debug buttons (dev only)
-  if (SHOW_DEBUG_UI) {
-    const cometHoleLevelButton = document.createElement('button');
-    cometHoleLevelButton.className = 'transition-btn';
-    cometHoleLevelButton.textContent = 'Comet Hole Level (5)';
-    cometHoleLevelButton.type = 'button';
-    cometHoleLevelButton.style.top = '272px';
-    cometHoleLevelButton.addEventListener('click', () => startCometHoleLevel(5));
-    document.body.appendChild(cometHoleLevelButton);
-
-    // Test button with 10 holes
-    const cometHole10Button = document.createElement('button');
-    cometHole10Button.className = 'transition-btn';
-    cometHole10Button.textContent = 'Hole Level (10)';
-    cometHole10Button.type = 'button';
-    cometHole10Button.style.top = '314px';
-    cometHole10Button.addEventListener('click', () => startCometHoleLevel(10));
-    document.body.appendChild(cometHole10Button);
-
-    // Test button with 2 holes
-    const cometHole2Button = document.createElement('button');
-    cometHole2Button.className = 'transition-btn';
-    cometHole2Button.textContent = 'Hole Level (2)';
-    cometHole2Button.type = 'button';
-    cometHole2Button.style.top = '356px';
-    cometHole2Button.addEventListener('click', () => startCometHoleLevel(2));
-    document.body.appendChild(cometHole2Button);
-  }
 };
 
 init().catch((err) => {

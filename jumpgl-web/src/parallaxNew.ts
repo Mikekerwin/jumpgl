@@ -815,6 +815,13 @@ class SegmentScroller {
   }
 
   /**
+   * Get butterfly X position (null if butterfly hasn't spawned or has flown away)
+   */
+  getButterflyX(): number | null {
+    return this.fenceButterflySprite ? this.fenceButterflySprite.x : null;
+  }
+
+  /**
    * Get meteor overlay position and dimensions (null if overlay hasn't spawned or has been destroyed)
    * Returns { x, y, width, height } where x/y are the left-bottom position of the overlay
    */
@@ -1226,6 +1233,13 @@ export class ParallaxGrounds {
    */
   getFenceX(): number | null {
     return this.scroller.getFenceX();
+  }
+
+  /**
+   * Get butterfly X position (null if butterfly hasn't spawned or has flown away)
+   */
+  getButterflyX(): number | null {
+    return this.scroller.getButterflyX();
   }
 
   /**
