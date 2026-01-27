@@ -531,6 +531,8 @@ const init = async () => {
   let lastLeftPlatformId: number | null = null;
   // Meteor hitbox for landing on the meteor overlay
   let meteorHitbox: { x: number; width: number; surfaceY: number } | null = null;
+  const TREEHOUSE_PLATFORM_ID_BASE = 10000;
+  const TREEHOUSE_SURFACE_EXTRA = 70;
   const PLATFORM_LANDING_OFFSET = 30; // Extra pixels to sink into platform at rest
   const PLATFORM_EDGE_TOLERANCE = 8; // Horizontal forgiveness so we don't drop too early
   let platformAscendBonus = 0; // Additional vertical offset for successive spawns after landings
@@ -573,6 +575,7 @@ const init = async () => {
   let blueOuts = 0;
   let redHits = 0;
   let redOuts = 0;
+  let treehouseQueued = false;
   let firstOutMade = false;
   let scoreVisible = false;
   let revealEnergyBar: (() => void) | null = null;
@@ -618,8 +621,8 @@ const init = async () => {
   let nextSpawnIndex = 0; // Next spawn ahead
   let debugFastForwardToSecondSpawn = false;
   let debugSpawnDropPending = false;
-  const DEBUG_FAST_FORWARD_MIN = 12;
-  const DEBUG_FAST_FORWARD_MAX = 50;
+  const DEBUG_FAST_FORWARD_MIN = 40;
+  const DEBUG_FAST_FORWARD_MAX = 200;
   let spawnPointX = 0; // X position to respawn at (start of meteor transition) - FIXED, set once when meteor spawns
   let deathPlayerX = 0; // Player's world X position when they died
   let remainingRewindDistance = 0; // Fixed distance to scroll back to spawn (updated each frame by deltaX)
@@ -789,6 +792,14 @@ const init = async () => {
   let tutorialParallaxStopped = false;
   let tutorialParallaxSlowFactor = 1;
 
+  let treehouseHoldActive = false;
+  let treehouseHoldProgress = 0;
+  let treehousePanX = 0;
+  const TREEHOUSE_STOP_RANGE = 260;
+  const TREEHOUSE_STOP_DURATION = 1.6;
+  const TREEHOUSE_EDGE_PAN = 100;
+  const TREEHOUSE_PAN_LERP = 0.08;
+
   // Meeting title reveal (Pixi UI)
   const MEETING_REVEAL_DURATION_MS = 3200;
   const MEETING_RISE_PX = 12;
@@ -814,23 +825,22 @@ const init = async () => {
   let introParallaxSpeed = 0.2; // 20% of normal speed
 
   // Start with full-screen movement range (enemy not visible yet)
-  // Player can move from ~5% to ~95% of screen width
-  // With initialX at 32%, left=350 gives ~5%, right=750 gives ~95%
-  const PLAYER_RANGE_FULL_LEFT = 350;
-  const PLAYER_RANGE_FULL_RIGHT = 750;
-  const PLAYER_RANGE_LEFT_HALF_LEFT = 250;
-  const PLAYER_RANGE_LEFT_HALF_RIGHT = 150;
+  // Keep fixed edge margins so wider screens don't add extra dead space.
+  const PLAYER_EDGE_MARGIN_LEFT = 120;
+  const PLAYER_EDGE_MARGIN_RIGHT = 200;
+  const PLAYER_LEFT_HALF_RIGHT_PERCENT = 0.55;
   let playerRangeMode: 'full' | 'leftHalf' = 'full';
-  const playerRangeBounds = {
+  const getPlayerRangeBounds = (screenWidth: number) => ({
     full: {
-      left: playerInitialX - PLAYER_RANGE_FULL_LEFT,
-      right: playerInitialX + PLAYER_RANGE_FULL_RIGHT,
+      left: PLAYER_EDGE_MARGIN_LEFT,
+      right: screenWidth - PLAYER_EDGE_MARGIN_RIGHT,
     },
     leftHalf: {
-      left: playerInitialX - PLAYER_RANGE_LEFT_HALF_LEFT,
-      right: playerInitialX + PLAYER_RANGE_LEFT_HALF_RIGHT,
+      left: PLAYER_EDGE_MARGIN_LEFT,
+      right: Math.min(screenWidth - PLAYER_EDGE_MARGIN_RIGHT, screenWidth * PLAYER_LEFT_HALF_RIGHT_PERCENT),
     },
-  };
+  });
+  let playerRangeBounds = getPlayerRangeBounds(app.renderer.width);
 
   const updatePlayerHorizontalRangeForCamera = (cameraX: number, zoom: number) => {
     const bounds = playerRangeBounds[playerRangeMode];
@@ -842,8 +852,8 @@ const init = async () => {
     physics.setHorizontalRange(leftRange, rightRange);
   };
 
-  physics.setHorizontalRange(PLAYER_RANGE_FULL_LEFT, PLAYER_RANGE_FULL_RIGHT);
-  console.log('[PLAYER RANGE] Initial: Full screen (5% to 95%)');
+  updatePlayerHorizontalRangeForCamera(0, 1);
+  console.log('[PLAYER RANGE] Initial: Full screen (fixed edge margins)');
 
   // Create enemy at 90% of screen width
   let enemyBaseColor = 0xff0000;
@@ -962,7 +972,7 @@ const init = async () => {
   // Check if debug UI should be shown (development only)
   const SHOW_DEBUG_UI = import.meta.env.VITE_SHOW_DEBUG_UI === 'true';
   const SHOW_HITBOXES = import.meta.env.VITE_SHOW_HITBOXES === 'true';
-  const DEBUG_DRAW_HITBOXES = SHOW_DEBUG_UI && SHOW_HITBOXES;
+  let DEBUG_DRAW_HITBOXES = SHOW_DEBUG_UI && SHOW_HITBOXES;
   const DEBUG_PLATFORM_SNAP = SHOW_DEBUG_UI;
   let platformSnapLogTime = 0;
   const logPlatformSnap = (message: string, data?: Record<string, unknown>, throttleMs?: number) => {
@@ -1069,6 +1079,27 @@ const init = async () => {
     app.stage.addChild(minimapBorder);
   }
 
+  // Hitbox toggle button (debug mode only)
+  let hitboxToggleButton: HTMLButtonElement | null = null;
+  if (SHOW_DEBUG_UI) {
+    hitboxToggleButton = document.createElement('button');
+    hitboxToggleButton.id = 'hitboxToggleButton';
+    hitboxToggleButton.className = 'transition-btn';
+    hitboxToggleButton.textContent = DEBUG_DRAW_HITBOXES ? 'Hide Hitboxes' : 'Show Hitboxes';
+    hitboxToggleButton.style.top = '104px';
+
+    hitboxToggleButton.addEventListener('click', () => {
+      DEBUG_DRAW_HITBOXES = !DEBUG_DRAW_HITBOXES;
+      hitboxToggleButton!.textContent = DEBUG_DRAW_HITBOXES ? 'Hide Hitboxes' : 'Show Hitboxes';
+      debugPlatformHitboxContainer.visible = DEBUG_DRAW_HITBOXES;
+      if (hitboxOverlay) {
+        hitboxOverlay.visible = DEBUG_DRAW_HITBOXES;
+      }
+    });
+
+    document.body.appendChild(hitboxToggleButton);
+  }
+
   const getPointerCanvasPosition = (event: PointerEvent) => {
     const rect = app.canvas.getBoundingClientRect();
     const scaleX = app.renderer.width / rect.width;
@@ -1081,7 +1112,7 @@ const init = async () => {
 
   const screenToWorldX = (screenX: number) => {
     const safeZoom = Math.max(0.0001, cameraZoom);
-    const adjustedX = screenX - scene.position.x - cameraPanX;
+    const adjustedX = screenX - scene.position.x - cameraPanX - treehousePanX;
     return adjustedX / safeZoom;
   };
 
@@ -1310,6 +1341,206 @@ const init = async () => {
     meteorHitbox.x = hitboxX;
     meteorHitbox.width = hitboxWidth;
     meteorHitbox.surfaceY = hitboxSurfaceY;
+  };
+
+  const getTreehousePlatforms = () => {
+    const hitboxes = grounds.getTreehouseHitboxes();
+    return hitboxes.map((hitbox, index) => {
+      const width = hitbox.width;
+      const height = hitbox.height;
+      const centerX = hitbox.left + width / 2;
+      const centerY = hitbox.top + height / 2;
+      return {
+        id: TREEHOUSE_PLATFORM_ID_BASE + index,
+        left: hitbox.left,
+        right: hitbox.right,
+        top: hitbox.top,
+        bottom: hitbox.bottom,
+        width,
+        height,
+        centerX,
+        centerY,
+        halfWidth: width / 2,
+        halfHeight: height / 2,
+        rotation: hitbox.rotation ?? 0,
+        key: hitbox.key,
+      };
+    });
+  };
+
+  const getTreehouseLocalPoint = (
+    x: number,
+    y: number,
+    platform: { centerX: number; centerY: number; rotation: number },
+    cos: number,
+    sin: number
+  ) => {
+    const dx = x - platform.centerX;
+    const dy = y - platform.centerY;
+    return {
+      x: dx * cos + dy * sin,
+      y: -dx * sin + dy * cos,
+    };
+  };
+
+  const getTreehouseLocalBounds = (
+    bounds: PlayerBounds,
+    platform: { centerX: number; centerY: number; rotation: number },
+    cos: number,
+    sin: number
+  ) => {
+    const corners = [
+      { x: bounds.left, y: bounds.top },
+      { x: bounds.right, y: bounds.top },
+      { x: bounds.right, y: bounds.bottom },
+      { x: bounds.left, y: bounds.bottom },
+    ];
+    let minX = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    corners.forEach((corner) => {
+      const local = getTreehouseLocalPoint(corner.x, corner.y, platform, cos, sin);
+      minX = Math.min(minX, local.x);
+      maxX = Math.max(maxX, local.x);
+      minY = Math.min(minY, local.y);
+      maxY = Math.max(maxY, local.y);
+    });
+    return { left: minX, right: maxX, top: minY, bottom: maxY, height: maxY - minY };
+  };
+
+  const getTreehouseSurfaceYForPlayer = (
+    platform: { centerX: number; centerY: number; halfWidth: number; halfHeight: number; rotation: number },
+    playerCenterX: number,
+    playerCenterY: number
+  ) => {
+    const cos = Math.cos(platform.rotation);
+    const sin = Math.sin(platform.rotation);
+    const localCenter = getTreehouseLocalPoint(playerCenterX, playerCenterY, platform, cos, sin);
+    const clampedLocalX = Math.min(platform.halfWidth, Math.max(-platform.halfWidth, localCenter.x));
+    const localY = -platform.halfHeight;
+    const worldY = platform.centerY + clampedLocalX * sin + localY * cos;
+    return worldY - PLATFORM_LANDING_OFFSET - TREEHOUSE_SURFACE_EXTRA;
+  };
+
+  const isTreehousePlatformHorizontalOverlap = (
+    platform: { halfWidth: number; rotation: number; centerX: number; centerY: number },
+    bounds: PlayerBounds
+  ) => {
+    if (!platform.rotation) {
+      return (
+        bounds.right >= platform.centerX - platform.halfWidth - PLATFORM_EDGE_TOLERANCE &&
+        bounds.left <= platform.centerX + platform.halfWidth + PLATFORM_EDGE_TOLERANCE
+      );
+    }
+    const cos = Math.cos(platform.rotation);
+    const sin = Math.sin(platform.rotation);
+    const localBounds = getTreehouseLocalBounds(bounds, platform, cos, sin);
+    return (
+      localBounds.right >= -platform.halfWidth - PLATFORM_EDGE_TOLERANCE &&
+      localBounds.left <= platform.halfWidth + PLATFORM_EDGE_TOLERANCE
+    );
+  };
+
+  const getTreehousePlatformsPassedThrough = (
+    platformsToCheck: Array<{ id: number; left: number; right: number; centerX: number; centerY: number; halfWidth: number; halfHeight: number; rotation: number }>,
+    currentBounds: PlayerBounds,
+    previousBounds: PlayerBounds,
+    playerVelocity: number
+  ): number[] => {
+    const platformsPassed: number[] = [];
+
+    if (playerVelocity >= 0) return platformsPassed;
+
+    const tolerance = Math.max(2, (currentBounds.bottom - currentBounds.top) * 0.05);
+    const detectionRange = 800;
+    const playerCenterX = (currentBounds.left + currentBounds.right) / 2;
+
+    for (const platform of platformsToCheck) {
+      const platformLeft = platform.left;
+      const platformRight = platform.right;
+      const platformCenterX = (platformLeft + platformRight) / 2;
+      const horizontalDistance = Math.abs(platformCenterX - playerCenterX);
+      const withinRange = horizontalDistance < detectionRange;
+      const horizontalOverlap = !(
+        currentBounds.right < platformLeft ||
+        currentBounds.left > platformRight
+      );
+      if (!withinRange && !horizontalOverlap) continue;
+
+      const cos = Math.cos(platform.rotation);
+      const sin = Math.sin(platform.rotation);
+      const currentLocal = getTreehouseLocalBounds(currentBounds, platform, cos, sin);
+      const previousLocal = getTreehouseLocalBounds(previousBounds, platform, cos, sin);
+      const playerHeightLocal = currentLocal.height;
+      const platformSurfaceLocalY = -platform.halfHeight;
+
+      const isBelowAndAscending = currentLocal.top > platformSurfaceLocalY;
+      const wasBelow = previousLocal.top > platformSurfaceLocalY;
+      const isNowAbove = currentLocal.bottom <= platformSurfaceLocalY + playerHeightLocal;
+      const crossedThisFrame = wasBelow && isNowAbove;
+      const verticallyOverlapping =
+        currentLocal.top <= platformSurfaceLocalY + tolerance &&
+        currentLocal.bottom >= platformSurfaceLocalY - tolerance;
+
+      if (isBelowAndAscending || crossedThisFrame || verticallyOverlapping) {
+        platformsPassed.push(platform.id);
+      }
+    }
+
+    return platformsPassed;
+  };
+
+  const getSupportingTreehousePlatform = (
+    platformsToCheck: Array<{ id: number; left: number; right: number; centerX: number; centerY: number; halfWidth: number; halfHeight: number; rotation: number }>,
+    currentBounds: PlayerBounds,
+    previousBounds: PlayerBounds,
+    playerVelocity: number,
+    platformsJumpedThrough: Set<number>
+  ): { id: number; left: number; right: number; surfaceY: number } | null => {
+    const tolerance = Math.max(2, (currentBounds.bottom - currentBounds.top) * 0.05);
+
+    for (const platform of platformsToCheck) {
+      const cos = Math.cos(platform.rotation);
+      const sin = Math.sin(platform.rotation);
+      const currentLocal = getTreehouseLocalBounds(currentBounds, platform, cos, sin);
+      const previousLocal = getTreehouseLocalBounds(previousBounds, platform, cos, sin);
+      const playerHeightLocal = currentLocal.height;
+      const platformSurfaceLocalY = -platform.halfHeight;
+      const platformBottomCollision = platformSurfaceLocalY + playerHeightLocal;
+      const horizontalOverlap = !(
+        currentLocal.right < -platform.halfWidth ||
+        currentLocal.left > platform.halfWidth
+      );
+      if (!horizontalOverlap) continue;
+
+      const descending = playerVelocity <= 0 || currentBounds.bottom > previousBounds.bottom;
+      const approachingFromAbove = previousLocal.top + tolerance <= platformSurfaceLocalY;
+      const wasJumpedThrough = platformsJumpedThrough.has(platform.id);
+      const effectiveApproaching = approachingFromAbove || wasJumpedThrough;
+      const crossedThisFrame =
+        descending &&
+        effectiveApproaching &&
+        previousLocal.bottom <= platformBottomCollision - tolerance &&
+        currentLocal.bottom >= platformBottomCollision - tolerance;
+      const resting =
+        Math.abs(currentLocal.bottom - platformBottomCollision) <= tolerance &&
+        Math.abs(playerVelocity) < 0.8 &&
+        currentLocal.bottom <= platformBottomCollision + tolerance;
+
+      if (crossedThisFrame || resting) {
+        const playerCenterX = (currentBounds.left + currentBounds.right) / 2;
+        const playerCenterY = (currentBounds.top + currentBounds.bottom) / 2;
+        return {
+          id: platform.id,
+          surfaceY: getTreehouseSurfaceYForPlayer(platform, playerCenterX, playerCenterY),
+          left: platform.left,
+          right: platform.right,
+        };
+      }
+    }
+
+    return null;
   };
 
   const ticker = new Ticker();
@@ -1894,6 +2125,65 @@ const init = async () => {
       }
     }
 
+    const treehouseSegment = (() => {
+      const segments = grounds.getSegments();
+      return segments.find((seg) => seg.type === 'treed_prairie_treehouse') || null;
+    })();
+
+    if (treehouseSegment) {
+      const safeZoom = Math.max(0.0001, cameraZoom);
+      const screenCenterWorldX = (app.renderer.width * 0.5 - (cameraPanX + treehousePanX)) / safeZoom;
+      const segmentCenterX = treehouseSegment.x + treehouseSegment.width * 0.5;
+      const distanceToCenter = Math.abs(segmentCenterX - screenCenterWorldX);
+      if (!treehouseHoldActive && distanceToCenter <= TREEHOUSE_STOP_RANGE) {
+        treehouseHoldActive = true;
+      }
+    } else {
+      treehouseHoldActive = false;
+    }
+
+    if (treehouseHoldActive) {
+      treehouseHoldProgress = Math.min(1, treehouseHoldProgress + deltaSeconds / TREEHOUSE_STOP_DURATION);
+      const holdEase = 1 - Math.pow(1 - treehouseHoldProgress, 2);
+      speedMultiplier *= 1 - holdEase;
+      if (treehouseSegment) {
+        const safeZoom = Math.max(0.0001, cameraZoom);
+        const playerX = physics.getState().x;
+        const segmentLeft = treehouseSegment.x;
+        const segmentRight = treehouseSegment.x + treehouseSegment.width;
+        const minCameraX = app.renderer.width - (segmentRight * safeZoom);
+        const maxCameraX = -(segmentLeft * safeZoom);
+        const playerScreenX = playerX * safeZoom + cameraPanX + treehousePanX;
+        const screenPercent = Math.min(1, Math.max(0, playerScreenX / app.renderer.width));
+        const leftThreshold = 0.3;
+        const rightThreshold = 0.7;
+        let edgePan = 0;
+        if (screenPercent < leftThreshold) {
+          const t = (leftThreshold - screenPercent) / leftThreshold;
+          edgePan = TREEHOUSE_EDGE_PAN * t;
+        } else if (screenPercent > rightThreshold) {
+          const t = (screenPercent - rightThreshold) / (1 - rightThreshold);
+          edgePan = -TREEHOUSE_EDGE_PAN * t;
+        }
+        const desiredCameraX = app.renderer.width * 0.5 - playerX * safeZoom + edgePan;
+        const segmentCenterX = segmentLeft + treehouseSegment.width * 0.5;
+        const centerCameraX = app.renderer.width * 0.5 - segmentCenterX * safeZoom;
+        const clampedCameraX =
+          minCameraX > maxCameraX
+            ? centerCameraX + edgePan
+            : Math.min(maxCameraX, Math.max(minCameraX, desiredCameraX));
+        const targetPan = clampedCameraX - cameraPanX;
+        treehousePanX += (targetPan - treehousePanX) * TREEHOUSE_PAN_LERP;
+      }
+    } else if (treehouseHoldProgress > 0) {
+      treehouseHoldProgress = Math.max(0, treehouseHoldProgress - deltaSeconds / TREEHOUSE_STOP_DURATION);
+      const holdEase = 1 - Math.pow(1 - treehouseHoldProgress, 2);
+      speedMultiplier *= 1 - holdEase;
+      treehousePanX += (0 - treehousePanX) * TREEHOUSE_PAN_LERP;
+    } else if (treehousePanX !== 0) {
+      treehousePanX += (0 - treehousePanX) * TREEHOUSE_PAN_LERP;
+    }
+
     if (debugFastForwardToSecondSpawn) {
       const segments = grounds.getSegments();
       const holeBackSegment = segments.find((seg: { type: string }) => seg.type === 'hole_transition_back');
@@ -1902,7 +2192,7 @@ const init = async () => {
         const playerX = physics.getState().x;
         const remaining = secondSpawnX - playerX;
         if (remaining > 0) {
-          const boost = Math.min(DEBUG_FAST_FORWARD_MAX, Math.max(DEBUG_FAST_FORWARD_MIN, remaining / 120));
+          const boost = Math.min(DEBUG_FAST_FORWARD_MAX, Math.max(DEBUG_FAST_FORWARD_MIN, remaining / 40));
           speedMultiplier = Math.max(speedMultiplier, boost);
         } else {
           debugFastForwardToSecondSpawn = false;
@@ -2390,6 +2680,27 @@ const init = async () => {
         const debugRect = new Graphics();
         debugRect.rect(hitbox.left, hitbox.top, hitbox.right - hitbox.left, hitbox.bottom - hitbox.top);
         debugRect.fill({ color: 0xff4444, alpha: 0.35 }); // Red at 35% opacity
+        debugPlatformHitboxContainer.addChild(debugRect);
+      });
+
+      // Treehouse hitboxes (semi-transparent)
+      const treehouseHitboxes = grounds.getTreehouseHitboxes();
+      treehouseHitboxes.forEach((box) => {
+        const colorMap: Record<string, number> = {
+          shelf: 0xff0000,
+          upper_left: 0x00ff00,
+          lower_left: 0xffcc00,
+          upper_mid: 0x00ffff,
+          upper_right: 0x0000ff,
+        };
+        const debugRect = new Graphics();
+        debugRect.rect(0, 0, box.width, box.height);
+        debugRect.fill({ color: colorMap[box.key] ?? 0xffffff, alpha: 0.35 });
+        debugRect.pivot.set(box.width / 2, box.height / 2);
+        debugRect.position.set(box.left + box.width / 2, box.top + box.height / 2);
+        if (box.rotation) {
+          debugRect.rotation = box.rotation;
+        }
         debugPlatformHitboxContainer.addChild(debugRect);
       });
     }
@@ -2922,6 +3233,28 @@ const init = async () => {
       bottom: prevState.y + playerRadius,
     };
 
+    const treehousePlatforms = getTreehousePlatforms();
+    const treehousePlatformMap = new Map<number, {
+      left: number;
+      right: number;
+      centerX: number;
+      centerY: number;
+      halfWidth: number;
+      halfHeight: number;
+      rotation: number;
+    }>();
+    treehousePlatforms.forEach((platform) => {
+      treehousePlatformMap.set(platform.id, {
+        left: platform.left,
+        right: platform.right,
+        centerX: platform.centerX,
+        centerY: platform.centerY,
+        halfWidth: platform.halfWidth,
+        halfHeight: platform.halfHeight,
+        rotation: platform.rotation,
+      });
+    });
+
     // Detect platforms being passed through while ascending (jumping up)
     const platformsPassedThrough = platforms.getPlatformsPassedThrough(
       playerBounds,
@@ -2931,6 +3264,15 @@ const init = async () => {
 
     // Mark each platform that was jumped through
     platformsPassedThrough.forEach(platformId => {
+      physics.markPlatformJumpedThrough(platformId);
+    });
+    const treehousePassedThrough = getTreehousePlatformsPassedThrough(
+      treehousePlatforms,
+      playerBounds,
+      prevBounds,
+      verticalVelocity
+    );
+    treehousePassedThrough.forEach((platformId) => {
       physics.markPlatformJumpedThrough(platformId);
     });
 
@@ -2996,6 +3338,16 @@ const init = async () => {
           };
         }
       }
+    }
+
+    if (!supportingPlatform && treehousePlatforms.length > 0) {
+      supportingPlatform = getSupportingTreehousePlatform(
+        treehousePlatforms,
+        playerBounds,
+        prevBounds,
+        verticalVelocity,
+        physics.getJumpedThroughPlatforms()
+      );
     }
 
     // Hole collision: if we're not on a platform and overlap a hole, fall and respawn
@@ -3068,9 +3420,13 @@ const init = async () => {
         const inJumpGracePeriod = timeSinceJump < JUMP_GRACE_PERIOD;
 
         if (!isCharging) {
-          const walkedOff =
-            playerBounds.right < supportingPlatform.left - PLATFORM_EDGE_TOLERANCE ||
-            playerBounds.left > supportingPlatform.right + PLATFORM_EDGE_TOLERANCE;
+          const treehousePlatform = treehousePlatformMap.get(supportingPlatform.id);
+          const walkedOff = treehousePlatform
+            ? !isTreehousePlatformHorizontalOverlap(treehousePlatform, playerBounds)
+            : (
+              playerBounds.right < supportingPlatform.left - PLATFORM_EDGE_TOLERANCE ||
+              playerBounds.left > supportingPlatform.right + PLATFORM_EDGE_TOLERANCE
+            );
 
           // Fall through if walked off edge OR if pressing Down key
           if ((walkedOff || isPressingDown) && !inJumpGracePeriod) {
@@ -3096,10 +3452,22 @@ const init = async () => {
         platformAscendBonus = Math.min(platformAscendBonus + PLATFORM_ASCEND_STEP, PLATFORM_ASCEND_MAX);
       } else if (activePlatformId !== null) {
         // Keep platform override while bouncing vertically so the bounce counter isn't reset
+        const treehousePlatform = treehousePlatformMap.get(activePlatformId);
         const livePlatform =
           activePlatformId === -1 && meteorHitbox
             ? { left: meteorHitbox.x, right: meteorHitbox.x + meteorHitbox.width, surfaceY: meteorHitbox.surfaceY }
-            : platforms.getPlatformBounds(activePlatformId);
+            : (treehousePlatform
+              ? {
+                left: treehousePlatform.left,
+                right: treehousePlatform.right,
+                surfaceY: getTreehouseSurfaceYForPlayer(treehousePlatform, state.x, state.y),
+                rotation: treehousePlatform.rotation,
+                centerX: treehousePlatform.centerX,
+                centerY: treehousePlatform.centerY,
+                halfWidth: treehousePlatform.halfWidth,
+                halfHeight: treehousePlatform.halfHeight,
+              }
+              : platforms.getPlatformBounds(activePlatformId));
 
         // If platform has been culled (scrolled away), release the player
         if (!livePlatform) {
@@ -3110,9 +3478,12 @@ const init = async () => {
           }
           activePlatformId = null;
         } else {
-          const stillOverPlatform =
-            playerBounds.right >= livePlatform.left - PLATFORM_EDGE_TOLERANCE &&
-            playerBounds.left <= livePlatform.right + PLATFORM_EDGE_TOLERANCE;
+          const stillOverPlatform = livePlatform && 'rotation' in livePlatform && livePlatform.rotation
+            ? isTreehousePlatformHorizontalOverlap(livePlatform, playerBounds)
+            : (
+              playerBounds.right >= livePlatform.left - PLATFORM_EDGE_TOLERANCE &&
+              playerBounds.left <= livePlatform.right + PLATFORM_EDGE_TOLERANCE
+            );
 
           // Check if we're in the grace period after a jump (ignore brief downward movement)
           const timeSinceJump = performance.now() - lastJumpTime;
@@ -3220,6 +3591,7 @@ const init = async () => {
           hitboxLogCache.set(box.id, sig);
         }
       });
+
 
       // Hole hitboxes
       const holeHitboxes = holes.getDebugHitboxes();
@@ -3474,7 +3846,7 @@ const init = async () => {
     // Background moves less (30% of camera movement) for depth effect
     // Foreground elements move at 100% camera speed
     const totalCameraY = cameraY + cameraPanY;
-    const totalCameraX = cameraPanX;
+    const totalCameraX = cameraPanX + treehousePanX;
     updatePlayerHorizontalRangeForCamera(totalCameraX, cameraZoom);
     // Ground container needs special handling to prevent exposing bottom edge
     // When zoomed out and camera moves down (or when falling into holes), clamp ground
@@ -3618,6 +3990,9 @@ const init = async () => {
         enemyMovement.startTransition(velocity, enemyState.y);
         enemyMode = 'hover';
         introComplete = true;
+        if (revealEnergyBar) {
+          revealEnergyBar();
+        }
       }
     } else if (enemyMode === 'hover') {
       const enemyState = enemyMovement.update(deltaSeconds);
@@ -3663,6 +4038,9 @@ const init = async () => {
     }
     if (laserResult.laserFired) {
       enemyHasFiredLasers = true;
+      if (revealEnergyBar) {
+        revealEnergyBar();
+      }
     }
     if (laserResult.hitPosition) {
       // Enemy lasers = red sparks - reduce energy by 1.5% per hit
@@ -4110,6 +4488,9 @@ const init = async () => {
     // Update comet dimensions
     cometManager.updateDimensions(app.renderer.width, app.renderer.height);
 
+    playerRangeBounds = getPlayerRangeBounds(app.renderer.width);
+    updatePlayerHorizontalRangeForCamera(cameraPanX + treehousePanX, cameraZoom);
+
     if (meetingTitleContainer && meetingTitleText) {
       meetingTitleBaseY = 64;
       meetingTitleContainer.position.set(app.renderer.width / 2, meetingTitleBaseY + MEETING_RISE_PX);
@@ -4283,6 +4664,11 @@ const init = async () => {
     blueSide.hitsRow.textContent = `Hits: ${Math.min(HITS_PER_OUT, Math.max(0, blueHits))}/${HITS_PER_OUT}`;
     redSide.hitsRow.textContent = `Hits: ${Math.min(HITS_PER_OUT, Math.max(0, redHits))}/${HITS_PER_OUT}`;
 
+    if (!treehouseQueued && redOuts >= 2) {
+      treehouseQueued = true;
+      grounds.queueTreehouse();
+    }
+
     blueSide.circles.forEach((c, idx) => {
       const filled = idx < blueOuts;
       c.style.backgroundColor = filled ? '#4fc3f7' : 'transparent';
@@ -4299,6 +4685,9 @@ const init = async () => {
     if (!scoreVisible) {
       scoreVisible = true;
       scoreContainer.style.opacity = '1';
+    }
+    if (revealEnergyBar) {
+      revealEnergyBar();
     }
   };
   updateScoreUI();
@@ -4466,6 +4855,8 @@ const init = async () => {
     tutorialContainer.style.opacity = '0';
     doubleJumpContainer.style.display = 'none';
     dashJumpContainer.style.display = 'none';
+    fencePassedTriggered = true;
+    grounds.setAllowNewSegments(true);
 
     playerIntroActive = false;
     freezePlayer = false;
@@ -4547,6 +4938,21 @@ const init = async () => {
     energyButton.style.top = '230px';
     energyButton.addEventListener('click', fillEnergy);
     document.body.appendChild(energyButton);
+  }
+
+  const grantRedTwoOuts = () => {
+    redOuts = Math.max(redOuts, 2);
+    updateScoreUI();
+  };
+
+  if (SHOW_DEBUG_UI) {
+    const redOutsButton = document.createElement('button');
+    redOutsButton.className = 'transition-btn';
+    redOutsButton.textContent = 'Red Outs +2';
+    redOutsButton.type = 'button';
+    redOutsButton.style.top = '272px';
+    redOutsButton.addEventListener('click', grantRedTwoOuts);
+    document.body.appendChild(redOutsButton);
   }
 
   // Comet Hole Level helper - now supports variable hole counts

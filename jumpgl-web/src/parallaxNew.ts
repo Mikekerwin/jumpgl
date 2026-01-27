@@ -14,11 +14,20 @@ const USE_ANIMATED_SKY = import.meta.env.VITE_USE_ANIMATED_SKY === 'true';
 /**
  * Segment types: biome segments that repeat, or transition segments between biomes
  */
-type SegmentType = BiomeType | 'transition' | 'meteor_transition' | 'cloud_hole' | 'hole_transition_back' | 'cottage_start';
+type SegmentType = BiomeType | 'transition' | 'meteor_transition' | 'cloud_hole' | 'hole_transition_back' | 'cottage_start' | 'treed_prairie_treehouse';
 
 interface SegmentTextures {
   [key: string]: Texture; // Dynamic based on loaded biomes
 }
+
+type TreehouseHitbox = {
+  key: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation?: number;
+};
 
 /**
  * Improved SegmentScroller with biome system integration
@@ -32,7 +41,7 @@ class SegmentScroller {
   private viewportWidth: number;
   private segmentHeight: number;
   private offsetY: number;
-  private segments: Array<{ sprite: Sprite; width: number; type: SegmentType }> = [];
+  private segments: Array<{ sprite: Sprite; width: number; type: SegmentType; treehouseHitboxes?: TreehouseHitbox[] }> = [];
   private pendingSegments: SegmentType[] = [];
   private maxSegmentWidth = 0;
   private allowNewSegments = true; // Control whether to generate new segments
@@ -60,6 +69,8 @@ class SegmentScroller {
   private fenceButterflyFrameDurationCurrent = 0.045;
 
   private middlegroundContainer: Container; // For elements between enemy and player
+  private treehousePending = false;
+  private treehouseSpawned = false;
 
   constructor(
     parent: Container,
@@ -95,6 +106,8 @@ class SegmentScroller {
   private buildInitialSegments(): void {
     this.segments.forEach(({ sprite }) => sprite.destroy());
     this.segments = [];
+    this.treehousePending = false;
+    this.treehouseSpawned = false;
 
     // Destroy old fence sprite if it exists
     if (this.fenceSprite) {
@@ -218,38 +231,87 @@ class SegmentScroller {
     const textureWidth = sprite.texture.width || 1;
     const textureHeight = sprite.texture.height || 1;
 
-    let scale: number;
-    let width: number;
+    // Keep segment widths consistent based on cloud ground reference width.
+    const cloudGroundTexture = this.textures['cloud'];
+    const cloudGroundWidth = cloudGroundTexture.width || 1;
+    const cloudGroundHeight = cloudGroundTexture.height || 1;
+    const targetWidth = cloudGroundWidth * (this.segmentHeight / cloudGroundHeight);
 
-    // Special handling for tall textures (cottage, hole_transition_back with meteor)
-    // These need to be bottom-aligned and scaled by width to match other ground segments
-    if (type === 'cottage_start' || type === 'hole_transition_back') {
-      // Get reference width from cloudGround texture
-      const cloudGroundTexture = this.textures['cloud'];
-      const cloudGroundWidth = cloudGroundTexture.width || 1;
-      const cloudGroundHeight = cloudGroundTexture.height || 1;
-      const cloudGroundScale = this.segmentHeight / cloudGroundHeight;
-      const targetWidth = cloudGroundWidth * cloudGroundScale;
+    const scale = targetWidth / textureWidth;
+    const width = targetWidth;
+    const scaledHeight = textureHeight * scale;
 
-      // Scale to match target width (allows tall textures to extend upward)
-      scale = targetWidth / textureWidth;
-      width = targetWidth;
-
-      // Position bottom-aligned with ground (offsetY is top of ground)
-      sprite.x = x;
-      sprite.y = this.offsetY + this.segmentHeight - (textureHeight * scale);
-    } else {
-      // Normal scaling based on height for all other segments
-      scale = this.segmentHeight / textureHeight;
-      width = textureWidth * scale;
-      sprite.x = x;
-      sprite.y = this.offsetY;
-    }
+    sprite.x = x;
+    sprite.y = this.offsetY + this.segmentHeight - scaledHeight;
 
     sprite.scale.set(scale);
     this.container.addChild(sprite);
     this.maxSegmentWidth = Math.max(this.maxSegmentWidth, width);
-    const segment = { sprite, width, type };
+
+    // Add treehouse hitboxes as invisible platform surfaces (stored in local coordinates)
+    let treehouseHitboxes: TreehouseHitbox[] | undefined;
+    if (type === 'treed_prairie_treehouse') {
+      const hitboxWidth = 200;
+      const hitboxHeight = 20;
+      const pixelToLocal = 1 / Math.max(0.0001, scale);
+      const clampX = (rawX: number, w: number) => Math.min(textureWidth - w, Math.max(0, rawX));
+
+      const shelfOffset = (400 - 150) * pixelToLocal;
+      const branchDownshift = 300 * pixelToLocal;
+
+      const shelfWidth = hitboxWidth - (15 * pixelToLocal);
+      const shelfX = clampX(
+        (textureWidth - shelfWidth) / 2 - (75 * pixelToLocal),
+        shelfWidth
+      );
+      const shelfY = Math.max(
+        0,
+        textureHeight - hitboxHeight - shelfOffset - (25 * pixelToLocal)
+      );
+
+      const leftWidth = hitboxWidth + 200 + (30 * pixelToLocal);
+      const leftX = clampX(textureWidth * 0.32 - (20 * pixelToLocal), leftWidth);
+      const leftY = Math.min(textureHeight - hitboxHeight, branchDownshift + (20 * pixelToLocal));
+
+      const lowerLeftWidth = Math.max(hitboxWidth, leftWidth - (120 * pixelToLocal));
+      const lowerLeftX = clampX(leftX - (190 * pixelToLocal), lowerLeftWidth);
+      const lowerLeftY = Math.min(
+        textureHeight - hitboxHeight,
+        leftY + (200 * pixelToLocal) + (10 * pixelToLocal)
+      );
+
+      const rightWidth = hitboxWidth + 50;
+      const rightX = clampX(
+        textureWidth * 0.6 + (50 * pixelToLocal),
+        rightWidth
+      );
+      const rightY = Math.min(
+        textureHeight - hitboxHeight,
+        branchDownshift - (40 * pixelToLocal)
+      );
+
+      const middleWidth = hitboxWidth + 110;
+      const middleX = clampX(
+        (leftX + rightX) * 0.5 - middleWidth / 2 + (125 * pixelToLocal),
+        middleWidth
+      );
+      const middleY = Math.min(
+        textureHeight - hitboxHeight,
+        leftY + (12 * pixelToLocal) - (35 * pixelToLocal)
+      );
+
+      treehouseHitboxes = [
+        { key: 'shelf', x: shelfX, y: shelfY, width: shelfWidth, height: hitboxHeight },
+        { key: 'upper_left', x: leftX, y: leftY, width: leftWidth - (10 * pixelToLocal), height: hitboxHeight },
+        { key: 'lower_left', x: lowerLeftX, y: lowerLeftY, width: lowerLeftWidth, height: hitboxHeight },
+        { key: 'upper_mid', x: middleX, y: middleY, width: middleWidth, height: hitboxHeight, rotation: -Math.PI / 6 * 0.7695 },
+        { key: 'upper_right', x: rightX, y: rightY, width: rightWidth, height: hitboxHeight },
+      ];
+
+      console.log(`[TREEHOUSE] Created hitboxes at sprite X: ${x}, scaled width: ${width}, texture: ${textureWidth}×${textureHeight}`);
+    }
+
+    const segment = { sprite, width, type, treehouseHitboxes };
     this.segments.push(segment);
     return segment;
   }
@@ -274,7 +336,19 @@ class SegmentScroller {
 
     // Third priority: use current biome from manager
     const currentBiome = this.biomeManager.getCurrentBiome();
+
+    // Special case: Spawn treehouse when queued (after 2 outs)
+    if (currentBiome === 'treed_prairie' && this.treehousePending && !this.treehouseSpawned) {
+      this.treehousePending = false;
+      this.treehouseSpawned = true;
+      return 'treed_prairie_treehouse';
+    }
+
     return currentBiome;
+  }
+
+  queueTreehouse(): void {
+    this.treehousePending = true;
   }
 
   /**
@@ -615,7 +689,7 @@ class SegmentScroller {
 
   /**
    * Start the comet hole level sequence
-   * Sequence: meteor_transition → cloud_hole (count times) → hole_transition_back → cloud
+   * Sequence: meteor_transition → cloud_hole (count times) → hole_transition_back → treed_prairie
    */
   startHoleSequence(holeCount: number = 5): void {
     // Remove all off-screen segments
@@ -675,10 +749,16 @@ class SegmentScroller {
       console.log('[METEOR OVERLAY] Created at X:', this.meteorOverlaySprite.x);
     }
 
-    // 4. cloud (return to normal)
-    this.createSegment('cloud', cursor);
+    // 4. treed_prairie (lightly forested ground with trees) - create first segment
+    this.createSegment('treed_prairie', cursor);
+    cursor += this.segments[this.segments.length - 1].width;
 
-    console.log(`[HOLE SEQUENCE] Started: meteor_transition → cloud_hole (${holeCount}x) → hole_transition_back → cloud`);
+    // Switch biome manager to treed_prairie so subsequent segments repeat treed_prairie
+    // We manually update the biome sequence and index to ensure the biome manager
+    // returns 'treed_prairie' when getNextSegmentType() is called
+    this.biomeManager.setSequence(['treed_prairie']);
+
+    console.log(`[HOLE SEQUENCE] Started: meteor_transition → cloud_hole (${holeCount}x) → hole_transition_back → treed_prairie (now repeating)`);
   }
 
   /**
@@ -690,6 +770,35 @@ class SegmentScroller {
       width: seg.width,
       type: seg.type
     }));
+  }
+
+  getTreehouseHitboxes(): Array<{ key: string; left: number; right: number; top: number; bottom: number; width: number; height: number; rotation?: number }> {
+    const hitboxes: Array<{ key: string; left: number; right: number; top: number; bottom: number; width: number; height: number; rotation?: number }> = [];
+
+    for (const segment of this.segments) {
+      if (segment.type !== 'treed_prairie_treehouse' || !segment.treehouseHitboxes) continue;
+
+      const scaleX = segment.sprite.scale.x || 1;
+      const scaleY = segment.sprite.scale.y || 1;
+      for (const box of segment.treehouseHitboxes) {
+        const left = segment.sprite.x + box.x * scaleX;
+        const top = segment.sprite.y + box.y * scaleY;
+        const width = box.width * scaleX;
+        const height = box.height * scaleY;
+        hitboxes.push({
+          key: box.key,
+          left,
+          right: left + width,
+          top,
+          bottom: top + height,
+          width,
+          height,
+          rotation: box.rotation,
+        });
+      }
+    }
+
+    return hitboxes;
   }
 
   /**
@@ -861,6 +970,8 @@ export type ParallaxTextures = {
   cloudCottageStartOverlay: Texture;
   transitionGround: Texture;
   forestGround: Texture;
+  cloudTreesGround: Texture;
+  cloudTreesGroundGameTree: Texture;
   meteorGroundTransition: Texture;
   meteorGroundTransitionFire: Texture;
   cloudGroundHole: Texture;
@@ -884,12 +995,14 @@ export const loadParallaxTextures = async (): Promise<ParallaxTextures> => {
       cloudCottageStartOverlay: 'cloud_light_cottage_start_overlay.webp',
       transitionGround: 'cloud_light_ground_forest_transition.webp',
       forestGround: 'forest_light_ground.webp',
+      cloudTreesGround: 'cloud_trees_ground.webp',
+      cloudTreesGroundGameTree: 'cloud_trees_ground_GameTree.webp',
       meteorGroundTransition: 'meteor_ground_transition.webp',
       meteorGroundTransitionFire: 'meteor_ground_transition_fire.webp',
       cloudGroundHole: 'cloud_light_ground_hole.webp',
       cloudGroundHoleFire: 'cloud_light_ground_hole_fire.webp',
       cloudGroundHoleTransitionBack: 'cloud_light_ground_hole_transition_back.webp',
-      cloudGroundHoleTransitionBackFire: 'cloud_light_ground_hole_transition_back_fire.webp',
+      cloudGroundHoleTransitionBackFire: 'cloud_light_ground_hole_transition_back_fire_transition.webp',
       cloudFence: 'cloud_light_fence.webp',
       meteorOverlay: 'meteor.webp',
     });
@@ -1150,6 +1263,8 @@ export class ParallaxGrounds {
     // Map biome ground textures to segment types
     const segmentTextures: SegmentTextures = {
       cloud: textures.cloudGround,
+      treed_prairie: textures.cloudTreesGround,
+      treed_prairie_treehouse: textures.cloudTreesGroundGameTree,
       forest: textures.forestGround,
       transition: textures.transitionGround,
       meteor_transition: textures.meteorGroundTransitionFire,
@@ -1206,7 +1321,7 @@ export class ParallaxGrounds {
 
   /**
    * Trigger the comet hole level sequence
-   * Sequence: meteor_transition → cloud_hole (count times) → hole_transition_back → cloud
+   * Sequence: meteor_transition → cloud_hole (count times) → hole_transition_back → treed_prairie
    * @param holeCount - Number of full hole segments to create (default: 5)
    */
   startHoleSequence(holeCount: number = 5): void {
@@ -1218,6 +1333,10 @@ export class ParallaxGrounds {
    */
   getSegments(): Array<{ x: number; width: number; type: string }> {
     return this.scroller.getSegments();
+  }
+
+  getTreehouseHitboxes(): Array<{ key: string; left: number; right: number; top: number; bottom: number; width: number; height: number; rotation?: number }> {
+    return this.scroller.getTreehouseHitboxes();
   }
 
   /**
@@ -1247,6 +1366,10 @@ export class ParallaxGrounds {
    */
   willNextSegmentBeHole(): boolean {
     return this.scroller.willNextSegmentBeHole();
+  }
+
+  queueTreehouse(): void {
+    this.scroller.queueTreehouse();
   }
 
   /**

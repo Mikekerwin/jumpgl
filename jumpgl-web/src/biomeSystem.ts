@@ -3,7 +3,7 @@
  * Manages biome definitions, transitions, and sequences for parallax scrolling
  */
 
-export type BiomeType = 'cloud' | 'forest' | 'cave' | 'mountain';
+export type BiomeType = 'cloud' | 'treed_prairie' | 'forest' | 'cave' | 'mountain';
 
 export interface BiomeConfig {
   id: BiomeType;
@@ -23,6 +23,13 @@ export const BIOME_CONFIGS: Record<BiomeType, BiomeConfig> = {
     backgroundTexture: 'cloudSky',
     groundTexture: 'cloudGround',
     transitionToTexture: 'transitionGround', // Used when transitioning FROM cloud
+    scrollSpeed: 1.0,
+    backgroundSpeedMultiplier: 0.5,
+  },
+  treed_prairie: {
+    id: 'treed_prairie',
+    backgroundTexture: 'cloudSky', // Uses same sky as cloud for now
+    groundTexture: 'cloudTreesGround',
     scrollSpeed: 1.0,
     backgroundSpeedMultiplier: 0.5,
   },
