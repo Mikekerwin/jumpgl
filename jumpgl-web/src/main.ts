@@ -1389,32 +1389,6 @@ const init = async () => {
     };
   };
 
-  const getTreehouseLocalBounds = (
-    bounds: PlayerBounds,
-    platform: { centerX: number; centerY: number; rotation: number },
-    cos: number,
-    sin: number
-  ) => {
-    const corners = [
-      { x: bounds.left, y: bounds.top },
-      { x: bounds.right, y: bounds.top },
-      { x: bounds.right, y: bounds.bottom },
-      { x: bounds.left, y: bounds.bottom },
-    ];
-    let minX = Number.POSITIVE_INFINITY;
-    let maxX = Number.NEGATIVE_INFINITY;
-    let minY = Number.POSITIVE_INFINITY;
-    let maxY = Number.NEGATIVE_INFINITY;
-    corners.forEach((corner) => {
-      const local = getTreehouseLocalPoint(corner.x, corner.y, platform, cos, sin);
-      minX = Math.min(minX, local.x);
-      maxX = Math.max(maxX, local.x);
-      minY = Math.min(minY, local.y);
-      maxY = Math.max(maxY, local.y);
-    });
-    return { left: minX, right: maxX, top: minY, bottom: maxY, height: maxY - minY };
-  };
-
   const getTreehouseSurfaceYForPlayer = (
     platform: { centerX: number; centerY: number; halfWidth: number; halfHeight: number; rotation: number },
     playerCenterX: number,
@@ -1513,21 +1487,6 @@ const init = async () => {
       local.x >= -platform.halfWidth - PLATFORM_EDGE_TOLERANCE &&
       local.x <= platform.halfWidth + PLATFORM_EDGE_TOLERANCE
     );
-  };
-
-  const isTreehousePlatformContact = (
-    platform: { centerX: number; centerY: number; halfWidth: number; halfHeight: number; rotation: number },
-    bounds: PlayerBounds
-  ) => {
-    if (!isTreehousePlatformHorizontalOverlap(platform, bounds)) {
-      return false;
-    }
-    const playerHeight = bounds.bottom - bounds.top;
-    const playerCenterX = (bounds.left + bounds.right) / 2;
-    const playerCenterY = (bounds.top + bounds.bottom) / 2;
-    const surfaceY = getTreehouseSurfaceYForPlayer(platform, playerCenterX, playerCenterY);
-    const expectedBottom = surfaceY + playerHeight;
-    return Math.abs(bounds.bottom - expectedBottom) <= TREEHOUSE_VERTICAL_LOCK;
   };
 
   const isTreehouseSurfaceContact = (
