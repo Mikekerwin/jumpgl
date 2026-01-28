@@ -96,7 +96,7 @@ const init = async () => {
   loadingTitle.style.fontSize = '17rem';
   loadingTitle.style.fontWeight = 'bold';
   loadingTitle.style.color = '#fff';
-  loadingTitle.style.letterSpacing = '4px';
+  loadingTitle.style.letterSpacing = '2px';
   loadingTitle.style.marginBottom = '24px';
 
   const loadingBar = document.createElement('div');
@@ -532,9 +532,15 @@ const init = async () => {
   // Meteor hitbox for landing on the meteor overlay
   let meteorHitbox: { x: number; width: number; surfaceY: number } | null = null;
   const TREEHOUSE_PLATFORM_ID_BASE = 10000;
-  const TREEHOUSE_SURFACE_EXTRA = 70;
-  const PLATFORM_LANDING_OFFSET = 30; // Extra pixels to sink into platform at rest
+  const TREEHOUSE_SURFACE_EXTRA = 0;
+  const TREEHOUSE_BLEND_RANGE = 80;
+  const TREEHOUSE_BLEND_HEIGHT = 120;
+  const TREEHOUSE_BLEND_DISTANCE = 8;
+  const TREEHOUSE_BLEND_GAP = 18;
+  const TREEHOUSE_VERTICAL_LOCK = 65;
   const PLATFORM_EDGE_TOLERANCE = 8; // Horizontal forgiveness so we don't drop too early
+  const PLATFORM_LANDING_OFFSET = 30; // Extra pixels to sink into platform at rest
+  const TREEHOUSE_LANDING_OFFSET = PLATFORM_LANDING_OFFSET - 22;
   let platformAscendBonus = 0; // Additional vertical offset for successive spawns after landings
   const PLATFORM_ASCEND_STEP = 40; // Pixels higher per qualifying landing
   const PLATFORM_ASCEND_MAX = Number.POSITIVE_INFINITY; // Cap climb bonus (effectively unlimited)
@@ -1420,7 +1426,72 @@ const init = async () => {
     const clampedLocalX = Math.min(platform.halfWidth, Math.max(-platform.halfWidth, localCenter.x));
     const localY = -platform.halfHeight;
     const worldY = platform.centerY + clampedLocalX * sin + localY * cos;
-    return worldY - PLATFORM_LANDING_OFFSET - TREEHOUSE_SURFACE_EXTRA;
+    return worldY - playerDiameter - TREEHOUSE_SURFACE_EXTRA;
+  };
+
+  const getTreehouseLocalXDistance = (
+    platform: { centerX: number; centerY: number; halfWidth: number; rotation: number },
+    playerCenterX: number,
+    playerCenterY: number
+  ) => {
+    if (!platform.rotation) {
+      const dx = playerCenterX - platform.centerX;
+      return Math.max(0, Math.abs(dx) - platform.halfWidth);
+    }
+    const cos = Math.cos(platform.rotation);
+    const sin = Math.sin(platform.rotation);
+    const local = getTreehouseLocalPoint(playerCenterX, playerCenterY, platform, cos, sin);
+    return Math.max(0, Math.abs(local.x) - platform.halfWidth);
+  };
+
+  const getTreehouseBlendSurfaceForActive = (
+    activeId: number | null,
+    platformsToCheck: Array<{ id: number; left: number; right: number; centerX: number; centerY: number; halfWidth: number; halfHeight: number; rotation: number; key?: string }>,
+    bounds: PlayerBounds
+  ) => {
+    if (activeId === null) return null;
+    const primary = platformsToCheck.find((platform) => platform.id === activeId);
+    if (!primary) return null;
+    if (primary.key === 'lower_left') return getTreehouseSurfaceYForPlayer(primary, (bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2);
+    const playerCenterX = (bounds.left + bounds.right) / 2;
+    const playerCenterY = (bounds.top + bounds.bottom) / 2;
+    const primarySurfaceY = getTreehouseSurfaceYForPlayer(primary, playerCenterX, playerCenterY);
+    const primaryDistance = getTreehouseLocalXDistance(primary, playerCenterX, playerCenterY);
+
+    const secondaryCandidates = platformsToCheck.filter((platform) => platform.id !== primary.id);
+    let best: { platform: typeof primary; distance: number; surfaceY: number } | null = null;
+
+    for (const platform of secondaryCandidates) {
+      const isUpperBlendPair =
+        (primary.key === 'upper_mid' && platform.key === 'upper_right') ||
+        (primary.key === 'upper_right' && platform.key === 'upper_mid');
+      if (!isUpperBlendPair) continue;
+      if (!isTreehousePlatformHorizontalOverlap(platform, bounds)) continue;
+      const surfaceY = getTreehouseSurfaceYForPlayer(platform, playerCenterX, playerCenterY);
+      const heightDelta = Math.abs(primarySurfaceY - surfaceY);
+      if (heightDelta > TREEHOUSE_BLEND_HEIGHT) continue;
+      const leftGap = Math.max(0, platform.left - primary.right);
+      const rightGap = Math.max(0, primary.left - platform.right);
+      const gap = Math.max(leftGap, rightGap);
+      if (gap > TREEHOUSE_BLEND_GAP) continue;
+      const distance = getTreehouseLocalXDistance(platform, playerCenterX, playerCenterY);
+      if (distance > TREEHOUSE_BLEND_DISTANCE) continue;
+      if (!best || distance < best.distance) {
+        best = { platform, distance, surfaceY };
+      }
+    }
+
+    if (!best) {
+      return primarySurfaceY;
+    }
+
+    const w1 = Math.max(0, 1 - primaryDistance / TREEHOUSE_BLEND_RANGE);
+    const w2 = Math.max(0, 1 - best.distance / TREEHOUSE_BLEND_RANGE);
+    const total = w1 + w2;
+    if (total <= 0) {
+      return primarySurfaceY;
+    }
+    return (primarySurfaceY * w1 + best.surfaceY * w2) / total;
   };
 
   const isTreehousePlatformHorizontalOverlap = (
@@ -1435,11 +1506,46 @@ const init = async () => {
     }
     const cos = Math.cos(platform.rotation);
     const sin = Math.sin(platform.rotation);
-    const localBounds = getTreehouseLocalBounds(bounds, platform, cos, sin);
+    const playerCenterX = (bounds.left + bounds.right) / 2;
+    const playerCenterY = (bounds.top + bounds.bottom) / 2;
+    const local = getTreehouseLocalPoint(playerCenterX, playerCenterY, platform, cos, sin);
     return (
-      localBounds.right >= -platform.halfWidth - PLATFORM_EDGE_TOLERANCE &&
-      localBounds.left <= platform.halfWidth + PLATFORM_EDGE_TOLERANCE
+      local.x >= -platform.halfWidth - PLATFORM_EDGE_TOLERANCE &&
+      local.x <= platform.halfWidth + PLATFORM_EDGE_TOLERANCE
     );
+  };
+
+  const isTreehousePlatformContact = (
+    platform: { centerX: number; centerY: number; halfWidth: number; halfHeight: number; rotation: number },
+    bounds: PlayerBounds
+  ) => {
+    if (!isTreehousePlatformHorizontalOverlap(platform, bounds)) {
+      return false;
+    }
+    const playerHeight = bounds.bottom - bounds.top;
+    const playerCenterX = (bounds.left + bounds.right) / 2;
+    const playerCenterY = (bounds.top + bounds.bottom) / 2;
+    const surfaceY = getTreehouseSurfaceYForPlayer(platform, playerCenterX, playerCenterY);
+    const expectedBottom = surfaceY + playerHeight;
+    return Math.abs(bounds.bottom - expectedBottom) <= TREEHOUSE_VERTICAL_LOCK;
+  };
+
+  const isTreehouseSurfaceContact = (
+    surfaceY: number,
+    bounds: PlayerBounds,
+    platformsToCheck: Array<{ centerX: number; centerY: number; halfWidth: number; halfHeight: number; rotation: number }>
+  ) => {
+    const playerHeight = bounds.bottom - bounds.top;
+    const expectedBottom = surfaceY + playerHeight;
+    const verticalMatch = Math.abs(bounds.bottom - expectedBottom) <= TREEHOUSE_VERTICAL_LOCK;
+    if (!verticalMatch) return false;
+    const playerCenterX = (bounds.left + bounds.right) / 2;
+    const playerCenterY = (bounds.top + bounds.bottom) / 2;
+    return platformsToCheck.some((platform) => {
+      if (!isTreehousePlatformHorizontalOverlap(platform, bounds)) return false;
+      const platformSurface = getTreehouseSurfaceYForPlayer(platform, playerCenterX, playerCenterY);
+      return Math.abs(surfaceY - platformSurface) <= TREEHOUSE_BLEND_HEIGHT;
+    });
   };
 
   const getTreehousePlatformsPassedThrough = (
@@ -1452,9 +1558,11 @@ const init = async () => {
 
     if (playerVelocity >= 0) return platformsPassed;
 
-    const tolerance = Math.max(2, (currentBounds.bottom - currentBounds.top) * 0.05);
+    const playerHeight = currentBounds.bottom - currentBounds.top;
+    const tolerance = Math.max(2, playerHeight * 0.05);
     const detectionRange = 800;
     const playerCenterX = (currentBounds.left + currentBounds.right) / 2;
+    const playerCenterY = (currentBounds.top + currentBounds.bottom) / 2;
 
     for (const platform of platformsToCheck) {
       const platformLeft = platform.left;
@@ -1462,26 +1570,17 @@ const init = async () => {
       const platformCenterX = (platformLeft + platformRight) / 2;
       const horizontalDistance = Math.abs(platformCenterX - playerCenterX);
       const withinRange = horizontalDistance < detectionRange;
-      const horizontalOverlap = !(
-        currentBounds.right < platformLeft ||
-        currentBounds.left > platformRight
-      );
+      const horizontalOverlap = isTreehousePlatformHorizontalOverlap(platform, currentBounds);
       if (!withinRange && !horizontalOverlap) continue;
 
-      const cos = Math.cos(platform.rotation);
-      const sin = Math.sin(platform.rotation);
-      const currentLocal = getTreehouseLocalBounds(currentBounds, platform, cos, sin);
-      const previousLocal = getTreehouseLocalBounds(previousBounds, platform, cos, sin);
-      const playerHeightLocal = currentLocal.height;
-      const platformSurfaceLocalY = -platform.halfHeight;
-
-      const isBelowAndAscending = currentLocal.top > platformSurfaceLocalY;
-      const wasBelow = previousLocal.top > platformSurfaceLocalY;
-      const isNowAbove = currentLocal.bottom <= platformSurfaceLocalY + playerHeightLocal;
+      const surfaceY = getTreehouseSurfaceYForPlayer(platform, playerCenterX, playerCenterY);
+      const isBelowAndAscending = currentBounds.top > surfaceY;
+      const wasBelow = previousBounds.top > surfaceY;
+      const isNowAbove = currentBounds.bottom <= surfaceY + playerHeight;
       const crossedThisFrame = wasBelow && isNowAbove;
       const verticallyOverlapping =
-        currentLocal.top <= platformSurfaceLocalY + tolerance &&
-        currentLocal.bottom >= platformSurfaceLocalY - tolerance;
+        currentBounds.top <= surfaceY + tolerance &&
+        currentBounds.bottom >= surfaceY - tolerance;
 
       if (isBelowAndAscending || crossedThisFrame || verticallyOverlapping) {
         platformsPassed.push(platform.id);
@@ -1498,42 +1597,36 @@ const init = async () => {
     playerVelocity: number,
     platformsJumpedThrough: Set<number>
   ): { id: number; left: number; right: number; surfaceY: number } | null => {
-    const tolerance = Math.max(2, (currentBounds.bottom - currentBounds.top) * 0.05);
+    const playerHeight = currentBounds.bottom - currentBounds.top;
+    const tolerance = Math.max(2, playerHeight * 0.05);
+    const playerCenterX = (currentBounds.left + currentBounds.right) / 2;
+    const playerCenterY = (currentBounds.top + currentBounds.bottom) / 2;
 
     for (const platform of platformsToCheck) {
-      const cos = Math.cos(platform.rotation);
-      const sin = Math.sin(platform.rotation);
-      const currentLocal = getTreehouseLocalBounds(currentBounds, platform, cos, sin);
-      const previousLocal = getTreehouseLocalBounds(previousBounds, platform, cos, sin);
-      const playerHeightLocal = currentLocal.height;
-      const platformSurfaceLocalY = -platform.halfHeight;
-      const platformBottomCollision = platformSurfaceLocalY + playerHeightLocal;
-      const horizontalOverlap = !(
-        currentLocal.right < -platform.halfWidth ||
-        currentLocal.left > platform.halfWidth
-      );
+      const horizontalOverlap = isTreehousePlatformHorizontalOverlap(platform, currentBounds);
       if (!horizontalOverlap) continue;
 
+      const surfaceY = getTreehouseSurfaceYForPlayer(platform, playerCenterX, playerCenterY);
+      const platformBottomCollision = surfaceY + playerHeight;
+
       const descending = playerVelocity <= 0 || currentBounds.bottom > previousBounds.bottom;
-      const approachingFromAbove = previousLocal.top + tolerance <= platformSurfaceLocalY;
+      const approachingFromAbove = previousBounds.top + tolerance <= surfaceY;
       const wasJumpedThrough = platformsJumpedThrough.has(platform.id);
       const effectiveApproaching = approachingFromAbove || wasJumpedThrough;
       const crossedThisFrame =
         descending &&
         effectiveApproaching &&
-        previousLocal.bottom <= platformBottomCollision - tolerance &&
-        currentLocal.bottom >= platformBottomCollision - tolerance;
+        previousBounds.bottom <= platformBottomCollision - tolerance &&
+        currentBounds.bottom >= platformBottomCollision - tolerance;
       const resting =
-        Math.abs(currentLocal.bottom - platformBottomCollision) <= tolerance &&
+        Math.abs(currentBounds.bottom - platformBottomCollision) <= tolerance &&
         Math.abs(playerVelocity) < 0.8 &&
-        currentLocal.bottom <= platformBottomCollision + tolerance;
+        currentBounds.bottom <= platformBottomCollision + tolerance;
 
       if (crossedThisFrame || resting) {
-        const playerCenterX = (currentBounds.left + currentBounds.right) / 2;
-        const playerCenterY = (currentBounds.top + currentBounds.bottom) / 2;
         return {
           id: platform.id,
-          surfaceY: getTreehouseSurfaceYForPlayer(platform, playerCenterX, playerCenterY),
+          surfaceY,
           left: platform.left,
           right: platform.right,
         };
@@ -2702,6 +2795,24 @@ const init = async () => {
           debugRect.rotation = box.rotation;
         }
         debugPlatformHitboxContainer.addChild(debugRect);
+
+        // Draw the actual collision surface (top edge) so we can see the real contact line.
+        const halfWidth = box.width / 2;
+        const halfHeight = box.height / 2;
+        const centerX = box.left + halfWidth;
+        const centerY = box.top + halfHeight;
+        const rotation = box.rotation ?? 0;
+        const cos = Math.cos(rotation);
+        const sin = Math.sin(rotation);
+        const leftX = centerX + (-halfWidth) * cos - (-halfHeight) * sin;
+        const leftY = centerY + (-halfWidth) * sin + (-halfHeight) * cos;
+        const rightX = centerX + (halfWidth) * cos - (-halfHeight) * sin;
+        const rightY = centerY + (halfWidth) * sin + (-halfHeight) * cos;
+        const surfaceLine = new Graphics();
+        surfaceLine.moveTo(leftX, leftY);
+        surfaceLine.lineTo(rightX, rightY);
+        surfaceLine.stroke({ color: 0xffffff, width: 2, alpha: 0.9 });
+        debugPlatformHitboxContainer.addChild(surfaceLine);
       });
     }
 
@@ -3242,6 +3353,7 @@ const init = async () => {
       halfWidth: number;
       halfHeight: number;
       rotation: number;
+      key?: string;
     }>();
     treehousePlatforms.forEach((platform) => {
       treehousePlatformMap.set(platform.id, {
@@ -3252,6 +3364,7 @@ const init = async () => {
         halfWidth: platform.halfWidth,
         halfHeight: platform.halfHeight,
         rotation: platform.rotation,
+        key: platform.key,
       });
     });
 
@@ -3379,8 +3492,18 @@ const init = async () => {
         if (isNewLanding && supportingPlatform.id >= 0) {
           lastLeftPlatformId = null;
         }
+        const treehousePlatform = treehousePlatformMap.get(supportingPlatform.id);
+        const treehouseBlendSurface = treehousePlatform && treehousePlatforms.length > 1
+          ? getTreehouseBlendSurfaceForActive(supportingPlatform.id, treehousePlatforms, playerBounds)
+          : null;
+        const effectiveSurfaceY = treehouseBlendSurface ?? supportingPlatform.surfaceY;
+        if (treehousePlatform && treehouseBlendSurface !== null) {
+          supportingPlatform.surfaceY = treehouseBlendSurface;
+        }
+        const landingOffset = treehousePlatform ? TREEHOUSE_LANDING_OFFSET : PLATFORM_LANDING_OFFSET;
+
         // Convert stored platform surface (player top) to the center y the physics uses, and sink slightly for visuals
-        const landingY = supportingPlatform.surfaceY + playerRadius + PLATFORM_LANDING_OFFSET;
+        const landingY = effectiveSurfaceY + playerRadius + landingOffset;
         physics.landOnSurface(landingY, supportingPlatform.id); // Pass platform ID to clear from jumped-through list
 
         // Trigger landing compression on first landing
@@ -3410,8 +3533,8 @@ const init = async () => {
         }
 
         // Lock camera floor to this platform if it's higher than current floor
-        if (supportingPlatform.surfaceY < cameraFloorY) {
-          cameraFloorY = supportingPlatform.surfaceY;
+        if (effectiveSurfaceY < cameraFloorY) {
+          cameraFloorY = effectiveSurfaceY;
         }
 
         // Check if player has moved outside platform horizontal bounds
@@ -3420,9 +3543,14 @@ const init = async () => {
         const inJumpGracePeriod = timeSinceJump < JUMP_GRACE_PERIOD;
 
         if (!isCharging) {
-          const treehousePlatform = treehousePlatformMap.get(supportingPlatform.id);
+          const treehouseSurfaceY = treehousePlatform
+            ? (treehouseBlendSurface ?? getTreehouseSurfaceYForPlayer(treehousePlatform, state.x, state.y))
+            : null;
+          const treehouseOverlap = treehouseSurfaceY !== null
+            ? isTreehouseSurfaceContact(treehouseSurfaceY, playerBounds, treehousePlatforms)
+            : false;
           const walkedOff = treehousePlatform
-            ? !isTreehousePlatformHorizontalOverlap(treehousePlatform, playerBounds)
+            ? !treehouseOverlap
             : (
               playerBounds.right < supportingPlatform.left - PLATFORM_EDGE_TOLERANCE ||
               playerBounds.left > supportingPlatform.right + PLATFORM_EDGE_TOLERANCE
@@ -3452,15 +3580,18 @@ const init = async () => {
         platformAscendBonus = Math.min(platformAscendBonus + PLATFORM_ASCEND_STEP, PLATFORM_ASCEND_MAX);
       } else if (activePlatformId !== null) {
         // Keep platform override while bouncing vertically so the bounce counter isn't reset
-        const treehousePlatform = treehousePlatformMap.get(activePlatformId);
-        const livePlatform =
+        let treehousePlatform = treehousePlatformMap.get(activePlatformId);
+        let treehouseBlendSurface = treehousePlatforms.length > 1
+          ? getTreehouseBlendSurfaceForActive(activePlatformId, treehousePlatforms, playerBounds)
+          : null;
+        let livePlatform =
           activePlatformId === -1 && meteorHitbox
             ? { left: meteorHitbox.x, right: meteorHitbox.x + meteorHitbox.width, surfaceY: meteorHitbox.surfaceY }
             : (treehousePlatform
               ? {
                 left: treehousePlatform.left,
                 right: treehousePlatform.right,
-                surfaceY: getTreehouseSurfaceYForPlayer(treehousePlatform, state.x, state.y),
+                surfaceY: treehouseBlendSurface ?? getTreehouseSurfaceYForPlayer(treehousePlatform, state.x, state.y),
                 rotation: treehousePlatform.rotation,
                 centerX: treehousePlatform.centerX,
                 centerY: treehousePlatform.centerY,
@@ -3478,8 +3609,42 @@ const init = async () => {
           }
           activePlatformId = null;
         } else {
-          const stillOverPlatform = livePlatform && 'rotation' in livePlatform && livePlatform.rotation
-            ? isTreehousePlatformHorizontalOverlap(livePlatform, playerBounds)
+          if (treehousePlatform?.key === 'lower_left') {
+            const upperMid = treehousePlatforms.find((platform) => platform.key === 'upper_mid');
+            if (upperMid && isTreehousePlatformHorizontalOverlap(upperMid, playerBounds)) {
+              const playerHeight = playerBounds.bottom - playerBounds.top;
+              const playerCenterX = (playerBounds.left + playerBounds.right) / 2;
+              const playerCenterY = (playerBounds.top + playerBounds.bottom) / 2;
+              const upperMidSurfaceY = getTreehouseSurfaceYForPlayer(upperMid, playerCenterX, playerCenterY);
+              const targetBottom = upperMidSurfaceY + playerHeight;
+              const distanceBelow = targetBottom - playerBounds.bottom;
+              if (distanceBelow >= 0 && distanceBelow <= 24) {
+                activePlatformId = upperMid.id;
+                treehousePlatform = treehousePlatformMap.get(activePlatformId);
+                treehouseBlendSurface = treehousePlatforms.length > 1
+                  ? getTreehouseBlendSurfaceForActive(activePlatformId, treehousePlatforms, playerBounds)
+                  : null;
+                if (treehousePlatform) {
+                  const surfaceY = treehouseBlendSurface ?? getTreehouseSurfaceYForPlayer(treehousePlatform, state.x, state.y);
+                  const landingOffset = TREEHOUSE_LANDING_OFFSET;
+                  physics.landOnSurface(surfaceY + playerRadius + landingOffset, activePlatformId);
+                  livePlatform = {
+                    left: treehousePlatform.left,
+                    right: treehousePlatform.right,
+                    surfaceY,
+                    rotation: treehousePlatform.rotation,
+                    centerX: treehousePlatform.centerX,
+                    centerY: treehousePlatform.centerY,
+                    halfWidth: treehousePlatform.halfWidth,
+                    halfHeight: treehousePlatform.halfHeight,
+                  };
+                }
+              }
+            }
+          }
+          const treehouseActive = !!treehousePlatform;
+          const stillOverPlatform = treehouseActive
+            ? isTreehouseSurfaceContact(livePlatform.surfaceY, playerBounds, treehousePlatforms)
             : (
               playerBounds.right >= livePlatform.left - PLATFORM_EDGE_TOLERANCE &&
               playerBounds.left <= livePlatform.right + PLATFORM_EDGE_TOLERANCE
@@ -3499,7 +3664,8 @@ const init = async () => {
                 platSurface: livePlatform.surfaceY,
               }, 200);
             }
-            const updatedSurfaceY = livePlatform.surfaceY + playerRadius + PLATFORM_LANDING_OFFSET;
+            const landingOffset = treehouseActive ? TREEHOUSE_LANDING_OFFSET : PLATFORM_LANDING_OFFSET;
+            const updatedSurfaceY = livePlatform.surfaceY + playerRadius + landingOffset;
             physics.landOnSurface(updatedSurfaceY, activePlatformId);
           }
 

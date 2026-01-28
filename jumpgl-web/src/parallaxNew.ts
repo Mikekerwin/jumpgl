@@ -274,7 +274,7 @@ class SegmentScroller {
       const leftY = Math.min(textureHeight - hitboxHeight, branchDownshift + (20 * pixelToLocal));
 
       const lowerLeftWidth = Math.max(hitboxWidth, leftWidth - (120 * pixelToLocal));
-      const lowerLeftX = clampX(leftX - (190 * pixelToLocal), lowerLeftWidth);
+      const lowerLeftX = clampX(leftX - (190 * pixelToLocal) + (10 * pixelToLocal), lowerLeftWidth);
       const lowerLeftY = Math.min(
         textureHeight - hitboxHeight,
         leftY + (200 * pixelToLocal) + (10 * pixelToLocal)
@@ -290,21 +290,21 @@ class SegmentScroller {
         branchDownshift - (40 * pixelToLocal)
       );
 
-      const middleWidth = hitboxWidth + 110;
+      const middleWidth = hitboxWidth + 85;
       const middleX = clampX(
-        (leftX + rightX) * 0.5 - middleWidth / 2 + (125 * pixelToLocal),
+        (leftX + rightX) * 0.5 - middleWidth / 2 + (125 * pixelToLocal) + (13 * pixelToLocal),
         middleWidth
       );
       const middleY = Math.min(
         textureHeight - hitboxHeight,
-        leftY + (12 * pixelToLocal) - (35 * pixelToLocal)
+        leftY + (12 * pixelToLocal) - (35 * pixelToLocal) - (5 * pixelToLocal)
       );
 
       treehouseHitboxes = [
         { key: 'shelf', x: shelfX, y: shelfY, width: shelfWidth, height: hitboxHeight },
         { key: 'upper_left', x: leftX, y: leftY, width: leftWidth - (10 * pixelToLocal), height: hitboxHeight },
         { key: 'lower_left', x: lowerLeftX, y: lowerLeftY, width: lowerLeftWidth, height: hitboxHeight },
-        { key: 'upper_mid', x: middleX, y: middleY, width: middleWidth, height: hitboxHeight, rotation: -Math.PI / 6 * 0.7695 },
+        { key: 'upper_mid', x: middleX, y: middleY, width: middleWidth, height: hitboxHeight, rotation: -Math.PI / 6 * 0.7387 },
         { key: 'upper_right', x: rightX, y: rightY, width: rightWidth, height: hitboxHeight },
       ];
 
