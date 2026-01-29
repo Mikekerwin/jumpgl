@@ -356,7 +356,7 @@ export class ParallaxGrounds {
   private groundHeight: number;
 
   constructor(parent: Container, textures: ParallaxTextures, width: number, height: number) {
-    const sizes = calculateResponsiveSizes(height);
+    const sizes = calculateResponsiveSizes(height, width);
     this.groundHeight = sizes.groundHeight;
     this.groundTop = height - this.groundHeight;
     this.scroller = new SegmentScroller(
@@ -382,7 +382,7 @@ export class ParallaxGrounds {
   }
 
   resize(width: number, height: number): void {
-    const sizes = calculateResponsiveSizes(height);
+    const sizes = calculateResponsiveSizes(height, width);
     this.groundHeight = sizes.groundHeight;
     this.groundTop = height - this.groundHeight;
     this.scroller.resize(width, this.groundHeight, this.groundTop);

@@ -29,6 +29,11 @@ type TreehouseHitbox = {
   rotation?: number;
 };
 
+type TreehousePolyline = {
+  key: string;
+  points: Array<{ x: number; y: number }>;
+};
+
 /**
  * Improved SegmentScroller with biome system integration
  * Fixes the cloud-flashing bug by using BiomeSequenceManager for state
@@ -41,7 +46,7 @@ class SegmentScroller {
   private viewportWidth: number;
   private segmentHeight: number;
   private offsetY: number;
-  private segments: Array<{ sprite: Sprite; width: number; type: SegmentType; treehouseHitboxes?: TreehouseHitbox[] }> = [];
+  private segments: Array<{ sprite: Sprite; width: number; type: SegmentType; treehouseHitboxes?: TreehouseHitbox[]; treehousePolyline?: TreehousePolyline }> = [];
   private pendingSegments: SegmentType[] = [];
   private maxSegmentWidth = 0;
   private allowNewSegments = true; // Control whether to generate new segments
@@ -250,11 +255,14 @@ class SegmentScroller {
 
     // Add treehouse hitboxes as invisible platform surfaces (stored in local coordinates)
     let treehouseHitboxes: TreehouseHitbox[] | undefined;
+    let treehousePolyline: TreehousePolyline | undefined;
     if (type === 'treed_prairie_treehouse') {
       const hitboxWidth = 200;
       const hitboxHeight = 20;
       const pixelToLocal = 1 / Math.max(0.0001, scale);
       const clampX = (rawX: number, w: number) => Math.min(textureWidth - w, Math.max(0, rawX));
+      const clampPointX = (rawX: number) => Math.min(textureWidth, Math.max(0, rawX));
+      const clampPointY = (rawY: number) => Math.min(textureHeight - hitboxHeight, Math.max(0, rawY));
 
       const shelfOffset = (400 - 150) * pixelToLocal;
       const branchDownshift = 300 * pixelToLocal;
@@ -300,18 +308,61 @@ class SegmentScroller {
         leftY + (12 * pixelToLocal) - (35 * pixelToLocal) - (5 * pixelToLocal)
       );
 
+      const polyStartX = leftX;
+      const polyStartY = leftY;
+      const polyEndX = rightX + rightWidth;
+      const polyEndY = rightY;
+      const polyInwardX = polyEndX - (100 * pixelToLocal);
+      const polyInwardY = polyEndY - (20 * pixelToLocal);
+      const polyOutwardX = polyEndX;
+      const polyFlatEndX = polyStartX + (polyInwardX - polyStartX) * 0.6;
+      const polylinePoints = [
+        { x: clampPointX(polyStartX), y: clampPointY(polyStartY) },
+        { x: clampPointX(polyFlatEndX), y: clampPointY(polyStartY) },
+        { x: clampPointX(polyInwardX), y: clampPointY(polyInwardY) },
+        { x: clampPointX(polyEndX), y: clampPointY(polyEndY) },
+        { x: clampPointX(polyOutwardX), y: clampPointY(polyEndY) },
+      ].sort((a, b) => a.x - b.x);
+
+      treehousePolyline = {
+        key: 'treehouse_path',
+        points: polylinePoints,
+      };
+
+      const pathHitboxes: TreehouseHitbox[] = [];
+      for (let i = 0; i < polylinePoints.length - 1; i += 1) {
+        const start = polylinePoints[i];
+        const end = polylinePoints[i + 1];
+        const dx = end.x - start.x;
+        const dy = end.y - start.y;
+        const length = Math.max(1, Math.hypot(dx, dy));
+        const angle = Math.atan2(dy, dx);
+        const midX = (start.x + end.x) * 0.5;
+        const midY = (start.y + end.y) * 0.5;
+        const normalX = -Math.sin(angle);
+        const normalY = Math.cos(angle);
+        const centerX = midX + normalX * (hitboxHeight / 2);
+        const centerY = midY + normalY * (hitboxHeight / 2);
+        pathHitboxes.push({
+          key: `tree_path_${i}`,
+          x: centerX - length / 2,
+          y: centerY - hitboxHeight / 2,
+          width: length,
+          height: hitboxHeight,
+          rotation: angle,
+        });
+      }
+
       treehouseHitboxes = [
         { key: 'shelf', x: shelfX, y: shelfY, width: shelfWidth, height: hitboxHeight },
-        { key: 'upper_left', x: leftX, y: leftY, width: leftWidth - (10 * pixelToLocal), height: hitboxHeight },
         { key: 'lower_left', x: lowerLeftX, y: lowerLeftY, width: lowerLeftWidth, height: hitboxHeight },
-        { key: 'upper_mid', x: middleX, y: middleY, width: middleWidth, height: hitboxHeight, rotation: -Math.PI / 6 * 0.7387 },
-        { key: 'upper_right', x: rightX, y: rightY, width: rightWidth, height: hitboxHeight },
+        ...pathHitboxes,
       ];
 
       console.log(`[TREEHOUSE] Created hitboxes at sprite X: ${x}, scaled width: ${width}, texture: ${textureWidth}×${textureHeight}`);
     }
 
-    const segment = { sprite, width, type, treehouseHitboxes };
+    const segment = { sprite, width, type, treehouseHitboxes, treehousePolyline };
     this.segments.push(segment);
     return segment;
   }
@@ -1256,7 +1307,7 @@ export class ParallaxGrounds {
     width: number,
     height: number
   ) {
-    const sizes = calculateResponsiveSizes(height);
+    const sizes = calculateResponsiveSizes(height, width);
     this.groundHeight = sizes.groundHeight;
     this.groundTop = height - this.groundHeight;
 
@@ -1291,7 +1342,7 @@ export class ParallaxGrounds {
   }
 
   resize(width: number, height: number): void {
-    const sizes = calculateResponsiveSizes(height);
+    const sizes = calculateResponsiveSizes(height, width);
     this.groundHeight = sizes.groundHeight;
     this.groundTop = height - this.groundHeight;
     this.scroller.resize(width, this.groundHeight, this.groundTop);

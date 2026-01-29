@@ -69,7 +69,7 @@ export const HOLE_LARGE_IMAGE_PATH = '/jumpgl/holeLarge.png';
 // Laser configuration (ported from original Jump)
 export const LASER_WIDTH = 25;
 export const LASER_HEIGHT = 2;
-export const BASE_LASER_SPEED = 75; // pixels per second - base speed before scroll speed is added
+export const BASE_LASER_SPEED = 90; // pixels per second - base speed before scroll speed is added
 export const MAX_LASERS = 4;
 export const SCORE_PER_LASER_UNLOCK = 25;
 export const CHAOS_INCREMENT_INTERVAL = 5;
@@ -81,6 +81,7 @@ export const WIDE_LASER_WIDTH = 125;
 // Responsive sizing configuration
 // These maintain proportions relative to a baseline window height
 export const BASELINE_WINDOW_HEIGHT = 800; // Reference height for design
+export const BASELINE_WINDOW_WIDTH = 1280; // Reference width for design (16:10)
 export const BASELINE_GROUND_HEIGHT = 250; // Ground height at baseline
 export const BASELINE_PLAYER_RADIUS = 40; // Player radius at baseline
 export const MIN_GROUND_HEIGHT = 140; // Minimum ground height (prevents too small)
@@ -91,13 +92,15 @@ export const GROUND_PLAYER_DEPTH = 1.5; // Player depth into ground (multiplier)
  * Maintains proportions: if ground is 250px at 800px height and ball is 80px diameter,
  * they scale proportionally as window height changes
  */
-export function calculateResponsiveSizes(windowHeight: number): {
+export function calculateResponsiveSizes(windowHeight: number, windowWidth: number): {
   groundHeight: number;
   playerRadius: number;
   playerDiameter: number;
 } {
-  // Calculate scale factor based on window height
-  const scaleFactor = windowHeight / BASELINE_WINDOW_HEIGHT;
+  // Calculate scale factor based on window dimensions, capped for consistency
+  const heightScale = windowHeight / BASELINE_WINDOW_HEIGHT;
+  const widthScale = windowWidth / BASELINE_WINDOW_WIDTH;
+  const scaleFactor = Math.min(heightScale, widthScale, 1.0);
 
   // Scale ground height proportionally, but enforce minimum
   const groundHeight = Math.max(MIN_GROUND_HEIGHT, BASELINE_GROUND_HEIGHT * scaleFactor);

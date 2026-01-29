@@ -154,12 +154,30 @@ const init = async () => {
   doubleJumpSubtext.style.color = '#fff';
   doubleJumpSubtext.style.textAlign = 'center';
 
-  const upArrow = document.createElement('div');
-  upArrow.textContent = '↑';
-  upArrow.style.fontSize = '8rem';
-  upArrow.style.color = '#fff';
-  upArrow.style.fontWeight = 'bold';
-  upArrow.style.textShadow = '0 0 30px rgba(255, 255, 255, 0.9)';
+  const createRoundedArrow = (direction: 'up' | 'right') => {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 100 100');
+    svg.style.width = '8rem';
+    svg.style.height = '8rem';
+    svg.style.display = 'block';
+    svg.style.filter = 'drop-shadow(0 0 18px rgba(255, 255, 255, 0.85))';
+
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    const d = direction === 'up'
+      ? 'M50 86 V18 M50 18 L24 44 M50 18 L76 44'
+      : 'M14 50 H82 M82 50 L56 24 M82 50 L56 76';
+    path.setAttribute('d', d);
+    path.setAttribute('stroke', '#fff');
+    path.setAttribute('stroke-width', '12');
+    path.setAttribute('stroke-linecap', 'round');
+    path.setAttribute('stroke-linejoin', 'round');
+    path.setAttribute('fill', 'none');
+    svg.appendChild(path);
+
+    return svg;
+  };
+
+  const upArrow = createRoundedArrow('up');
   upArrow.style.animation = 'bobUp 1.5s ease-in-out infinite';
   const upArrowContainer = document.createElement('div');
   upArrowContainer.style.marginTop = 'calc(4vh - 8px)';
@@ -201,12 +219,7 @@ const init = async () => {
   rightArrowContainer.style.transform = 'translate(-50%, -50%)';
   rightArrowContainer.style.transition = 'transform 0.25s ease';
 
-  const rightArrow = document.createElement('div');
-  rightArrow.textContent = '→';
-  rightArrow.style.fontSize = '8rem';
-  rightArrow.style.color = '#fff';
-  rightArrow.style.fontWeight = 'bold';
-  rightArrow.style.textShadow = '0 0 30px rgba(255, 255, 255, 0.9)';
+  const rightArrow = createRoundedArrow('right');
   rightArrow.style.animation = 'bobRight 1.5s ease-in-out infinite';
 
   rightArrowContainer.appendChild(rightArrow);
@@ -533,14 +546,28 @@ const init = async () => {
   let meteorHitbox: { x: number; width: number; surfaceY: number } | null = null;
   const TREEHOUSE_PLATFORM_ID_BASE = 10000;
   const TREEHOUSE_SURFACE_EXTRA = 0;
-  const TREEHOUSE_BLEND_RANGE = 80;
   const TREEHOUSE_BLEND_HEIGHT = 120;
-  const TREEHOUSE_BLEND_DISTANCE = 8;
-  const TREEHOUSE_BLEND_GAP = 18;
   const TREEHOUSE_VERTICAL_LOCK = 65;
+  const TREEHOUSE_RAMP_STEP = 75;
   const PLATFORM_EDGE_TOLERANCE = 8; // Horizontal forgiveness so we don't drop too early
   const PLATFORM_LANDING_OFFSET = 30; // Extra pixels to sink into platform at rest
   const TREEHOUSE_LANDING_OFFSET = PLATFORM_LANDING_OFFSET - 22;
+  const PLAYER_PLATFORM_HITBOX_HORIZONTAL_SCALE = 0.6; // 20% inset per side (60% width)
+  type TreehousePlatform = {
+    id: number;
+    left: number;
+    right: number;
+    top: number;
+    bottom: number;
+    width: number;
+    height: number;
+    centerX: number;
+    centerY: number;
+    halfWidth: number;
+    halfHeight: number;
+    rotation: number;
+    key?: string;
+  };
   let platformAscendBonus = 0; // Additional vertical offset for successive spawns after landings
   const PLATFORM_ASCEND_STEP = 40; // Pixels higher per qualifying landing
   const PLATFORM_ASCEND_MAX = Number.POSITIVE_INFINITY; // Cap climb bonus (effectively unlimited)
@@ -692,7 +719,7 @@ const init = async () => {
   // Stars disabled for now
 
   // Calculate initial responsive sizes
-  let sizes = calculateResponsiveSizes(app.renderer.height);
+  let sizes = calculateResponsiveSizes(app.renderer.height, app.renderer.width);
   let playerRadius = sizes.playerRadius;
   let playerDiameter = sizes.playerDiameter;
   megaLaserHeight = playerDiameter * 1.2;
@@ -793,6 +820,8 @@ const init = async () => {
   let tutorialDashJumpShown = false;
   let tutorialDoubleJumpCompleted = false;
   let tutorialDashJumpCompleted = false;
+  const TUTORIAL_FIRST_DELAY = 6; // seconds after loading screen clears
+  let tutorialFirstDelayElapsed = 0;
 
   // Tutorial parallax control
   let tutorialParallaxStopped = false;
@@ -965,6 +994,10 @@ const init = async () => {
     firstZoomProgress = 0;
     lateZoomProgress = 0;
     panEaseProgress = 0;
+    enemyHoverZoomTriggered = false;
+    zoomHoldUntilEnemyHover = false;
+    holeExitCameraEaseActive = false;
+    holeExitCameraEaseStart = 0;
     respawnHoldProgress = 0;
     respawnHoldActive = false;
     respawnHoldStartZoom = 1.0;
@@ -1030,6 +1063,8 @@ const init = async () => {
   let backgroundZoomCurrent = 1.0;
   let holeExitCameraEaseActive = false;
   let holeExitCameraEaseStart = 0;
+  let zoomHoldUntilEnemyHover = false;
+  let enemyHoverZoomTriggered = false;
   const HOLE_EXIT_CAMERA_EASE_DURATION = 2.5; // seconds
   const RESPAWN_HOLD_ZOOM_DURATION = 4; // Seconds to ease toward 0.9 after falling in
   const RESPAWN_LAND_ZOOM_DURATION = 2.5; // Seconds to ease from 0.9 -> 1.0 after landing
@@ -1262,8 +1297,7 @@ const init = async () => {
       if (currentSpawnIndex === 1) {
         console.log(`[SECOND SPAWN] ✅✅✅ PASSED SECOND SPAWN! Now culling should begin for old assets.`);
         cometHoleLevelActive = false; // Disable hole area protection so spawn-based culling works
-        holeExitCameraEaseActive = true;
-        holeExitCameraEaseStart = performance.now();
+        zoomHoldUntilEnemyHover = enemyMode !== 'hover' && !enemyHoverZoomTriggered;
         console.log(`[CULLING] Hole area protection disabled - old assets can now be culled`);
         console.log(`[CULLING] Current spawn points:`, spawnPoints.map(x => x.toFixed(0)));
         console.log(`[CULLING] Player X: ${playerX.toFixed(0)}, currentSpawnIndex: ${currentSpawnIndex}, nextSpawnIndex: ${nextSpawnIndex}`);
@@ -1349,7 +1383,7 @@ const init = async () => {
     meteorHitbox.surfaceY = hitboxSurfaceY;
   };
 
-  const getTreehousePlatforms = () => {
+  const getTreehousePlatforms = (): TreehousePlatform[] => {
     const hitboxes = grounds.getTreehouseHitboxes();
     return hitboxes.map((hitbox, index) => {
       const width = hitbox.width;
@@ -1420,52 +1454,51 @@ const init = async () => {
 
   const getTreehouseBlendSurfaceForActive = (
     activeId: number | null,
-    platformsToCheck: Array<{ id: number; left: number; right: number; centerX: number; centerY: number; halfWidth: number; halfHeight: number; rotation: number; key?: string }>,
+    platformsToCheck: TreehousePlatform[],
     bounds: PlayerBounds
   ) => {
     if (activeId === null) return null;
     const primary = platformsToCheck.find((platform) => platform.id === activeId);
     if (!primary) return null;
-    if (primary.key === 'lower_left') return getTreehouseSurfaceYForPlayer(primary, (bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2);
     const playerCenterX = (bounds.left + bounds.right) / 2;
     const playerCenterY = (bounds.top + bounds.bottom) / 2;
     const primarySurfaceY = getTreehouseSurfaceYForPlayer(primary, playerCenterX, playerCenterY);
-    const primaryDistance = getTreehouseLocalXDistance(primary, playerCenterX, playerCenterY);
+    return primarySurfaceY;
+  };
 
-    const secondaryCandidates = platformsToCheck.filter((platform) => platform.id !== primary.id);
-    let best: { platform: typeof primary; distance: number; surfaceY: number } | null = null;
+  const getTreehousePathSurfaceAt = (
+    platformsToCheck: TreehousePlatform[],
+    bounds: PlayerBounds
+  ): { platform: TreehousePlatform; surfaceY: number } | null => {
+    const playerCenterX = (bounds.left + bounds.right) / 2;
+    const playerCenterY = (bounds.top + bounds.bottom) / 2;
+    let best: { platform: TreehousePlatform; surfaceY: number; distance: number; localDistance: number } | null = null;
 
-    for (const platform of secondaryCandidates) {
-      const isUpperBlendPair =
-        (primary.key === 'upper_mid' && platform.key === 'upper_right') ||
-        (primary.key === 'upper_right' && platform.key === 'upper_mid');
-      if (!isUpperBlendPair) continue;
-      if (!isTreehousePlatformHorizontalOverlap(platform, bounds)) continue;
+    for (const platform of platformsToCheck) {
+      if (!platform.key?.startsWith('tree_path_')) continue;
+      const cos = Math.cos(platform.rotation);
+      const sin = Math.sin(platform.rotation);
+      const local = getTreehouseLocalPoint(playerCenterX, playerCenterY, platform, cos, sin);
+      if (
+        local.x < -platform.halfWidth - PLATFORM_EDGE_TOLERANCE ||
+        local.x > platform.halfWidth + PLATFORM_EDGE_TOLERANCE
+      ) {
+        continue;
+      }
+      const distanceToSurface = Math.abs(local.y + platform.halfHeight);
+      if (distanceToSurface > TREEHOUSE_RAMP_STEP) continue;
       const surfaceY = getTreehouseSurfaceYForPlayer(platform, playerCenterX, playerCenterY);
-      const heightDelta = Math.abs(primarySurfaceY - surfaceY);
-      if (heightDelta > TREEHOUSE_BLEND_HEIGHT) continue;
-      const leftGap = Math.max(0, platform.left - primary.right);
-      const rightGap = Math.max(0, primary.left - platform.right);
-      const gap = Math.max(leftGap, rightGap);
-      if (gap > TREEHOUSE_BLEND_GAP) continue;
-      const distance = getTreehouseLocalXDistance(platform, playerCenterX, playerCenterY);
-      if (distance > TREEHOUSE_BLEND_DISTANCE) continue;
-      if (!best || distance < best.distance) {
-        best = { platform, distance, surfaceY };
+      const localDistance = Math.abs(local.x);
+      if (
+        !best ||
+        distanceToSurface < best.distance ||
+        (distanceToSurface === best.distance && localDistance < best.localDistance)
+      ) {
+        best = { platform, surfaceY, distance: distanceToSurface, localDistance };
       }
     }
 
-    if (!best) {
-      return primarySurfaceY;
-    }
-
-    const w1 = Math.max(0, 1 - primaryDistance / TREEHOUSE_BLEND_RANGE);
-    const w2 = Math.max(0, 1 - best.distance / TREEHOUSE_BLEND_RANGE);
-    const total = w1 + w2;
-    if (total <= 0) {
-      return primarySurfaceY;
-    }
-    return (primarySurfaceY * w1 + best.surfaceY * w2) / total;
+    return best ? { platform: best.platform, surfaceY: best.surfaceY } : null;
   };
 
   const isTreehousePlatformHorizontalOverlap = (
@@ -1508,7 +1541,7 @@ const init = async () => {
   };
 
   const getTreehousePlatformsPassedThrough = (
-    platformsToCheck: Array<{ id: number; left: number; right: number; centerX: number; centerY: number; halfWidth: number; halfHeight: number; rotation: number }>,
+    platformsToCheck: TreehousePlatform[],
     currentBounds: PlayerBounds,
     previousBounds: PlayerBounds,
     playerVelocity: number
@@ -1550,7 +1583,7 @@ const init = async () => {
   };
 
   const getSupportingTreehousePlatform = (
-    platformsToCheck: Array<{ id: number; left: number; right: number; centerX: number; centerY: number; halfWidth: number; halfHeight: number; rotation: number }>,
+    platformsToCheck: TreehousePlatform[],
     currentBounds: PlayerBounds,
     previousBounds: PlayerBounds,
     playerVelocity: number,
@@ -2590,26 +2623,10 @@ const init = async () => {
 
       // Tutorial system progression
       if (tutorialActive && !cometHoleLevelActive) {
-        // Stage 1: Double Jump Tutorial - Show after cottage has left the screen
-        if (tutorialStage === 'waiting' && !playerIntroActive) {
-          // Check if cottage segment has moved off screen (cottage is at negative X when off screen left)
-          const segments = grounds.getSegments();
-          const cottageSegment = segments.find(seg => seg.type === 'cottage_start');
-          const butterfliesPastHalfway = (() => {
-            if (!butterflyManager) return false;
-            const sprites = butterflyManager.getSprites();
-            if (sprites.length < 3) return false;
-            const thresholdX = app.renderer.width * 0.5;
-            for (let i = 0; i < 3; i++) {
-              if (sprites[i].getGlobalPosition().x < thresholdX) {
-                return false;
-              }
-            }
-            return true;
-          })();
-
-          if (cottageSegment && cottageSegment.x < -500 && butterfliesPastHalfway) {
-            // Cottage is well off screen, show double jump tutorial
+        // Stage 1: Double Jump Tutorial - Show after 10s of gameplay time
+        if (tutorialStage === 'waiting' && !playerIntroActive && !loadingScreenActive) {
+          tutorialFirstDelayElapsed = Math.min(TUTORIAL_FIRST_DELAY, tutorialFirstDelayElapsed + deltaSeconds);
+          if (tutorialFirstDelayElapsed >= TUTORIAL_FIRST_DELAY) {
             tutorialStage = 'doubleJump';
             doubleJumpContainer.style.display = 'flex';
             tutorialContainer.style.opacity = '1';
@@ -2621,24 +2638,13 @@ const init = async () => {
         if (tutorialStage === 'doubleJump' && !tutorialDoubleJumpCompleted) {
           const jumpCount = physics.getJumpCount();
           if (jumpCount >= 2) {
-            // Player performed double jump! Fade out double jump message and show dash jump
+            // Player performed double jump! Fade out double jump message
             tutorialDoubleJumpCompleted = true;
             tutorialContainer.style.opacity = '0';
             setTimeout(() => {
               doubleJumpContainer.style.display = 'none';
-              // Show dash jump message
-              dashJumpContainer.style.display = 'flex';
-              tutorialContainer.style.opacity = '1';
-              tutorialDashJumpShown = true;
-              dashArrowSlid = false;
-              dashArrowNudged = false;
-              setTimeout(() => {
-                if (dashJumpContainer.style.display !== 'none') {
-                  startDashArrowSlide();
-                }
-              }, 200);
             }, 800); // Wait for fade out
-            console.log('[TUTORIAL] Stage 1 complete: Player double jumped, showing dash jump tutorial');
+            console.log('[TUTORIAL] Stage 1 complete: Player double jumped');
 
             // Move to next stage
             tutorialStage = 'dashJump';
@@ -2673,6 +2679,30 @@ const init = async () => {
         } else {
           tutorialParallaxStopped = false;
           tutorialParallaxSlowFactor = 1;
+        }
+
+        if (tutorialStage === 'dashJump' && tutorialDoubleJumpCompleted && !tutorialDashJumpShown) {
+          const fenceX = grounds.getFenceX();
+          const fenceInView = (() => {
+            if (fenceX === null) return false;
+            const fenceScreenX = groundContainer.position.x + fenceX * cameraZoom;
+            return fenceScreenX <= app.renderer.width * 0.8 && fenceScreenX >= 0;
+          })();
+          const parallaxSlowing = tutorialParallaxStopped || tutorialParallaxSlowFactor < 1;
+          if (fenceInView && parallaxSlowing) {
+            tutorialStage = 'dashJump';
+            dashJumpContainer.style.display = 'flex';
+            tutorialContainer.style.opacity = '1';
+            tutorialDashJumpShown = true;
+            dashArrowSlid = false;
+            dashArrowNudged = false;
+            setTimeout(() => {
+              if (dashJumpContainer.style.display !== 'none') {
+                startDashArrowSlide();
+              }
+            }, 200);
+            console.log('[TUTORIAL] Stage 2: Dash jump tutorial shown');
+          }
         }
 
         // Check if player has completed dash jump AND is past the fence
@@ -2740,14 +2770,12 @@ const init = async () => {
       treehouseHitboxes.forEach((box) => {
         const colorMap: Record<string, number> = {
           shelf: 0xff0000,
-          upper_left: 0x00ff00,
           lower_left: 0xffcc00,
-          upper_mid: 0x00ffff,
-          upper_right: 0x0000ff,
         };
+        const isTreehousePath = box.key.startsWith('tree_path_');
         const debugRect = new Graphics();
         debugRect.rect(0, 0, box.width, box.height);
-        debugRect.fill({ color: colorMap[box.key] ?? 0xffffff, alpha: 0.35 });
+        debugRect.fill({ color: isTreehousePath ? 0x00ffff : (colorMap[box.key] ?? 0xffffff), alpha: 0.35 });
         debugRect.pivot.set(box.width / 2, box.height / 2);
         debugRect.position.set(box.left + box.width / 2, box.top + box.height / 2);
         if (box.rotation) {
@@ -3289,42 +3317,31 @@ const init = async () => {
     }
 
     // Calculate player bounds for collision detection
-    const playerBounds: PlayerBounds = {
+    const playerBoundsFull: PlayerBounds = {
       left: state.x - playerRadius,
       right: state.x + playerRadius,
       top: state.y - playerRadius,
       bottom: state.y + playerRadius,
     };
 
+    const platformHalfWidth = playerRadius * PLAYER_PLATFORM_HITBOX_HORIZONTAL_SCALE;
+    const playerBounds: PlayerBounds = {
+      left: state.x - platformHalfWidth,
+      right: state.x + platformHalfWidth,
+      top: state.y - playerRadius,
+      bottom: state.y + playerRadius,
+    };
     const prevBounds: PlayerBounds = {
-      left: prevState.x - playerRadius,
-      right: prevState.x + playerRadius,
+      left: prevState.x - platformHalfWidth,
+      right: prevState.x + platformHalfWidth,
       top: prevState.y - playerRadius,
       bottom: prevState.y + playerRadius,
     };
 
     const treehousePlatforms = getTreehousePlatforms();
-    const treehousePlatformMap = new Map<number, {
-      left: number;
-      right: number;
-      centerX: number;
-      centerY: number;
-      halfWidth: number;
-      halfHeight: number;
-      rotation: number;
-      key?: string;
-    }>();
+    const treehousePlatformMap = new Map<number, TreehousePlatform>();
     treehousePlatforms.forEach((platform) => {
-      treehousePlatformMap.set(platform.id, {
-        left: platform.left,
-        right: platform.right,
-        centerX: platform.centerX,
-        centerY: platform.centerY,
-        halfWidth: platform.halfWidth,
-        halfHeight: platform.halfHeight,
-        rotation: platform.rotation,
-        key: platform.key,
-      });
+      treehousePlatformMap.set(platform.id, platform);
     });
 
     // Detect platforms being passed through while ascending (jumping up)
@@ -3413,13 +3430,29 @@ const init = async () => {
     }
 
     if (!supportingPlatform && treehousePlatforms.length > 0) {
-      supportingPlatform = getSupportingTreehousePlatform(
-        treehousePlatforms,
-        playerBounds,
-        prevBounds,
-        verticalVelocity,
-        physics.getJumpedThroughPlatforms()
-      );
+      const pathSurface = getTreehousePathSurfaceAt(treehousePlatforms, playerBounds);
+      if (pathSurface) {
+        const playerHeight = playerBounds.bottom - playerBounds.top;
+        const targetBottom = pathSurface.surfaceY + playerHeight;
+        const verticalGap = Math.abs(playerBounds.bottom - targetBottom);
+        if (verticalGap <= TREEHOUSE_RAMP_STEP) {
+          supportingPlatform = {
+            id: pathSurface.platform.id,
+            surfaceY: pathSurface.surfaceY,
+            left: pathSurface.platform.left,
+            right: pathSurface.platform.right,
+          };
+        }
+      }
+      if (!supportingPlatform) {
+        supportingPlatform = getSupportingTreehousePlatform(
+          treehousePlatforms,
+          playerBounds,
+          prevBounds,
+          verticalVelocity,
+          physics.getJumpedThroughPlatforms()
+        );
+      }
     }
 
     // Hole collision: if we're not on a platform and overlap a hole, fall and respawn
@@ -3502,12 +3535,15 @@ const init = async () => {
         const inJumpGracePeriod = timeSinceJump < JUMP_GRACE_PERIOD;
 
         if (!isCharging) {
-          const treehouseSurfaceY = treehousePlatform
-            ? (treehouseBlendSurface ?? getTreehouseSurfaceYForPlayer(treehousePlatform, state.x, state.y))
-            : null;
-          const treehouseOverlap = treehouseSurfaceY !== null
-            ? isTreehouseSurfaceContact(treehouseSurfaceY, playerBounds, treehousePlatforms)
-            : false;
+          let treehouseOverlap = false;
+          if (treehousePlatform) {
+            if (treehousePlatform.key?.startsWith('tree_path_')) {
+              treehouseOverlap = !!getTreehousePathSurfaceAt(treehousePlatforms, playerBounds);
+            } else {
+              const treehouseSurfaceY = treehouseBlendSurface ?? getTreehouseSurfaceYForPlayer(treehousePlatform, state.x, state.y);
+              treehouseOverlap = isTreehouseSurfaceContact(treehouseSurfaceY, playerBounds, treehousePlatforms);
+            }
+          }
           const walkedOff = treehousePlatform
             ? !treehouseOverlap
             : (
@@ -3568,46 +3604,46 @@ const init = async () => {
           }
           activePlatformId = null;
         } else {
-          if (treehousePlatform?.key === 'lower_left') {
-            const upperMid = treehousePlatforms.find((platform) => platform.key === 'upper_mid');
-            if (upperMid && isTreehousePlatformHorizontalOverlap(upperMid, playerBounds)) {
-              const playerHeight = playerBounds.bottom - playerBounds.top;
-              const playerCenterX = (playerBounds.left + playerBounds.right) / 2;
-              const playerCenterY = (playerBounds.top + playerBounds.bottom) / 2;
-              const upperMidSurfaceY = getTreehouseSurfaceYForPlayer(upperMid, playerCenterX, playerCenterY);
-              const targetBottom = upperMidSurfaceY + playerHeight;
-              const distanceBelow = targetBottom - playerBounds.bottom;
-              if (distanceBelow >= 0 && distanceBelow <= 24) {
-                activePlatformId = upperMid.id;
-                treehousePlatform = treehousePlatformMap.get(activePlatformId);
-                treehouseBlendSurface = treehousePlatforms.length > 1
-                  ? getTreehouseBlendSurfaceForActive(activePlatformId, treehousePlatforms, playerBounds)
-                  : null;
-                if (treehousePlatform) {
-                  const surfaceY = treehouseBlendSurface ?? getTreehouseSurfaceYForPlayer(treehousePlatform, state.x, state.y);
-                  const landingOffset = TREEHOUSE_LANDING_OFFSET;
-                  physics.landOnSurface(surfaceY + playerRadius + landingOffset, activePlatformId);
-                  livePlatform = {
-                    left: treehousePlatform.left,
-                    right: treehousePlatform.right,
-                    surfaceY,
-                    rotation: treehousePlatform.rotation,
-                    centerX: treehousePlatform.centerX,
-                    centerY: treehousePlatform.centerY,
-                    halfWidth: treehousePlatform.halfWidth,
-                    halfHeight: treehousePlatform.halfHeight,
-                  };
-                }
-              }
-            }
-          }
           const treehouseActive = !!treehousePlatform;
+          const pathSurface = treehousePlatform?.key?.startsWith('tree_path_')
+            ? getTreehousePathSurfaceAt(treehousePlatforms, playerBounds)
+            : null;
+          if (pathSurface) {
+            livePlatform.surfaceY = pathSurface.surfaceY;
+          }
           const stillOverPlatform = treehouseActive
-            ? isTreehouseSurfaceContact(livePlatform.surfaceY, playerBounds, treehousePlatforms)
+            ? (pathSurface
+              ? Math.abs(
+                (pathSurface.surfaceY + (playerBounds.bottom - playerBounds.top)) - playerBounds.bottom
+              ) <= TREEHOUSE_RAMP_STEP * 2
+              : isTreehouseSurfaceContact(livePlatform.surfaceY, playerBounds, treehousePlatforms))
             : (
               playerBounds.right >= livePlatform.left - PLATFORM_EDGE_TOLERANCE &&
               playerBounds.left <= livePlatform.right + PLATFORM_EDGE_TOLERANCE
             );
+
+          if (treehousePlatform && !isCharging) {
+            const pathSurface = getTreehousePathSurfaceAt(treehousePlatforms, playerBounds);
+            if (pathSurface) {
+              const newPlatformId = pathSurface.platform.id;
+              activePlatformId = newPlatformId;
+              treehousePlatform = treehousePlatformMap.get(newPlatformId);
+              if (treehousePlatform) {
+                const landingOffset = TREEHOUSE_LANDING_OFFSET;
+                physics.landOnSurface(pathSurface.surfaceY + playerRadius + landingOffset, newPlatformId);
+                livePlatform = {
+                  left: treehousePlatform.left,
+                  right: treehousePlatform.right,
+                  surfaceY: pathSurface.surfaceY,
+                  rotation: treehousePlatform.rotation,
+                  centerX: treehousePlatform.centerX,
+                  centerY: treehousePlatform.centerY,
+                  halfWidth: treehousePlatform.halfWidth,
+                  halfHeight: treehousePlatform.halfHeight,
+                };
+              }
+            }
+          }
 
           // Check if we're in the grace period after a jump (ignore brief downward movement)
           const timeSinceJump = performance.now() - lastJumpTime;
@@ -3625,7 +3661,10 @@ const init = async () => {
             }
             const landingOffset = treehouseActive ? TREEHOUSE_LANDING_OFFSET : PLATFORM_LANDING_OFFSET;
             const updatedSurfaceY = livePlatform.surfaceY + playerRadius + landingOffset;
-            physics.landOnSurface(updatedSurfaceY, activePlatformId);
+            const platformId = activePlatformId;
+            if (platformId !== null) {
+              physics.landOnSurface(updatedSurfaceY, platformId);
+            }
           }
 
           if (isPressingDown && !inJumpGracePeriod) {
@@ -3700,7 +3739,7 @@ const init = async () => {
     if (DEBUG_DRAW_HITBOXES && hitboxOverlay) {
       hitboxOverlay.clear();
       // Player bounds
-      hitboxOverlay.rect(playerBounds.left, playerBounds.top, playerBounds.right - playerBounds.left, playerBounds.bottom - playerBounds.top).fill({ color: 0xff0000, alpha: 0.25 });
+      hitboxOverlay.rect(playerBoundsFull.left, playerBoundsFull.top, playerBoundsFull.right - playerBoundsFull.left, playerBoundsFull.bottom - playerBoundsFull.top).fill({ color: 0xff0000, alpha: 0.25 });
 
       // Platform hitboxes
       const platformHitboxes = platforms.getDebugHitboxes(playerDiameter);
@@ -3828,8 +3867,9 @@ const init = async () => {
     // Smoothly interpolate camera to target position
     cameraY += (targetCameraY - cameraY) * cameraLerpSpeed;
 
+    const useHoleCamera = cometHoleLevelActive && !enemyHoverZoomTriggered;
     // Camera zoom (comet hole level ONLY) - progressive zoom revealing meteor
-    if (cometHoleLevelActive) {
+    if (useHoleCamera) {
       let targetZoom = 1.0; // Default no zoom
 
       const onOrPastPenultimate =
@@ -3945,7 +3985,8 @@ const init = async () => {
       gradientSprite.scale.set(gradientScale);
     } else {
       // Reset zoom when not in comet hole level
-      if (cameraZoom !== 1.0) {
+      const holdZoom = zoomHoldUntilEnemyHover && enemyMode !== 'hover';
+      if (!holdZoom && cameraZoom !== 1.0) {
         cameraZoom += (1.0 - cameraZoom) * zoomResetSpeed;
         groundContainer.scale.set(cameraZoom);
         platformContainer.scale.set(cameraZoom);
@@ -3955,7 +3996,7 @@ const init = async () => {
         const gradientScale = 1 / Math.max(0.0001, cameraZoom);
         gradientSprite.scale.set(gradientScale);
       }
-      if (cameraPanX !== 0 || cameraPanY !== 0) {
+      if (!holdZoom && (cameraPanX !== 0 || cameraPanY !== 0)) {
         cameraPanX += (0 - cameraPanX) * panResetSpeed;
         cameraPanY += (0 - cameraPanY) * panResetSpeed;
       }
@@ -4115,6 +4156,12 @@ const init = async () => {
         enemyMovement.startTransition(velocity, enemyState.y);
         enemyMode = 'hover';
         introComplete = true;
+        if (!enemyHoverZoomTriggered) {
+          enemyHoverZoomTriggered = true;
+          zoomHoldUntilEnemyHover = false;
+          holeExitCameraEaseActive = true;
+          holeExitCameraEaseStart = performance.now();
+        }
         if (revealEnergyBar) {
           revealEnergyBar();
         }
@@ -4145,8 +4192,8 @@ const init = async () => {
     });
     if (laserResult.scoreChange !== 0) {
       laserScore += laserResult.scoreChange;
-      // Energy +2% per cleared laser
-      energy = Math.min(100, energy + laserResult.scoreChange * 2);
+      // Energy +2.5% per cleared laser
+      energy = Math.min(100, energy + laserResult.scoreChange * 2.5);
 
       // Unlock shooting only at full energy
       if (energy >= 100 && !shootUnlocked) {
@@ -4584,7 +4631,7 @@ const init = async () => {
     overlayContainer.addChild(windSprite);
 
     // Recalculate responsive sizes based on new height
-    sizes = calculateResponsiveSizes(app.renderer.height);
+    sizes = calculateResponsiveSizes(app.renderer.height, app.renderer.width);
     playerRadius = sizes.playerRadius;
     playerDiameter = sizes.playerDiameter;
 
@@ -4992,6 +5039,10 @@ const init = async () => {
     dashChargeReturning = false;
     respawnState = 'normal';
     fallingIntoHole = false;
+    enemyHoverZoomTriggered = false;
+    zoomHoldUntilEnemyHover = false;
+    holeExitCameraEaseActive = false;
+    holeExitCameraEaseStart = 0;
 
     cometHoleLevelActive = true;
     forceEnemyJumpOut = true;
