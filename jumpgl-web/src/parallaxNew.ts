@@ -1,5 +1,5 @@
 import { Assets, Container, Sprite, Texture, TilingSprite } from 'pixi.js';
-import { calculateResponsiveSizes } from './config';
+import { BASELINE_GROUND_HEIGHT, calculateResponsiveSizes } from './config';
 import { BiomeSequenceManager, BIOME_CONFIGS } from './biomeSystem';
 import type { BiomeType } from './biomeSystem';
 import { AnimatedSkyBackground } from './animatedSkyBackground';
@@ -259,7 +259,9 @@ class SegmentScroller {
     if (type === 'treed_prairie_treehouse') {
       const hitboxWidth = 200;
       const hitboxHeight = 20;
-      const pixelToLocal = 1 / Math.max(0.0001, scale);
+      const baselineTargetWidth = cloudGroundWidth * (BASELINE_GROUND_HEIGHT / cloudGroundHeight);
+      const baselineScale = baselineTargetWidth / textureWidth;
+      const pixelToLocal = 1 / Math.max(0.0001, baselineScale);
       const clampX = (rawX: number, w: number) => Math.min(textureWidth - w, Math.max(0, rawX));
       const clampPointX = (rawX: number) => Math.min(textureWidth, Math.max(0, rawX));
       const clampPointY = (rawY: number) => Math.min(textureHeight - hitboxHeight, Math.max(0, rawY));

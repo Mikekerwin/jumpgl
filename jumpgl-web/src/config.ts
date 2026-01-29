@@ -80,8 +80,8 @@ export const WIDE_LASER_WIDTH = 125;
 
 // Responsive sizing configuration
 // These maintain proportions relative to a baseline window height
-export const BASELINE_WINDOW_HEIGHT = 800; // Reference height for design
-export const BASELINE_WINDOW_WIDTH = 1280; // Reference width for design (16:10)
+export const BASELINE_WINDOW_HEIGHT = 760; // Reference height for design
+export const BASELINE_WINDOW_WIDTH = 1510; // Reference width for design
 export const BASELINE_GROUND_HEIGHT = 250; // Ground height at baseline
 export const BASELINE_PLAYER_RADIUS = 40; // Player radius at baseline
 export const MIN_GROUND_HEIGHT = 140; // Minimum ground height (prevents too small)
@@ -97,10 +97,10 @@ export function calculateResponsiveSizes(windowHeight: number, windowWidth: numb
   playerRadius: number;
   playerDiameter: number;
 } {
-  // Calculate scale factor based on window dimensions, capped for consistency
+  // Calculate scale factor based on window dimensions
   const heightScale = windowHeight / BASELINE_WINDOW_HEIGHT;
   const widthScale = windowWidth / BASELINE_WINDOW_WIDTH;
-  const scaleFactor = Math.min(heightScale, widthScale, 1.0);
+  const scaleFactor = Math.min(heightScale, widthScale);
 
   // Scale ground height proportionally, but enforce minimum
   const groundHeight = Math.max(MIN_GROUND_HEIGHT, BASELINE_GROUND_HEIGHT * scaleFactor);
