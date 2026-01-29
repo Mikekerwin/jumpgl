@@ -1437,21 +1437,6 @@ const init = async () => {
     return worldY - playerDiameter - TREEHOUSE_SURFACE_EXTRA;
   };
 
-  const getTreehouseLocalXDistance = (
-    platform: { centerX: number; centerY: number; halfWidth: number; rotation: number },
-    playerCenterX: number,
-    playerCenterY: number
-  ) => {
-    if (!platform.rotation) {
-      const dx = playerCenterX - platform.centerX;
-      return Math.max(0, Math.abs(dx) - platform.halfWidth);
-    }
-    const cos = Math.cos(platform.rotation);
-    const sin = Math.sin(platform.rotation);
-    const local = getTreehouseLocalPoint(playerCenterX, playerCenterY, platform, cos, sin);
-    return Math.max(0, Math.abs(local.x) - platform.halfWidth);
-  };
-
   const getTreehouseBlendSurfaceForActive = (
     activeId: number | null,
     platformsToCheck: TreehousePlatform[],

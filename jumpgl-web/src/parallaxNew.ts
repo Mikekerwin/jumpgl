@@ -298,16 +298,6 @@ class SegmentScroller {
         branchDownshift - (40 * pixelToLocal)
       );
 
-      const middleWidth = hitboxWidth + 85;
-      const middleX = clampX(
-        (leftX + rightX) * 0.5 - middleWidth / 2 + (125 * pixelToLocal) + (13 * pixelToLocal),
-        middleWidth
-      );
-      const middleY = Math.min(
-        textureHeight - hitboxHeight,
-        leftY + (12 * pixelToLocal) - (35 * pixelToLocal) - (5 * pixelToLocal)
-      );
-
       const polyStartX = leftX;
       const polyStartY = leftY;
       const polyEndX = rightX + rightWidth;
