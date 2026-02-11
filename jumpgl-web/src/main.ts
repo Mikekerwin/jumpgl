@@ -9,7 +9,7 @@ import { ForestDustField } from './forestDustField';
 import { JumpDustParticles } from './jumpDustParticles';
 import { ChargeParticles } from './chargeParticles';
 import { Shadow } from './shadow';
-import { FloatingPlatforms, type PlayerBounds, type PlatformCollision } from './floatingPlatforms';
+import { FloatingPlatforms, type PlayerBounds } from './floatingPlatforms';
 import { LaserPhysics } from './laserPhysics';
 import { HoleManager } from './holeManager';
 import { SparkParticles } from './sparkParticles';
