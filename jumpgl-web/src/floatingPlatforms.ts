@@ -506,6 +506,21 @@ export class FloatingPlatforms {
   }
 
   /**
+   * Get bounds for a specific platform by ID (for positioning helpers).
+   */
+  getPlatformBoundsById(id: number): PlatformCollision | null {
+    const platform = this.platforms.find((p) => p.active && p.id === id);
+    if (!platform) return null;
+
+    return {
+      id: platform.id,
+      surfaceY: platform.surfaceY,
+      left: platform.x,
+      right: platform.x + platform.width,
+    };
+  }
+
+  /**
    * Get platforms that player is currently passing through while ascending
    * Used to mark platforms as "jumped through" so player can land on them later
    *

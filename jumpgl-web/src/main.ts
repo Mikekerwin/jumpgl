@@ -9,7 +9,7 @@ import { ForestDustField } from './forestDustField';
 import { JumpDustParticles } from './jumpDustParticles';
 import { ChargeParticles } from './chargeParticles';
 import { Shadow } from './shadow';
-import { FloatingPlatforms, type PlayerBounds } from './floatingPlatforms';
+import { FloatingPlatforms, type PlayerBounds, type PlatformCollision } from './floatingPlatforms';
 import { LaserPhysics } from './laserPhysics';
 import { HoleManager } from './holeManager';
 import { SparkParticles } from './sparkParticles';
@@ -205,7 +205,7 @@ const init = async () => {
   dashJumpHeading.style.letterSpacing = '2px';
 
   const dashJumpSubtext = document.createElement('div');
-  dashJumpSubtext.textContent = 'Double Jump near the front of Screen';
+  dashJumpSubtext.textContent = 'Double Jump near the Butterfly';
   dashJumpSubtext.style.fontFamily = 'Arial, sans-serif';
   dashJumpSubtext.style.fontSize = '1.5rem';
   dashJumpSubtext.style.color = '#fff';
@@ -218,6 +218,7 @@ const init = async () => {
   rightArrowContainer.style.top = '50%';
   rightArrowContainer.style.transform = 'translate(-50%, -50%)';
   rightArrowContainer.style.transition = 'transform 0.25s ease';
+  rightArrowContainer.style.display = 'none';
 
   const rightArrow = createRoundedArrow('right');
   rightArrow.style.animation = 'bobRight 1.5s ease-in-out infinite';
@@ -246,7 +247,7 @@ const init = async () => {
   let dashArrowSlid = false;
   let dashArrowNudged = false;
   const startDashArrowSlide = () => {
-    if (dashArrowSlid) return;
+    if (dashArrowSlid || rightArrowContainer.style.display === 'none') return;
     dashArrowSlid = true;
     rightArrowContainer.getAnimations().forEach(anim => anim.cancel());
     rightArrowContainer.style.left = '50%';
@@ -260,7 +261,7 @@ const init = async () => {
     );
   };
   const startDashArrowNudge = () => {
-    if (dashArrowNudged) return;
+    if (dashArrowNudged || rightArrowContainer.style.display === 'none') return;
     dashArrowNudged = true;
     rightArrow.style.animation = 'none';
     rightArrowContainer.getAnimations().forEach(anim => anim.cancel());
@@ -467,6 +468,231 @@ const init = async () => {
   type ChargeFX = { x: number; y: number; vx: number; vy: number; size: number; life: number; maxLife: number };
   const enemyChargeHalo: ChargeFX[] = [];
   const enemyChargeOrbit: ChargeFX[] = [];
+
+  type OrbitDot = {
+    angle: number;
+    radius: number;
+    speed: number;
+    size: number;
+    alpha: number;
+    wobble: number;
+    wobbleSpeed: number;
+    color: { r: number; g: number; b: number };
+    pulsePhase: number;
+    pulseSpeed: number;
+    pulseMin: number;
+    pulseMax: number;
+    isAccent: boolean;
+  };
+
+  const METEOR_ORB_PADDING = 240;
+  const METEOR_ORB_RADIUS = 18;
+  const METEOR_ORB_SPAWN_OFFSET = 520;
+  const METEOR_ORB_GRAVITY = 9000;
+  const METEOR_ORB_BOUNCE_DAMPING = 0.45;
+  const METEOR_ORB_MIN_BOUNCE_VELOCITY = 140;
+  const METEOR_ORB_PLATFORM_BOUNCES = 3;
+  const METEOR_ORB_GLOW = 0.9;
+  const METEOR_ORB_BRIGHTNESS = 1.2;
+  const METEOR_ORB_SPRITE_ALPHA = 1;
+  const METEOR_ORB_GLOW_STRENGTH = 0.45;
+  const METEOR_ORB_GLOW_BLUR_MULT = 2.2;
+  const METEOR_ORB_ACCENT_COLOR = { r: 79, g: 195, b: 247 };
+  const METEOR_ORB_ACCENT_ALPHA = 1;
+  const METEOR_ORB_WHITE_COLOR = { r: 255, g: 255, b: 255 };
+  const METEOR_ORB_FLASH_COLOR = { r: 72, g: 190, b: 255 };
+  const METEOR_ORB_FLASH_DURATION = 0.28;
+  const meteorOrbCanvas = document.createElement('canvas');
+  meteorOrbCanvas.width = app.renderer.width + METEOR_ORB_PADDING * 2;
+  meteorOrbCanvas.height = app.renderer.height + METEOR_ORB_PADDING * 2;
+  const meteorOrbCtx = meteorOrbCanvas.getContext('2d');
+  if (!meteorOrbCtx) {
+    throw new Error('Failed to create meteor orb canvas');
+  }
+  const meteorOrbTexture = Texture.from(meteorOrbCanvas);
+  const meteorOrbSprite = new Sprite(meteorOrbTexture);
+  meteorOrbSprite.blendMode = 'screen';
+  meteorOrbSprite.alpha = METEOR_ORB_SPRITE_ALPHA;
+  meteorOrbSprite.position.set(-METEOR_ORB_PADDING, -METEOR_ORB_PADDING);
+
+  const meteorOrbAccentCanvas = document.createElement('canvas');
+  meteorOrbAccentCanvas.width = app.renderer.width + METEOR_ORB_PADDING * 2;
+  meteorOrbAccentCanvas.height = app.renderer.height + METEOR_ORB_PADDING * 2;
+  const meteorOrbAccentCtx = meteorOrbAccentCanvas.getContext('2d');
+  if (!meteorOrbAccentCtx) {
+    throw new Error('Failed to create meteor orb accent canvas');
+  }
+  const meteorOrbAccentTexture = Texture.from(meteorOrbAccentCanvas);
+  const meteorOrbAccentSprite = new Sprite(meteorOrbAccentTexture);
+  meteorOrbAccentSprite.blendMode = 'normal';
+  meteorOrbAccentSprite.position.set(-METEOR_ORB_PADDING, -METEOR_ORB_PADDING);
+
+  const tintOrbColor = (base: { r: number; g: number; b: number }, variance: number) => {
+    const apply = (c: number) => {
+      const v = c * (1 + (Math.random() - 0.5) * variance);
+      return Math.max(0, Math.min(255, Math.round(v)));
+    };
+    return { r: apply(base.r), g: apply(base.g), b: apply(base.b) };
+  };
+
+  const createOrbDots = (
+    count: number,
+    radiusMin: number,
+    radiusMax: number,
+    speedMin: number,
+    speedMax: number,
+    sizeMin: number,
+    sizeMax: number,
+    alpha: number,
+    baseColor: { r: number; g: number; b: number }
+  ): OrbitDot[] => {
+    const dots: OrbitDot[] = [];
+    for (let i = 0; i < count; i++) {
+      const radius = radiusMin + Math.random() * (radiusMax - radiusMin);
+      const speed = (Math.random() > 0.5 ? 1 : -1) * (speedMin + Math.random() * (speedMax - speedMin));
+      const size = sizeMin + Math.random() * (sizeMax - sizeMin);
+      dots.push({
+        angle: Math.random() * Math.PI * 2,
+        radius,
+        speed,
+        size,
+        alpha,
+        wobble: 2 + Math.random() * 6,
+        wobbleSpeed: 0.6 + Math.random() * 1.1,
+        color: tintOrbColor(baseColor, 0.25),
+        pulsePhase: Math.random() * Math.PI * 2,
+        pulseSpeed: 0,
+        pulseMin: 1,
+        pulseMax: 1,
+        isAccent: false,
+      });
+    }
+    return dots;
+  };
+
+  const orbOuterColor = { r: 120, g: 220, b: 255 };
+  const orbInnerColor = { r: 85, g: 195, b: 245 };
+  const orbCoreColor = { r: 55, g: 165, b: 225 };
+  const orbFarPalette = [
+    { r: 185, g: 245, b: 255 },
+    { r: 130, g: 215, b: 255 },
+    { r: 70, g: 170, b: 235 },
+  ];
+  const orbFarAccent = { r: 50, g: 135, b: 210 };
+  const orbOuterPalette = [
+    { r: 45, g: 140, b: 215 },
+    { r: 95, g: 195, b: 250 },
+    { r: 165, g: 235, b: 255 },
+  ];
+  const orbOuterAccent = { r: 35, g: 120, b: 200 };
+  const orbInnerPalette = [
+    { r: 40, g: 135, b: 205 },
+    { r: 85, g: 185, b: 240 },
+    { r: 140, g: 225, b: 255 },
+  ];
+  const orbCorePalette = [
+    { r: 30, g: 115, b: 185 },
+    { r: 70, g: 165, b: 235 },
+    { r: 120, g: 210, b: 255 },
+  ];
+
+  const meteorOrbOuterDots = createOrbDots(14, 46, 68, 1.2, 2.2, 2.8, 4.4, 0.655, orbOuterColor);
+  const meteorOrbInnerDots = createOrbDots(10, 28, 42, 0.9, 1.6, 3.0, 5.0, 0.85, orbInnerColor);
+  const meteorOrbCoreDots = createOrbDots(5, 14, 24, 0.5, 1.0, 8.0, 12.0, 0.95, orbCoreColor);
+  const meteorOrbFarDots = createOrbDots(16, 78, 110, 0.5, 1.0, 1.2, 2.2, 0.5, orbOuterColor);
+
+  const pickPaletteColor = (palette: Array<{ r: number; g: number; b: number }>) =>
+    palette[Math.floor(Math.random() * palette.length)];
+
+  const darkenColor = (color: { r: number; g: number; b: number }, factor: number) => ({
+    r: Math.round(color.r * factor),
+    g: Math.round(color.g * factor),
+    b: Math.round(color.b * factor),
+  });
+
+  const applyPalette = (
+    dots: OrbitDot[],
+    palette: Array<{ r: number; g: number; b: number }>,
+    accent?: { r: number; g: number; b: number },
+    accentCount: number = 0,
+    variance: number = 0.1
+  ) => {
+    dots.forEach((dot) => {
+      dot.color = tintOrbColor(pickPaletteColor(palette), variance);
+    });
+
+    if (accent && accentCount > 0) {
+      const used = new Set<number>();
+      for (let i = 0; i < accentCount && used.size < dots.length; i++) {
+        let idx = Math.floor(Math.random() * dots.length);
+        while (used.has(idx)) {
+          idx = Math.floor(Math.random() * dots.length);
+        }
+        used.add(idx);
+        dots[idx].color = tintOrbColor(accent, 0.08);
+      }
+    }
+  };
+
+  const applyPulse = (
+    dots: OrbitDot[],
+    minScale: number,
+    maxScale: number,
+    speedMin: number,
+    speedMax: number
+  ) => {
+    dots.forEach((dot) => {
+      dot.pulseMin = minScale;
+      dot.pulseMax = maxScale;
+      dot.pulseSpeed = speedMin + Math.random() * (speedMax - speedMin);
+      dot.pulsePhase = Math.random() * Math.PI * 2;
+    });
+  };
+
+  applyPalette(meteorOrbOuterDots, orbOuterPalette, orbOuterAccent, 2, 0.18);
+  meteorOrbInnerDots.forEach((dot, idx) => {
+    const base = tintOrbColor(pickPaletteColor(orbInnerPalette), 0.18);
+    dot.color = idx % 3 === 0 ? tintOrbColor(darkenColor(base, 0.55), 0.08) : base;
+  });
+  applyPalette(meteorOrbCoreDots, orbCorePalette, undefined, 0, 0.14);
+  applyPalette(meteorOrbFarDots, orbFarPalette, orbFarAccent, 2, 0.2);
+  applyPulse(meteorOrbFarDots, 0, 1, 0.7, 1.4);
+
+  const applyAccentDots = (dots: OrbitDot[], count: number) => {
+    const used = new Set<number>();
+    for (let i = 0; i < count && used.size < dots.length; i++) {
+      let idx = Math.floor(Math.random() * dots.length);
+      while (used.has(idx)) {
+        idx = Math.floor(Math.random() * dots.length);
+      }
+      used.add(idx);
+      dots[idx].isAccent = true;
+      dots[idx].color = METEOR_ORB_ACCENT_COLOR;
+    }
+  };
+
+  applyAccentDots(meteorOrbOuterDots, 2);
+  applyAccentDots(meteorOrbInnerDots, 1);
+  applyAccentDots(meteorOrbCoreDots, 1);
+  applyAccentDots(meteorOrbFarDots, 1);
+
+  const meteorOrbState = {
+    active: false,
+    collected: false,
+    anchorLeftId: null as number | null,
+    anchorRightId: null as number | null,
+    x: 0,
+    y: 0,
+    velocityY: 0,
+    bounceCount: 0,
+    surfaceOverrideY: null as number | null,
+    platformId: null as number | null,
+    compactScale: 1,
+    compactTarget: 1,
+    bobPhase: Math.random() * Math.PI * 2,
+    flashUntil: 0,
+    anchorSurfaceY: null as number | null,
+  };
 
   // Initialize charge particle system (currently disabled but keeping structure for future re-enable)
   // @ts-expect-error - Keeping for future re-enable
@@ -928,6 +1154,8 @@ const init = async () => {
   playfieldContainer.addChild(sparkSprite);
   playfieldContainer.addChild(megaLaserGraphic);
   playfieldContainer.addChild(haloSprite);
+  playfieldContainer.addChild(meteorOrbAccentSprite);
+  playfieldContainer.addChild(meteorOrbSprite);
   playfieldContainer.addChild(enemyChargeSprite);
   playfieldContainer.addChild(projectileContainer);
   playfieldContainer.addChild(butterflyContainer);
@@ -1810,6 +2038,13 @@ const init = async () => {
         physics.setPosition(playerInitialX, RESPAWN_HEIGHT_ABOVE_SCREEN);
         ball.position.set(playerInitialX, RESPAWN_HEIGHT_ABOVE_SCREEN);
         startRespawnEaseToCursor();
+        if (meteorOrbState.collected) {
+          meteorOrbState.x = playerInitialX - playerRadius * 2.2;
+          meteorOrbState.y = RESPAWN_HEIGHT_ABOVE_SCREEN - playerRadius * 0.9 + 5;
+          meteorOrbState.velocityY = 0;
+          meteorOrbState.surfaceOverrideY = null;
+          meteorOrbState.platformId = null;
+        }
 
         // CRITICAL: Show player and shadow again
         ball.visible = true;
@@ -2291,6 +2526,13 @@ const init = async () => {
       physics.setPosition(playerInitialX, RESPAWN_HEIGHT_ABOVE_SCREEN);
       physics.setMousePosition(playerInitialX);
       ball.position.set(playerInitialX, RESPAWN_HEIGHT_ABOVE_SCREEN);
+      if (meteorOrbState.collected) {
+        meteorOrbState.x = playerInitialX - playerRadius * 2.2;
+        meteorOrbState.y = RESPAWN_HEIGHT_ABOVE_SCREEN - playerRadius * 0.9 + 5;
+        meteorOrbState.velocityY = 0;
+        meteorOrbState.surfaceOverrideY = null;
+        meteorOrbState.platformId = null;
+      }
       ball.visible = true;
       ball.alpha = 1.0;
       playerShadow.getView().visible = true;
@@ -2499,6 +2741,299 @@ const init = async () => {
     });
     enemyChargeCtx.restore();
     enemyChargeTexture.source.update();
+
+    // Update meteor orb collectible (yellow orbiting spheres in hole platform area)
+    const hasHolePlatforms = cometHoleLevelActive && holeSequencePlatformIds.length >= 2;
+    if (!meteorOrbState.collected) {
+      if (!hasHolePlatforms && meteorOrbState.active) {
+        meteorOrbState.active = false;
+        meteorOrbState.anchorLeftId = null;
+        meteorOrbState.anchorRightId = null;
+        meteorOrbState.velocityY = 0;
+        meteorOrbState.bounceCount = 0;
+        meteorOrbState.surfaceOverrideY = null;
+        meteorOrbState.platformId = null;
+        meteorOrbState.anchorSurfaceY = null;
+      }
+    }
+
+    let orbLeft: PlatformCollision | null = null;
+    let orbRight: PlatformCollision | null = null;
+
+    if (!meteorOrbState.collected && hasHolePlatforms) {
+      if (meteorOrbState.anchorLeftId !== null && meteorOrbState.anchorRightId !== null) {
+        orbLeft = platforms.getPlatformBoundsById(meteorOrbState.anchorLeftId);
+        orbRight = platforms.getPlatformBoundsById(meteorOrbState.anchorRightId);
+        if (orbLeft && orbRight && orbLeft.id === orbRight.id) {
+          orbLeft = null;
+          orbRight = null;
+        }
+      }
+
+      if (!orbLeft || !orbRight) {
+        for (const id of holeSequencePlatformIds) {
+          const bounds = platforms.getPlatformBoundsById(id);
+          if (bounds) {
+            orbLeft = bounds;
+            meteorOrbState.anchorLeftId = id;
+            break;
+          }
+        }
+        for (let i = holeSequencePlatformIds.length - 1; i >= 0; i--) {
+          const id = holeSequencePlatformIds[i];
+          const bounds = platforms.getPlatformBoundsById(id);
+          if (bounds) {
+            orbRight = bounds;
+            meteorOrbState.anchorRightId = id;
+            break;
+          }
+        }
+        if (orbLeft && orbRight && orbLeft.id !== orbRight.id) {
+          const justActivated = !meteorOrbState.active;
+          meteorOrbState.active = true;
+          const spawnX = (orbLeft.left + orbLeft.right + orbRight.left + orbRight.right) * 0.25;
+          const spawnY = (orbLeft.surfaceY + orbRight.surfaceY) * 0.5 + playerRadius - METEOR_ORB_SPAWN_OFFSET;
+          if (justActivated) {
+            meteorOrbState.x = spawnX;
+            meteorOrbState.y = spawnY;
+            meteorOrbState.velocityY = 0;
+            meteorOrbState.bounceCount = 0;
+            meteorOrbState.surfaceOverrideY = null;
+            meteorOrbState.platformId = null;
+          }
+        }
+      }
+    }
+
+    if (meteorOrbState.active && !meteorOrbState.collected && orbLeft && orbRight) {
+      const leftCenterX = (orbLeft.left + orbLeft.right) * 0.5;
+      const rightCenterX = (orbRight.left + orbRight.right) * 0.5;
+      const leftCenterY = orbLeft.surfaceY + playerRadius;
+      const rightCenterY = orbRight.surfaceY + playerRadius;
+      const targetX = (leftCenterX + rightCenterX) * 0.5;
+      const anchorLerp = 1 - Math.exp(-deltaSeconds * 3.2);
+      meteorOrbState.x += (targetX - meteorOrbState.x) * anchorLerp;
+      const targetY = (leftCenterY + rightCenterY) * 0.5 - playerRadius * 0.6;
+      meteorOrbState.anchorSurfaceY = targetY - METEOR_ORB_SPAWN_OFFSET;
+      if (meteorOrbState.y < targetY - METEOR_ORB_SPAWN_OFFSET) {
+        meteorOrbState.y += (targetY - METEOR_ORB_SPAWN_OFFSET - meteorOrbState.y) * anchorLerp;
+      }
+    } else if (!meteorOrbState.collected) {
+      meteorOrbState.anchorSurfaceY = null;
+    }
+
+    const orbState = meteorOrbState.active || meteorOrbState.collected ? physics.getState() : null;
+
+    if (meteorOrbState.active && !meteorOrbState.collected) {
+      const prevBounds = {
+        left: meteorOrbState.x - METEOR_ORB_RADIUS,
+        right: meteorOrbState.x + METEOR_ORB_RADIUS,
+        top: meteorOrbState.y - METEOR_ORB_RADIUS,
+        bottom: meteorOrbState.y + METEOR_ORB_RADIUS,
+      };
+
+      meteorOrbState.velocityY += METEOR_ORB_GRAVITY * deltaSeconds;
+      meteorOrbState.y += meteorOrbState.velocityY * deltaSeconds;
+
+      if (meteorOrbState.platformId !== null) {
+        const livePlatform = platforms.getPlatformBoundsById(meteorOrbState.platformId);
+        if (
+          !livePlatform ||
+          meteorOrbState.x < livePlatform.left - METEOR_ORB_RADIUS ||
+          meteorOrbState.x > livePlatform.right + METEOR_ORB_RADIUS
+        ) {
+          meteorOrbState.platformId = null;
+          meteorOrbState.surfaceOverrideY = null;
+          meteorOrbState.bounceCount = 0;
+        } else {
+          meteorOrbState.surfaceOverrideY = livePlatform.surfaceY + METEOR_ORB_RADIUS;
+        }
+      }
+
+      const currentBounds = {
+        left: meteorOrbState.x - METEOR_ORB_RADIUS,
+        right: meteorOrbState.x + METEOR_ORB_RADIUS,
+        top: meteorOrbState.y - METEOR_ORB_RADIUS,
+        bottom: meteorOrbState.y + METEOR_ORB_RADIUS,
+      };
+
+      if (meteorOrbState.platformId === null) {
+        const supportingPlatform = platforms.getSupportingPlatform(
+          currentBounds,
+          prevBounds,
+          meteorOrbState.velocityY
+        );
+        if (supportingPlatform) {
+          meteorOrbState.platformId = supportingPlatform.id;
+          meteorOrbState.surfaceOverrideY = supportingPlatform.surfaceY + METEOR_ORB_RADIUS;
+          meteorOrbState.bounceCount = 0;
+        }
+      }
+
+      const baseGround = computePlayerGround() - METEOR_ORB_RADIUS;
+      const platformGround = meteorOrbState.surfaceOverrideY ?? baseGround;
+      const effectiveGround =
+        meteorOrbState.anchorSurfaceY !== null
+          ? Math.min(meteorOrbState.anchorSurfaceY, platformGround)
+          : platformGround;
+
+      if (meteorOrbState.y > effectiveGround) {
+        meteorOrbState.y = effectiveGround;
+        if (meteorOrbState.velocityY > 0) {
+          if (meteorOrbState.surfaceOverrideY !== null) {
+            meteorOrbState.bounceCount += 1;
+            if (meteorOrbState.bounceCount >= METEOR_ORB_PLATFORM_BOUNCES) {
+              meteorOrbState.velocityY = 0;
+            } else {
+              meteorOrbState.velocityY = -meteorOrbState.velocityY * METEOR_ORB_BOUNCE_DAMPING;
+              if (Math.abs(meteorOrbState.velocityY) < METEOR_ORB_MIN_BOUNCE_VELOCITY) {
+                meteorOrbState.velocityY = 0;
+                meteorOrbState.bounceCount = METEOR_ORB_PLATFORM_BOUNCES;
+              }
+            }
+          } else {
+            meteorOrbState.velocityY = -meteorOrbState.velocityY * METEOR_ORB_BOUNCE_DAMPING;
+            if (Math.abs(meteorOrbState.velocityY) < METEOR_ORB_MIN_BOUNCE_VELOCITY) {
+              meteorOrbState.velocityY = 0;
+            }
+          }
+        }
+      }
+
+      if (meteorOrbState.surfaceOverrideY !== null && Math.abs(meteorOrbState.velocityY) < METEOR_ORB_MIN_BOUNCE_VELOCITY) {
+        meteorOrbState.y = meteorOrbState.surfaceOverrideY;
+      }
+    }
+
+    if (orbState && meteorOrbState.active && !meteorOrbState.collected) {
+      const dx = orbState.x - meteorOrbState.x;
+      const dy = orbState.y - meteorOrbState.y;
+      const collectRadius = playerRadius + METEOR_ORB_RADIUS;
+      if ((dx * dx + dy * dy) <= collectRadius * collectRadius) {
+        meteorOrbState.collected = true;
+        meteorOrbState.active = true;
+        meteorOrbState.velocityY = 0;
+        meteorOrbState.bounceCount = 0;
+        meteorOrbState.surfaceOverrideY = null;
+        meteorOrbState.platformId = null;
+        meteorOrbState.flashUntil = tickerInstance.lastTime + METEOR_ORB_FLASH_DURATION * 1000;
+      }
+    }
+
+    if (orbState && meteorOrbState.collected) {
+      const followX = orbState.x - playerRadius * 2.2;
+      const followY = orbState.y - playerRadius * 0.9 + 5;
+      const followLerp = 1 - Math.exp(-deltaSeconds * 6);
+      meteorOrbState.x += (followX - meteorOrbState.x) * followLerp;
+      meteorOrbState.y += (followY - meteorOrbState.y) * followLerp;
+    }
+
+    meteorOrbState.compactTarget = meteorOrbState.collected ? 0.45 : 1;
+    const compactLerp = 1 - Math.exp(-deltaSeconds * 2.8);
+    meteorOrbState.compactScale += (meteorOrbState.compactTarget - meteorOrbState.compactScale) * compactLerp;
+
+    const orbVisible = meteorOrbState.active || meteorOrbState.collected;
+    meteorOrbSprite.visible = orbVisible;
+    meteorOrbAccentSprite.visible = orbVisible;
+    meteorOrbCtx.clearRect(0, 0, meteorOrbCanvas.width, meteorOrbCanvas.height);
+    meteorOrbAccentCtx.clearRect(0, 0, meteorOrbAccentCanvas.width, meteorOrbAccentCanvas.height);
+    if (orbVisible) {
+      const advanceDots = (dots: OrbitDot[], speedScale: number) => {
+        dots.forEach((dot) => {
+          dot.angle += dot.speed * deltaSeconds * speedScale;
+        });
+      };
+      const renderDots = (dots: OrbitDot[], scale: number) => {
+        const time = tickerInstance.lastTime / 1000;
+        const nowMs = tickerInstance.lastTime;
+        const flashActive = meteorOrbState.collected && nowMs < meteorOrbState.flashUntil;
+        const colorOverride = flashActive
+          ? METEOR_ORB_FLASH_COLOR
+          : meteorOrbState.collected
+            ? null
+            : METEOR_ORB_WHITE_COLOR;
+        dots.forEach((dot) => {
+          if (dot.isAccent) return;
+          const wobble = Math.sin((tickerInstance.lastTime / 1000) * dot.wobbleSpeed + dot.angle) * dot.wobble;
+          const radius = (dot.radius + wobble) * scale;
+          const x = Math.cos(dot.angle) * radius;
+          const y = Math.sin(dot.angle) * radius;
+          const depth = Math.cos(dot.angle);
+          const shade = colorOverride ? 1 : 0.7 + 0.3 * ((depth + 1) * 0.5);
+          const pulse =
+            dot.pulseSpeed > 0
+              ? dot.pulseMin + (dot.pulseMax - dot.pulseMin) * (0.5 + 0.5 * Math.sin(time * dot.pulseSpeed + dot.pulsePhase))
+              : 1;
+          const alpha = dot.alpha * (0.75 + 0.25 * ((depth + 1) * 0.5)) * METEOR_ORB_GLOW * (0.35 + 0.65 * pulse);
+          const baseColor = colorOverride ?? dot.color;
+          const r = Math.min(255, Math.round(baseColor.r * shade * METEOR_ORB_BRIGHTNESS));
+          const g = Math.min(255, Math.round(baseColor.g * shade * METEOR_ORB_BRIGHTNESS));
+          const b = Math.min(255, Math.round(baseColor.b * shade * METEOR_ORB_BRIGHTNESS));
+          const dotSize = dot.size * pulse;
+          if (dotSize <= 0.05 || alpha <= 0.02) {
+            return;
+          }
+          meteorOrbCtx.shadowBlur = dot.size * METEOR_ORB_GLOW_BLUR_MULT;
+          meteorOrbCtx.shadowColor = `rgba(${r}, ${g}, ${b}, ${alpha * METEOR_ORB_GLOW_STRENGTH})`;
+          meteorOrbCtx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
+          meteorOrbCtx.beginPath();
+          meteorOrbCtx.arc(x, y, dotSize, 0, Math.PI * 2);
+          meteorOrbCtx.fill();
+          meteorOrbCtx.shadowBlur = 0;
+        });
+      };
+      const renderAccentDots = (dots: OrbitDot[], scale: number) => {
+        const time = tickerInstance.lastTime / 1000;
+        const nowMs = tickerInstance.lastTime;
+        const flashActive = meteorOrbState.collected && nowMs < meteorOrbState.flashUntil;
+        const colorOverride = flashActive
+          ? METEOR_ORB_FLASH_COLOR
+          : meteorOrbState.collected
+            ? null
+            : METEOR_ORB_WHITE_COLOR;
+        dots.forEach((dot) => {
+          if (!dot.isAccent) return;
+          const wobble = Math.sin(time * dot.wobbleSpeed + dot.angle) * dot.wobble;
+          const radius = (dot.radius + wobble) * scale;
+          const x = Math.cos(dot.angle) * radius;
+          const y = Math.sin(dot.angle) * radius;
+          const pulse =
+            dot.pulseSpeed > 0
+              ? dot.pulseMin + (dot.pulseMax - dot.pulseMin) * (0.5 + 0.5 * Math.sin(time * dot.pulseSpeed + dot.pulsePhase))
+              : 1;
+          const dotSize = dot.size * pulse;
+          const alpha = Math.min(1, dot.alpha * (0.6 + 0.4 * pulse) * METEOR_ORB_ACCENT_ALPHA);
+          const baseColor = colorOverride ?? dot.color;
+          meteorOrbAccentCtx.fillStyle = `rgba(${baseColor.r}, ${baseColor.g}, ${baseColor.b}, ${alpha})`;
+          meteorOrbAccentCtx.beginPath();
+          meteorOrbAccentCtx.arc(x, y, dotSize, 0, Math.PI * 2);
+          meteorOrbAccentCtx.fill();
+        });
+      };
+
+      advanceDots(meteorOrbFarDots, 1.05);
+      advanceDots(meteorOrbOuterDots, 1.35);
+      advanceDots(meteorOrbInnerDots, 1.1);
+      advanceDots(meteorOrbCoreDots, 0.8);
+
+      meteorOrbCtx.save();
+      meteorOrbCtx.translate(meteorOrbState.x + METEOR_ORB_PADDING, meteorOrbState.y + METEOR_ORB_PADDING);
+      meteorOrbAccentCtx.save();
+      meteorOrbAccentCtx.translate(meteorOrbState.x + METEOR_ORB_PADDING, meteorOrbState.y + METEOR_ORB_PADDING);
+      const outerScale = meteorOrbState.compactScale * (meteorOrbState.collected ? 1.15 : 1);
+      renderDots(meteorOrbFarDots, meteorOrbState.compactScale * (meteorOrbState.collected ? 1.4 : 1.25));
+      renderDots(meteorOrbOuterDots, outerScale);
+      renderDots(meteorOrbInnerDots, meteorOrbState.compactScale * 0.9);
+      renderDots(meteorOrbCoreDots, meteorOrbState.compactScale * 0.6);
+      meteorOrbCtx.restore();
+      renderAccentDots(meteorOrbFarDots, meteorOrbState.compactScale * (meteorOrbState.collected ? 1.4 : 1.25));
+      renderAccentDots(meteorOrbOuterDots, outerScale);
+      renderAccentDots(meteorOrbInnerDots, meteorOrbState.compactScale * 0.9);
+      renderAccentDots(meteorOrbCoreDots, meteorOrbState.compactScale * 0.6);
+      meteorOrbAccentCtx.restore();
+    }
+    meteorOrbTexture.source.update();
+    meteorOrbAccentTexture.source.update();
 
     // Update player projectiles (only when unlocked)
     projectiles.forEach(p => {
@@ -3007,6 +3542,17 @@ const init = async () => {
       respawnLandProgress = 0;
       respawnLandActive = false;
       lastHoleStartX = null;
+      if (!meteorOrbState.collected) {
+        meteorOrbState.active = false;
+        meteorOrbState.anchorLeftId = null;
+        meteorOrbState.anchorRightId = null;
+        meteorOrbState.velocityY = 0;
+        meteorOrbState.bounceCount = 0;
+        meteorOrbState.surfaceOverrideY = null;
+        meteorOrbState.platformId = null;
+        meteorOrbState.compactScale = 1;
+        meteorOrbState.compactTarget = 1;
+      }
     }
 
     if (hasActiveHoles || willMoreHolesCome) {
@@ -4205,11 +4751,11 @@ const init = async () => {
       sparkParticles.spawn(laserResult.hitPosition.x, laserResult.hitPosition.y, 'red');
       playerFlashUntil = performance.now() + 250;
       // Count hits dealt by red; every 20 hits = 1 out on blue
-      redHits += 1;
-      if (redHits >= HITS_PER_OUT) {
-        const outsGained = Math.floor(redHits / HITS_PER_OUT);
+      blueHits += 1;
+      if (blueHits >= HITS_PER_OUT) {
+        const outsGained = Math.floor(blueHits / HITS_PER_OUT);
         blueOuts = Math.min(10, blueOuts + outsGained);
-        redHits = redHits % HITS_PER_OUT;
+        blueHits = blueHits % HITS_PER_OUT;
       }
       if (!firstOutMade && (blueOuts + redOuts) > 0) {
         firstOutMade = true;
@@ -4604,6 +5150,15 @@ const init = async () => {
     enemyChargeCanvas.width = app.renderer.width;
     enemyChargeCanvas.height = app.renderer.height;
     enemyChargeTexture.source.update();
+    // Resize meteor orb canvases (with padding so it can extend off-screen)
+    meteorOrbCanvas.width = app.renderer.width + METEOR_ORB_PADDING * 2;
+    meteorOrbCanvas.height = app.renderer.height + METEOR_ORB_PADDING * 2;
+    meteorOrbTexture.source.update();
+    meteorOrbSprite.position.set(-METEOR_ORB_PADDING, -METEOR_ORB_PADDING);
+    meteorOrbAccentCanvas.width = app.renderer.width + METEOR_ORB_PADDING * 2;
+    meteorOrbAccentCanvas.height = app.renderer.height + METEOR_ORB_PADDING * 2;
+    meteorOrbAccentTexture.source.update();
+    meteorOrbAccentSprite.position.set(-METEOR_ORB_PADDING, -METEOR_ORB_PADDING);
     // Resize halo canvas
     haloCanvas.width = app.renderer.width;
     haloCanvas.height = app.renderer.height;
