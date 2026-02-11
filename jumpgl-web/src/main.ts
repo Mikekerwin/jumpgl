@@ -18,6 +18,7 @@ import { WindSpriteSystem } from './windSprites';
 import { ButterflyManager } from './butterflyAnimation';
 import { GroundHoleManager } from './groundHoleManager';
 import { EmberParticles } from './emberParticles';
+import { useMeteorOrb } from './meteorOrb';
 import {
   calculateResponsiveSizes,
   GROUND_PLAYER_DEPTH,
@@ -469,231 +470,6 @@ const init = async () => {
   const enemyChargeHalo: ChargeFX[] = [];
   const enemyChargeOrbit: ChargeFX[] = [];
 
-  type OrbitDot = {
-    angle: number;
-    radius: number;
-    speed: number;
-    size: number;
-    alpha: number;
-    wobble: number;
-    wobbleSpeed: number;
-    color: { r: number; g: number; b: number };
-    pulsePhase: number;
-    pulseSpeed: number;
-    pulseMin: number;
-    pulseMax: number;
-    isAccent: boolean;
-  };
-
-  const METEOR_ORB_PADDING = 240;
-  const METEOR_ORB_RADIUS = 18;
-  const METEOR_ORB_SPAWN_OFFSET = 520;
-  const METEOR_ORB_GRAVITY = 9000;
-  const METEOR_ORB_BOUNCE_DAMPING = 0.45;
-  const METEOR_ORB_MIN_BOUNCE_VELOCITY = 140;
-  const METEOR_ORB_PLATFORM_BOUNCES = 3;
-  const METEOR_ORB_GLOW = 0.9;
-  const METEOR_ORB_BRIGHTNESS = 1.2;
-  const METEOR_ORB_SPRITE_ALPHA = 1;
-  const METEOR_ORB_GLOW_STRENGTH = 0.45;
-  const METEOR_ORB_GLOW_BLUR_MULT = 2.2;
-  const METEOR_ORB_ACCENT_COLOR = { r: 79, g: 195, b: 247 };
-  const METEOR_ORB_ACCENT_ALPHA = 1;
-  const METEOR_ORB_WHITE_COLOR = { r: 255, g: 255, b: 255 };
-  const METEOR_ORB_FLASH_COLOR = { r: 72, g: 190, b: 255 };
-  const METEOR_ORB_FLASH_DURATION = 0.28;
-  const meteorOrbCanvas = document.createElement('canvas');
-  meteorOrbCanvas.width = app.renderer.width + METEOR_ORB_PADDING * 2;
-  meteorOrbCanvas.height = app.renderer.height + METEOR_ORB_PADDING * 2;
-  const meteorOrbCtx = meteorOrbCanvas.getContext('2d');
-  if (!meteorOrbCtx) {
-    throw new Error('Failed to create meteor orb canvas');
-  }
-  const meteorOrbTexture = Texture.from(meteorOrbCanvas);
-  const meteorOrbSprite = new Sprite(meteorOrbTexture);
-  meteorOrbSprite.blendMode = 'screen';
-  meteorOrbSprite.alpha = METEOR_ORB_SPRITE_ALPHA;
-  meteorOrbSprite.position.set(-METEOR_ORB_PADDING, -METEOR_ORB_PADDING);
-
-  const meteorOrbAccentCanvas = document.createElement('canvas');
-  meteorOrbAccentCanvas.width = app.renderer.width + METEOR_ORB_PADDING * 2;
-  meteorOrbAccentCanvas.height = app.renderer.height + METEOR_ORB_PADDING * 2;
-  const meteorOrbAccentCtx = meteorOrbAccentCanvas.getContext('2d');
-  if (!meteorOrbAccentCtx) {
-    throw new Error('Failed to create meteor orb accent canvas');
-  }
-  const meteorOrbAccentTexture = Texture.from(meteorOrbAccentCanvas);
-  const meteorOrbAccentSprite = new Sprite(meteorOrbAccentTexture);
-  meteorOrbAccentSprite.blendMode = 'normal';
-  meteorOrbAccentSprite.position.set(-METEOR_ORB_PADDING, -METEOR_ORB_PADDING);
-
-  const tintOrbColor = (base: { r: number; g: number; b: number }, variance: number) => {
-    const apply = (c: number) => {
-      const v = c * (1 + (Math.random() - 0.5) * variance);
-      return Math.max(0, Math.min(255, Math.round(v)));
-    };
-    return { r: apply(base.r), g: apply(base.g), b: apply(base.b) };
-  };
-
-  const createOrbDots = (
-    count: number,
-    radiusMin: number,
-    radiusMax: number,
-    speedMin: number,
-    speedMax: number,
-    sizeMin: number,
-    sizeMax: number,
-    alpha: number,
-    baseColor: { r: number; g: number; b: number }
-  ): OrbitDot[] => {
-    const dots: OrbitDot[] = [];
-    for (let i = 0; i < count; i++) {
-      const radius = radiusMin + Math.random() * (radiusMax - radiusMin);
-      const speed = (Math.random() > 0.5 ? 1 : -1) * (speedMin + Math.random() * (speedMax - speedMin));
-      const size = sizeMin + Math.random() * (sizeMax - sizeMin);
-      dots.push({
-        angle: Math.random() * Math.PI * 2,
-        radius,
-        speed,
-        size,
-        alpha,
-        wobble: 2 + Math.random() * 6,
-        wobbleSpeed: 0.6 + Math.random() * 1.1,
-        color: tintOrbColor(baseColor, 0.25),
-        pulsePhase: Math.random() * Math.PI * 2,
-        pulseSpeed: 0,
-        pulseMin: 1,
-        pulseMax: 1,
-        isAccent: false,
-      });
-    }
-    return dots;
-  };
-
-  const orbOuterColor = { r: 120, g: 220, b: 255 };
-  const orbInnerColor = { r: 85, g: 195, b: 245 };
-  const orbCoreColor = { r: 55, g: 165, b: 225 };
-  const orbFarPalette = [
-    { r: 185, g: 245, b: 255 },
-    { r: 130, g: 215, b: 255 },
-    { r: 70, g: 170, b: 235 },
-  ];
-  const orbFarAccent = { r: 50, g: 135, b: 210 };
-  const orbOuterPalette = [
-    { r: 45, g: 140, b: 215 },
-    { r: 95, g: 195, b: 250 },
-    { r: 165, g: 235, b: 255 },
-  ];
-  const orbOuterAccent = { r: 35, g: 120, b: 200 };
-  const orbInnerPalette = [
-    { r: 40, g: 135, b: 205 },
-    { r: 85, g: 185, b: 240 },
-    { r: 140, g: 225, b: 255 },
-  ];
-  const orbCorePalette = [
-    { r: 30, g: 115, b: 185 },
-    { r: 70, g: 165, b: 235 },
-    { r: 120, g: 210, b: 255 },
-  ];
-
-  const meteorOrbOuterDots = createOrbDots(14, 46, 68, 1.2, 2.2, 2.8, 4.4, 0.655, orbOuterColor);
-  const meteorOrbInnerDots = createOrbDots(10, 28, 42, 0.9, 1.6, 3.0, 5.0, 0.85, orbInnerColor);
-  const meteorOrbCoreDots = createOrbDots(5, 14, 24, 0.5, 1.0, 8.0, 12.0, 0.95, orbCoreColor);
-  const meteorOrbFarDots = createOrbDots(16, 78, 110, 0.5, 1.0, 1.2, 2.2, 0.5, orbOuterColor);
-
-  const pickPaletteColor = (palette: Array<{ r: number; g: number; b: number }>) =>
-    palette[Math.floor(Math.random() * palette.length)];
-
-  const darkenColor = (color: { r: number; g: number; b: number }, factor: number) => ({
-    r: Math.round(color.r * factor),
-    g: Math.round(color.g * factor),
-    b: Math.round(color.b * factor),
-  });
-
-  const applyPalette = (
-    dots: OrbitDot[],
-    palette: Array<{ r: number; g: number; b: number }>,
-    accent?: { r: number; g: number; b: number },
-    accentCount: number = 0,
-    variance: number = 0.1
-  ) => {
-    dots.forEach((dot) => {
-      dot.color = tintOrbColor(pickPaletteColor(palette), variance);
-    });
-
-    if (accent && accentCount > 0) {
-      const used = new Set<number>();
-      for (let i = 0; i < accentCount && used.size < dots.length; i++) {
-        let idx = Math.floor(Math.random() * dots.length);
-        while (used.has(idx)) {
-          idx = Math.floor(Math.random() * dots.length);
-        }
-        used.add(idx);
-        dots[idx].color = tintOrbColor(accent, 0.08);
-      }
-    }
-  };
-
-  const applyPulse = (
-    dots: OrbitDot[],
-    minScale: number,
-    maxScale: number,
-    speedMin: number,
-    speedMax: number
-  ) => {
-    dots.forEach((dot) => {
-      dot.pulseMin = minScale;
-      dot.pulseMax = maxScale;
-      dot.pulseSpeed = speedMin + Math.random() * (speedMax - speedMin);
-      dot.pulsePhase = Math.random() * Math.PI * 2;
-    });
-  };
-
-  applyPalette(meteorOrbOuterDots, orbOuterPalette, orbOuterAccent, 2, 0.18);
-  meteorOrbInnerDots.forEach((dot, idx) => {
-    const base = tintOrbColor(pickPaletteColor(orbInnerPalette), 0.18);
-    dot.color = idx % 3 === 0 ? tintOrbColor(darkenColor(base, 0.55), 0.08) : base;
-  });
-  applyPalette(meteorOrbCoreDots, orbCorePalette, undefined, 0, 0.14);
-  applyPalette(meteorOrbFarDots, orbFarPalette, orbFarAccent, 2, 0.2);
-  applyPulse(meteorOrbFarDots, 0, 1, 0.7, 1.4);
-
-  const applyAccentDots = (dots: OrbitDot[], count: number) => {
-    const used = new Set<number>();
-    for (let i = 0; i < count && used.size < dots.length; i++) {
-      let idx = Math.floor(Math.random() * dots.length);
-      while (used.has(idx)) {
-        idx = Math.floor(Math.random() * dots.length);
-      }
-      used.add(idx);
-      dots[idx].isAccent = true;
-      dots[idx].color = METEOR_ORB_ACCENT_COLOR;
-    }
-  };
-
-  applyAccentDots(meteorOrbOuterDots, 2);
-  applyAccentDots(meteorOrbInnerDots, 1);
-  applyAccentDots(meteorOrbCoreDots, 1);
-  applyAccentDots(meteorOrbFarDots, 1);
-
-  const meteorOrbState = {
-    active: false,
-    collected: false,
-    anchorLeftId: null as number | null,
-    anchorRightId: null as number | null,
-    x: 0,
-    y: 0,
-    velocityY: 0,
-    bounceCount: 0,
-    surfaceOverrideY: null as number | null,
-    platformId: null as number | null,
-    compactScale: 1,
-    compactTarget: 1,
-    bobPhase: Math.random() * Math.PI * 2,
-    flashUntil: 0,
-    anchorSurfaceY: null as number | null,
-  };
-
   // Initialize charge particle system (currently disabled but keeping structure for future re-enable)
   // @ts-expect-error - Keeping for future re-enable
   const chargeParticles = new ChargeParticles();
@@ -775,6 +551,7 @@ const init = async () => {
   const TREEHOUSE_BLEND_HEIGHT = 120;
   const TREEHOUSE_VERTICAL_LOCK = 65;
   const TREEHOUSE_RAMP_STEP = 75;
+  const TREEHOUSE_STEP_Z_BUFFER = 2;
   const PLATFORM_EDGE_TOLERANCE = 8; // Horizontal forgiveness so we don't drop too early
   const PLATFORM_LANDING_OFFSET = 30; // Extra pixels to sink into platform at rest
   const TREEHOUSE_LANDING_OFFSET = PLATFORM_LANDING_OFFSET - 22;
@@ -874,6 +651,7 @@ const init = async () => {
   // Respawn system state
   let respawnState: 'normal' | 'dying' | 'waiting' | 'animating_back' | 'respawning' | 'resume_pause' | 'resume_ramp' = 'normal';
   let respawnTimer = 0;
+  let respawnInputLocked = false;
   // Spawn point tracking for smart culling system
   let spawnPoints: number[] = []; // Array of spawn X positions (sorted left to right)
   let currentSpawnIndex = -1; // Which spawn player is "after" (-1 means before first spawn)
@@ -1056,10 +834,16 @@ const init = async () => {
   let treehouseHoldActive = false;
   let treehouseHoldProgress = 0;
   let treehousePanX = 0;
+  let treehouseOrbCollectedPrev = false;
+  let treehousePanReleaseActive = false;
+  let treehousePanReleaseStart = 0;
   const TREEHOUSE_STOP_RANGE = 260;
   const TREEHOUSE_STOP_DURATION = 1.6;
   const TREEHOUSE_EDGE_PAN = 100;
   const TREEHOUSE_PAN_LERP = 0.08;
+  const TREEHOUSE_PAN_RELEASE_LERP = 0.02;
+  const TREEHOUSE_PAN_RESET_SPEED = 0.001;
+  const TREEHOUSE_PAN_RESET_DELAY_MS = 2000;
 
   // Meeting title reveal (Pixi UI)
   const MEETING_REVEAL_DURATION_MS = 3200;
@@ -1154,8 +938,12 @@ const init = async () => {
   playfieldContainer.addChild(sparkSprite);
   playfieldContainer.addChild(megaLaserGraphic);
   playfieldContainer.addChild(haloSprite);
-  playfieldContainer.addChild(meteorOrbAccentSprite);
-  playfieldContainer.addChild(meteorOrbSprite);
+  const meteorOrb = useMeteorOrb({
+    app,
+    playfieldContainer,
+    orbContainer: grounds.getMiddlegroundContainer(),
+    platforms,
+  });
   playfieldContainer.addChild(enemyChargeSprite);
   playfieldContainer.addChild(projectileContainer);
   playfieldContainer.addChild(butterflyContainer);
@@ -1213,6 +1001,8 @@ const init = async () => {
     // Disable ground collision and let player fall through
     // The respawn state machine will handle the rest when player falls below screen
     fallingIntoHole = true;
+    respawnInputLocked = true;
+    physics.setMousePosition(physics.getState().x);
     physics.clearSurfaceOverride();
     physics.setGroundCollisionEnabled(false);
     physics.forceVelocity(Math.max(300, Math.abs(currentVelocity) + 150));
@@ -1884,11 +1674,13 @@ const init = async () => {
     if (respawnState === 'normal') {
       // Check if player fell out of bounds (below screen)
       const playerY = physics.getState().y;
-      if (playerY > app.renderer.height + 100) { // 100px buffer below screen
+      if (playerY > app.renderer.height + 110) { // 110px buffer below screen
         console.log('[RESPAWN] Player fell out of bounds, entering dying state');
 
         // Capture death position in world coordinates
         deathPlayerX = physics.getState().x;
+        respawnInputLocked = true;
+        physics.setMousePosition(physics.getState().x);
 
         // Find CURRENT position of meteor_transition segment (the pink respawn box)
         const segments = grounds.getSegments();
@@ -2038,13 +1830,7 @@ const init = async () => {
         physics.setPosition(playerInitialX, RESPAWN_HEIGHT_ABOVE_SCREEN);
         ball.position.set(playerInitialX, RESPAWN_HEIGHT_ABOVE_SCREEN);
         startRespawnEaseToCursor();
-        if (meteorOrbState.collected) {
-          meteorOrbState.x = playerInitialX - playerRadius * 2.2;
-          meteorOrbState.y = RESPAWN_HEIGHT_ABOVE_SCREEN - playerRadius * 0.9 + 5;
-          meteorOrbState.velocityY = 0;
-          meteorOrbState.surfaceOverrideY = null;
-          meteorOrbState.platformId = null;
-        }
+        meteorOrb.onRespawn(playerInitialX, RESPAWN_HEIGHT_ABOVE_SCREEN, playerRadius);
 
         // CRITICAL: Show player and shadow again
         ball.visible = true;
@@ -2066,6 +1852,7 @@ const init = async () => {
       if (playerY >= groundY - playerRadius - 5) {
         respawnState = 'resume_pause';
         respawnTimer = 0;
+        respawnInputLocked = false;
         // Re-enable segment generation when resuming normal parallax
         grounds.setAllowNewSegments(true);
         console.log('[RESPAWN] Player landed, pausing before resume');
@@ -2091,6 +1878,7 @@ const init = async () => {
       speedMultiplier = forwardMult * ease;
       if (u >= 1) {
         respawnState = 'normal';
+        respawnInputLocked = false;
         console.log('[RESPAWN] Forward ease complete');
       }
     }
@@ -2430,12 +2218,15 @@ const init = async () => {
       }
     }
 
+    const treehouseOrbCollected = meteorOrb.isCollected();
+    const treehouseJustCollected = treehouseOrbCollected && !treehouseOrbCollectedPrev;
+    treehouseOrbCollectedPrev = treehouseOrbCollected;
     const treehouseSegment = (() => {
       const segments = grounds.getSegments();
       return segments.find((seg) => seg.type === 'treed_prairie_treehouse') || null;
     })();
 
-    if (treehouseSegment) {
+    if (treehouseSegment && !treehouseOrbCollected) {
       const safeZoom = Math.max(0.0001, cameraZoom);
       const screenCenterWorldX = (app.renderer.width * 0.5 - (cameraPanX + treehousePanX)) / safeZoom;
       const segmentCenterX = treehouseSegment.x + treehouseSegment.width * 0.5;
@@ -2445,6 +2236,14 @@ const init = async () => {
       }
     } else {
       treehouseHoldActive = false;
+    }
+
+    if (treehouseJustCollected && treehousePanX !== 0) {
+      cameraPanX += treehousePanX;
+      treehousePanX = 0;
+      treehouseHoldProgress = 0;
+      treehousePanReleaseActive = true;
+      treehousePanReleaseStart = performance.now();
     }
 
     if (treehouseHoldActive) {
@@ -2478,15 +2277,16 @@ const init = async () => {
             ? centerCameraX + edgePan
             : Math.min(maxCameraX, Math.max(minCameraX, desiredCameraX));
         const targetPan = clampedCameraX - cameraPanX;
-        treehousePanX += (targetPan - treehousePanX) * TREEHOUSE_PAN_LERP;
+        const panLerp = TREEHOUSE_PAN_LERP * holdEase;
+        treehousePanX += (targetPan - treehousePanX) * panLerp;
       }
     } else if (treehouseHoldProgress > 0) {
       treehouseHoldProgress = Math.max(0, treehouseHoldProgress - deltaSeconds / TREEHOUSE_STOP_DURATION);
       const holdEase = 1 - Math.pow(1 - treehouseHoldProgress, 2);
       speedMultiplier *= 1 - holdEase;
-      treehousePanX += (0 - treehousePanX) * TREEHOUSE_PAN_LERP;
+      treehousePanX += (0 - treehousePanX) * TREEHOUSE_PAN_RELEASE_LERP;
     } else if (treehousePanX !== 0) {
-      treehousePanX += (0 - treehousePanX) * TREEHOUSE_PAN_LERP;
+      treehousePanX += (0 - treehousePanX) * TREEHOUSE_PAN_RELEASE_LERP;
     }
 
     if (debugFastForwardToSecondSpawn) {
@@ -2526,13 +2326,7 @@ const init = async () => {
       physics.setPosition(playerInitialX, RESPAWN_HEIGHT_ABOVE_SCREEN);
       physics.setMousePosition(playerInitialX);
       ball.position.set(playerInitialX, RESPAWN_HEIGHT_ABOVE_SCREEN);
-      if (meteorOrbState.collected) {
-        meteorOrbState.x = playerInitialX - playerRadius * 2.2;
-        meteorOrbState.y = RESPAWN_HEIGHT_ABOVE_SCREEN - playerRadius * 0.9 + 5;
-        meteorOrbState.velocityY = 0;
-        meteorOrbState.surfaceOverrideY = null;
-        meteorOrbState.platformId = null;
-      }
+      meteorOrb.onRespawn(playerInitialX, RESPAWN_HEIGHT_ABOVE_SCREEN, playerRadius);
       ball.visible = true;
       ball.alpha = 1.0;
       playerShadow.getView().visible = true;
@@ -2741,299 +2535,6 @@ const init = async () => {
     });
     enemyChargeCtx.restore();
     enemyChargeTexture.source.update();
-
-    // Update meteor orb collectible (yellow orbiting spheres in hole platform area)
-    const hasHolePlatforms = cometHoleLevelActive && holeSequencePlatformIds.length >= 2;
-    if (!meteorOrbState.collected) {
-      if (!hasHolePlatforms && meteorOrbState.active) {
-        meteorOrbState.active = false;
-        meteorOrbState.anchorLeftId = null;
-        meteorOrbState.anchorRightId = null;
-        meteorOrbState.velocityY = 0;
-        meteorOrbState.bounceCount = 0;
-        meteorOrbState.surfaceOverrideY = null;
-        meteorOrbState.platformId = null;
-        meteorOrbState.anchorSurfaceY = null;
-      }
-    }
-
-    let orbLeft: PlatformCollision | null = null;
-    let orbRight: PlatformCollision | null = null;
-
-    if (!meteorOrbState.collected && hasHolePlatforms) {
-      if (meteorOrbState.anchorLeftId !== null && meteorOrbState.anchorRightId !== null) {
-        orbLeft = platforms.getPlatformBoundsById(meteorOrbState.anchorLeftId);
-        orbRight = platforms.getPlatformBoundsById(meteorOrbState.anchorRightId);
-        if (orbLeft && orbRight && orbLeft.id === orbRight.id) {
-          orbLeft = null;
-          orbRight = null;
-        }
-      }
-
-      if (!orbLeft || !orbRight) {
-        for (const id of holeSequencePlatformIds) {
-          const bounds = platforms.getPlatformBoundsById(id);
-          if (bounds) {
-            orbLeft = bounds;
-            meteorOrbState.anchorLeftId = id;
-            break;
-          }
-        }
-        for (let i = holeSequencePlatformIds.length - 1; i >= 0; i--) {
-          const id = holeSequencePlatformIds[i];
-          const bounds = platforms.getPlatformBoundsById(id);
-          if (bounds) {
-            orbRight = bounds;
-            meteorOrbState.anchorRightId = id;
-            break;
-          }
-        }
-        if (orbLeft && orbRight && orbLeft.id !== orbRight.id) {
-          const justActivated = !meteorOrbState.active;
-          meteorOrbState.active = true;
-          const spawnX = (orbLeft.left + orbLeft.right + orbRight.left + orbRight.right) * 0.25;
-          const spawnY = (orbLeft.surfaceY + orbRight.surfaceY) * 0.5 + playerRadius - METEOR_ORB_SPAWN_OFFSET;
-          if (justActivated) {
-            meteorOrbState.x = spawnX;
-            meteorOrbState.y = spawnY;
-            meteorOrbState.velocityY = 0;
-            meteorOrbState.bounceCount = 0;
-            meteorOrbState.surfaceOverrideY = null;
-            meteorOrbState.platformId = null;
-          }
-        }
-      }
-    }
-
-    if (meteorOrbState.active && !meteorOrbState.collected && orbLeft && orbRight) {
-      const leftCenterX = (orbLeft.left + orbLeft.right) * 0.5;
-      const rightCenterX = (orbRight.left + orbRight.right) * 0.5;
-      const leftCenterY = orbLeft.surfaceY + playerRadius;
-      const rightCenterY = orbRight.surfaceY + playerRadius;
-      const targetX = (leftCenterX + rightCenterX) * 0.5;
-      const anchorLerp = 1 - Math.exp(-deltaSeconds * 3.2);
-      meteorOrbState.x += (targetX - meteorOrbState.x) * anchorLerp;
-      const targetY = (leftCenterY + rightCenterY) * 0.5 - playerRadius * 0.6;
-      meteorOrbState.anchorSurfaceY = targetY - METEOR_ORB_SPAWN_OFFSET;
-      if (meteorOrbState.y < targetY - METEOR_ORB_SPAWN_OFFSET) {
-        meteorOrbState.y += (targetY - METEOR_ORB_SPAWN_OFFSET - meteorOrbState.y) * anchorLerp;
-      }
-    } else if (!meteorOrbState.collected) {
-      meteorOrbState.anchorSurfaceY = null;
-    }
-
-    const orbState = meteorOrbState.active || meteorOrbState.collected ? physics.getState() : null;
-
-    if (meteorOrbState.active && !meteorOrbState.collected) {
-      const prevBounds = {
-        left: meteorOrbState.x - METEOR_ORB_RADIUS,
-        right: meteorOrbState.x + METEOR_ORB_RADIUS,
-        top: meteorOrbState.y - METEOR_ORB_RADIUS,
-        bottom: meteorOrbState.y + METEOR_ORB_RADIUS,
-      };
-
-      meteorOrbState.velocityY += METEOR_ORB_GRAVITY * deltaSeconds;
-      meteorOrbState.y += meteorOrbState.velocityY * deltaSeconds;
-
-      if (meteorOrbState.platformId !== null) {
-        const livePlatform = platforms.getPlatformBoundsById(meteorOrbState.platformId);
-        if (
-          !livePlatform ||
-          meteorOrbState.x < livePlatform.left - METEOR_ORB_RADIUS ||
-          meteorOrbState.x > livePlatform.right + METEOR_ORB_RADIUS
-        ) {
-          meteorOrbState.platformId = null;
-          meteorOrbState.surfaceOverrideY = null;
-          meteorOrbState.bounceCount = 0;
-        } else {
-          meteorOrbState.surfaceOverrideY = livePlatform.surfaceY + METEOR_ORB_RADIUS;
-        }
-      }
-
-      const currentBounds = {
-        left: meteorOrbState.x - METEOR_ORB_RADIUS,
-        right: meteorOrbState.x + METEOR_ORB_RADIUS,
-        top: meteorOrbState.y - METEOR_ORB_RADIUS,
-        bottom: meteorOrbState.y + METEOR_ORB_RADIUS,
-      };
-
-      if (meteorOrbState.platformId === null) {
-        const supportingPlatform = platforms.getSupportingPlatform(
-          currentBounds,
-          prevBounds,
-          meteorOrbState.velocityY
-        );
-        if (supportingPlatform) {
-          meteorOrbState.platformId = supportingPlatform.id;
-          meteorOrbState.surfaceOverrideY = supportingPlatform.surfaceY + METEOR_ORB_RADIUS;
-          meteorOrbState.bounceCount = 0;
-        }
-      }
-
-      const baseGround = computePlayerGround() - METEOR_ORB_RADIUS;
-      const platformGround = meteorOrbState.surfaceOverrideY ?? baseGround;
-      const effectiveGround =
-        meteorOrbState.anchorSurfaceY !== null
-          ? Math.min(meteorOrbState.anchorSurfaceY, platformGround)
-          : platformGround;
-
-      if (meteorOrbState.y > effectiveGround) {
-        meteorOrbState.y = effectiveGround;
-        if (meteorOrbState.velocityY > 0) {
-          if (meteorOrbState.surfaceOverrideY !== null) {
-            meteorOrbState.bounceCount += 1;
-            if (meteorOrbState.bounceCount >= METEOR_ORB_PLATFORM_BOUNCES) {
-              meteorOrbState.velocityY = 0;
-            } else {
-              meteorOrbState.velocityY = -meteorOrbState.velocityY * METEOR_ORB_BOUNCE_DAMPING;
-              if (Math.abs(meteorOrbState.velocityY) < METEOR_ORB_MIN_BOUNCE_VELOCITY) {
-                meteorOrbState.velocityY = 0;
-                meteorOrbState.bounceCount = METEOR_ORB_PLATFORM_BOUNCES;
-              }
-            }
-          } else {
-            meteorOrbState.velocityY = -meteorOrbState.velocityY * METEOR_ORB_BOUNCE_DAMPING;
-            if (Math.abs(meteorOrbState.velocityY) < METEOR_ORB_MIN_BOUNCE_VELOCITY) {
-              meteorOrbState.velocityY = 0;
-            }
-          }
-        }
-      }
-
-      if (meteorOrbState.surfaceOverrideY !== null && Math.abs(meteorOrbState.velocityY) < METEOR_ORB_MIN_BOUNCE_VELOCITY) {
-        meteorOrbState.y = meteorOrbState.surfaceOverrideY;
-      }
-    }
-
-    if (orbState && meteorOrbState.active && !meteorOrbState.collected) {
-      const dx = orbState.x - meteorOrbState.x;
-      const dy = orbState.y - meteorOrbState.y;
-      const collectRadius = playerRadius + METEOR_ORB_RADIUS;
-      if ((dx * dx + dy * dy) <= collectRadius * collectRadius) {
-        meteorOrbState.collected = true;
-        meteorOrbState.active = true;
-        meteorOrbState.velocityY = 0;
-        meteorOrbState.bounceCount = 0;
-        meteorOrbState.surfaceOverrideY = null;
-        meteorOrbState.platformId = null;
-        meteorOrbState.flashUntil = tickerInstance.lastTime + METEOR_ORB_FLASH_DURATION * 1000;
-      }
-    }
-
-    if (orbState && meteorOrbState.collected) {
-      const followX = orbState.x - playerRadius * 2.2;
-      const followY = orbState.y - playerRadius * 0.9 + 5;
-      const followLerp = 1 - Math.exp(-deltaSeconds * 6);
-      meteorOrbState.x += (followX - meteorOrbState.x) * followLerp;
-      meteorOrbState.y += (followY - meteorOrbState.y) * followLerp;
-    }
-
-    meteorOrbState.compactTarget = meteorOrbState.collected ? 0.45 : 1;
-    const compactLerp = 1 - Math.exp(-deltaSeconds * 2.8);
-    meteorOrbState.compactScale += (meteorOrbState.compactTarget - meteorOrbState.compactScale) * compactLerp;
-
-    const orbVisible = meteorOrbState.active || meteorOrbState.collected;
-    meteorOrbSprite.visible = orbVisible;
-    meteorOrbAccentSprite.visible = orbVisible;
-    meteorOrbCtx.clearRect(0, 0, meteorOrbCanvas.width, meteorOrbCanvas.height);
-    meteorOrbAccentCtx.clearRect(0, 0, meteorOrbAccentCanvas.width, meteorOrbAccentCanvas.height);
-    if (orbVisible) {
-      const advanceDots = (dots: OrbitDot[], speedScale: number) => {
-        dots.forEach((dot) => {
-          dot.angle += dot.speed * deltaSeconds * speedScale;
-        });
-      };
-      const renderDots = (dots: OrbitDot[], scale: number) => {
-        const time = tickerInstance.lastTime / 1000;
-        const nowMs = tickerInstance.lastTime;
-        const flashActive = meteorOrbState.collected && nowMs < meteorOrbState.flashUntil;
-        const colorOverride = flashActive
-          ? METEOR_ORB_FLASH_COLOR
-          : meteorOrbState.collected
-            ? null
-            : METEOR_ORB_WHITE_COLOR;
-        dots.forEach((dot) => {
-          if (dot.isAccent) return;
-          const wobble = Math.sin((tickerInstance.lastTime / 1000) * dot.wobbleSpeed + dot.angle) * dot.wobble;
-          const radius = (dot.radius + wobble) * scale;
-          const x = Math.cos(dot.angle) * radius;
-          const y = Math.sin(dot.angle) * radius;
-          const depth = Math.cos(dot.angle);
-          const shade = colorOverride ? 1 : 0.7 + 0.3 * ((depth + 1) * 0.5);
-          const pulse =
-            dot.pulseSpeed > 0
-              ? dot.pulseMin + (dot.pulseMax - dot.pulseMin) * (0.5 + 0.5 * Math.sin(time * dot.pulseSpeed + dot.pulsePhase))
-              : 1;
-          const alpha = dot.alpha * (0.75 + 0.25 * ((depth + 1) * 0.5)) * METEOR_ORB_GLOW * (0.35 + 0.65 * pulse);
-          const baseColor = colorOverride ?? dot.color;
-          const r = Math.min(255, Math.round(baseColor.r * shade * METEOR_ORB_BRIGHTNESS));
-          const g = Math.min(255, Math.round(baseColor.g * shade * METEOR_ORB_BRIGHTNESS));
-          const b = Math.min(255, Math.round(baseColor.b * shade * METEOR_ORB_BRIGHTNESS));
-          const dotSize = dot.size * pulse;
-          if (dotSize <= 0.05 || alpha <= 0.02) {
-            return;
-          }
-          meteorOrbCtx.shadowBlur = dot.size * METEOR_ORB_GLOW_BLUR_MULT;
-          meteorOrbCtx.shadowColor = `rgba(${r}, ${g}, ${b}, ${alpha * METEOR_ORB_GLOW_STRENGTH})`;
-          meteorOrbCtx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
-          meteorOrbCtx.beginPath();
-          meteorOrbCtx.arc(x, y, dotSize, 0, Math.PI * 2);
-          meteorOrbCtx.fill();
-          meteorOrbCtx.shadowBlur = 0;
-        });
-      };
-      const renderAccentDots = (dots: OrbitDot[], scale: number) => {
-        const time = tickerInstance.lastTime / 1000;
-        const nowMs = tickerInstance.lastTime;
-        const flashActive = meteorOrbState.collected && nowMs < meteorOrbState.flashUntil;
-        const colorOverride = flashActive
-          ? METEOR_ORB_FLASH_COLOR
-          : meteorOrbState.collected
-            ? null
-            : METEOR_ORB_WHITE_COLOR;
-        dots.forEach((dot) => {
-          if (!dot.isAccent) return;
-          const wobble = Math.sin(time * dot.wobbleSpeed + dot.angle) * dot.wobble;
-          const radius = (dot.radius + wobble) * scale;
-          const x = Math.cos(dot.angle) * radius;
-          const y = Math.sin(dot.angle) * radius;
-          const pulse =
-            dot.pulseSpeed > 0
-              ? dot.pulseMin + (dot.pulseMax - dot.pulseMin) * (0.5 + 0.5 * Math.sin(time * dot.pulseSpeed + dot.pulsePhase))
-              : 1;
-          const dotSize = dot.size * pulse;
-          const alpha = Math.min(1, dot.alpha * (0.6 + 0.4 * pulse) * METEOR_ORB_ACCENT_ALPHA);
-          const baseColor = colorOverride ?? dot.color;
-          meteorOrbAccentCtx.fillStyle = `rgba(${baseColor.r}, ${baseColor.g}, ${baseColor.b}, ${alpha})`;
-          meteorOrbAccentCtx.beginPath();
-          meteorOrbAccentCtx.arc(x, y, dotSize, 0, Math.PI * 2);
-          meteorOrbAccentCtx.fill();
-        });
-      };
-
-      advanceDots(meteorOrbFarDots, 1.05);
-      advanceDots(meteorOrbOuterDots, 1.35);
-      advanceDots(meteorOrbInnerDots, 1.1);
-      advanceDots(meteorOrbCoreDots, 0.8);
-
-      meteorOrbCtx.save();
-      meteorOrbCtx.translate(meteorOrbState.x + METEOR_ORB_PADDING, meteorOrbState.y + METEOR_ORB_PADDING);
-      meteorOrbAccentCtx.save();
-      meteorOrbAccentCtx.translate(meteorOrbState.x + METEOR_ORB_PADDING, meteorOrbState.y + METEOR_ORB_PADDING);
-      const outerScale = meteorOrbState.compactScale * (meteorOrbState.collected ? 1.15 : 1);
-      renderDots(meteorOrbFarDots, meteorOrbState.compactScale * (meteorOrbState.collected ? 1.4 : 1.25));
-      renderDots(meteorOrbOuterDots, outerScale);
-      renderDots(meteorOrbInnerDots, meteorOrbState.compactScale * 0.9);
-      renderDots(meteorOrbCoreDots, meteorOrbState.compactScale * 0.6);
-      meteorOrbCtx.restore();
-      renderAccentDots(meteorOrbFarDots, meteorOrbState.compactScale * (meteorOrbState.collected ? 1.4 : 1.25));
-      renderAccentDots(meteorOrbOuterDots, outerScale);
-      renderAccentDots(meteorOrbInnerDots, meteorOrbState.compactScale * 0.9);
-      renderAccentDots(meteorOrbCoreDots, meteorOrbState.compactScale * 0.6);
-      meteorOrbAccentCtx.restore();
-    }
-    meteorOrbTexture.source.update();
-    meteorOrbAccentTexture.source.update();
 
     // Update player projectiles (only when unlocked)
     projectiles.forEach(p => {
@@ -3491,6 +2992,22 @@ const init = async () => {
       }
     }
 
+    const treehouseStep2Info = grounds.getTreehouseStep2Info();
+    const treehouseOrbAnchor = treehouseStep2Info
+      ? {
+        x: treehouseStep2Info.x + treehouseStep2Info.width * 0.25 + 25,
+        y: treehouseStep2Info.y - treehouseStep2Info.height * 0.25 - 30,
+      }
+      : null;
+    meteorOrb.update({
+      deltaSeconds,
+      timeMs: tickerInstance.lastTime,
+      treehouseAnchor: treehouseOrbAnchor,
+      playerRadius,
+      playerState: state,
+      computePlayerGround,
+    });
+
     const verticalVelocity = (state.y - prevState.y) / Math.max(deltaSeconds, 0.0001);
 
     // Dynamic platform spawner for hole ground segments
@@ -3542,17 +3059,7 @@ const init = async () => {
       respawnLandProgress = 0;
       respawnLandActive = false;
       lastHoleStartX = null;
-      if (!meteorOrbState.collected) {
-        meteorOrbState.active = false;
-        meteorOrbState.anchorLeftId = null;
-        meteorOrbState.anchorRightId = null;
-        meteorOrbState.velocityY = 0;
-        meteorOrbState.bounceCount = 0;
-        meteorOrbState.surfaceOverrideY = null;
-        meteorOrbState.platformId = null;
-        meteorOrbState.compactScale = 1;
-        meteorOrbState.compactTarget = 1;
-      }
+      meteorOrb.resetIfNotCollected();
     }
 
     if (hasActiveHoles || willMoreHolesCome) {
@@ -3986,6 +3493,13 @@ const init = async () => {
       }
     }
 
+    // Last-second save: if we're falling into a hole but land on a platform from above, recover.
+    if (respawnState === 'normal' && fallingIntoHole && supportingPlatform && verticalVelocity >= 0) {
+      fallingIntoHole = false;
+      respawnInputLocked = false;
+      physics.setGroundCollisionEnabled(true);
+    }
+
     // Hole collision: if we're not on a platform and overlap a hole, fall and respawn
     if (!supportingPlatform && !fallingIntoHole) {
       const hole = holes.getCollidingHole(playerBounds);
@@ -4229,6 +3743,45 @@ const init = async () => {
           }
         }
       }
+    }
+
+    if (treehousePlatforms.length > 0) {
+      const activeTreehousePlatform = activePlatformId !== null
+        ? treehousePlatformMap.get(activePlatformId)
+        : null;
+      const playerBottom = playerBoundsFull.bottom;
+      const descending = verticalVelocity > 0.5;
+
+      const step1Platform = treehousePlatforms.find((platform) => platform.key === 'lower_left') ?? null;
+      const step1Overlap = step1Platform ? isTreehousePlatformHorizontalOverlap(step1Platform, playerBounds) : false;
+      const step1SurfaceY = step1Platform
+        ? getTreehouseSurfaceYForPlayer(step1Platform, state.x, state.y)
+        : null;
+      const step1Top = step1SurfaceY !== null ? step1SurfaceY + playerDiameter : null;
+      const step1Cleared = step1Top !== null && playerBottom <= step1Top - TREEHOUSE_STEP_Z_BUFFER;
+      const step1Active = activeTreehousePlatform?.key === 'lower_left';
+      const step1InFront = step1Active || (descending && step1Overlap && step1Cleared);
+
+      const pathSurface = getTreehousePathSurfaceAt(treehousePlatforms, playerBounds);
+      let step2SurfaceY = pathSurface ? pathSurface.surfaceY : null;
+      if (step2SurfaceY === null) {
+        const step2Platform = treehousePlatforms.find(
+          (platform) =>
+            platform.key?.startsWith('tree_path_') &&
+            isTreehousePlatformHorizontalOverlap(platform, playerBounds)
+        );
+        if (step2Platform) {
+          step2SurfaceY = getTreehouseSurfaceYForPlayer(step2Platform, state.x, state.y);
+        }
+      }
+      const step2Top = step2SurfaceY !== null ? step2SurfaceY + playerDiameter : null;
+      const step2Cleared = step2Top !== null && playerBottom <= step2Top - TREEHOUSE_STEP_Z_BUFFER;
+      const step2Active = activeTreehousePlatform?.key?.startsWith('tree_path_') ?? false;
+      const step2InFront = step2Active || (descending && step2SurfaceY !== null && step2Cleared);
+
+      grounds.setTreehouseStepForeground(step1InFront, step2InFront);
+    } else {
+      grounds.setTreehouseStepForeground(false, false);
     }
 
     // Determine if we're back on the baseline ground
@@ -4515,6 +4068,11 @@ const init = async () => {
       const gradientScale = 1 / Math.max(0.0001, cameraZoom);
       gradientSprite.scale.set(gradientScale);
     } else {
+      const treehouseReleaseElapsed = performance.now() - treehousePanReleaseStart;
+      const treehousePanHold = treehousePanReleaseActive && treehouseReleaseElapsed < TREEHOUSE_PAN_RESET_DELAY_MS;
+      if (treehousePanReleaseActive && !treehousePanHold) {
+        panResetSpeed = Math.min(panResetSpeed, TREEHOUSE_PAN_RESET_SPEED);
+      }
       // Reset zoom when not in comet hole level
       const holdZoom = zoomHoldUntilEnemyHover && enemyMode !== 'hover';
       if (!holdZoom && cameraZoom !== 1.0) {
@@ -4528,8 +4086,13 @@ const init = async () => {
         gradientSprite.scale.set(gradientScale);
       }
       if (!holdZoom && (cameraPanX !== 0 || cameraPanY !== 0)) {
-        cameraPanX += (0 - cameraPanX) * panResetSpeed;
+        if (!treehousePanHold) {
+          cameraPanX += (0 - cameraPanX) * panResetSpeed;
+        }
         cameraPanY += (0 - cameraPanY) * panResetSpeed;
+      }
+      if (treehousePanReleaseActive && Math.abs(cameraPanX) < 0.5) {
+        treehousePanReleaseActive = false;
       }
     }
 
@@ -4935,7 +4498,7 @@ const init = async () => {
 
   const triggerJump = (event?: PointerEvent | KeyboardEvent) => {
     // Disable input during intro
-    if (playerIntroActive) return;
+    if (playerIntroActive || respawnInputLocked) return;
     if (tutorialActive && tutorialStage === 'waiting' && physics.getJumpCount() >= 1) return;
 
     // Detect input type on pointer events (touch, mouse, pen)
@@ -4990,7 +4553,7 @@ const init = async () => {
   };
   const releaseJump = () => {
     // Disable input during intro
-    if (playerIntroActive) return;
+    if (playerIntroActive || respawnInputLocked) return;
     physics.endJump();
   };
 
@@ -5000,7 +4563,7 @@ const init = async () => {
   // Track mouse/pointer movement for horizontal player position
   const handlePointerMove = (event: PointerEvent) => {
     // Disable input during intro
-    if (playerIntroActive) return;
+    if (playerIntroActive || respawnInputLocked) return;
 
     // Detect input type change
     const newInputType = event.pointerType as 'mouse' | 'touch' | 'pen';
@@ -5150,15 +4713,7 @@ const init = async () => {
     enemyChargeCanvas.width = app.renderer.width;
     enemyChargeCanvas.height = app.renderer.height;
     enemyChargeTexture.source.update();
-    // Resize meteor orb canvases (with padding so it can extend off-screen)
-    meteorOrbCanvas.width = app.renderer.width + METEOR_ORB_PADDING * 2;
-    meteorOrbCanvas.height = app.renderer.height + METEOR_ORB_PADDING * 2;
-    meteorOrbTexture.source.update();
-    meteorOrbSprite.position.set(-METEOR_ORB_PADDING, -METEOR_ORB_PADDING);
-    meteorOrbAccentCanvas.width = app.renderer.width + METEOR_ORB_PADDING * 2;
-    meteorOrbAccentCanvas.height = app.renderer.height + METEOR_ORB_PADDING * 2;
-    meteorOrbAccentTexture.source.update();
-    meteorOrbAccentSprite.position.set(-METEOR_ORB_PADDING, -METEOR_ORB_PADDING);
+    meteorOrb.resize(app.renderer.width, app.renderer.height);
     // Resize halo canvas
     haloCanvas.width = app.renderer.width;
     haloCanvas.height = app.renderer.height;
@@ -5669,6 +5224,39 @@ const init = async () => {
     redOutsButton.style.top = '272px';
     redOutsButton.addEventListener('click', grantRedTwoOuts);
     document.body.appendChild(redOutsButton);
+  }
+
+  if (SHOW_DEBUG_UI) {
+    const ordDiameterButton = document.createElement('button');
+    ordDiameterButton.className = 'transition-btn';
+    ordDiameterButton.type = 'button';
+    ordDiameterButton.style.top = '356px';
+    document.body.appendChild(ordDiameterButton);
+
+    const extraOrbButton = document.createElement('button');
+    extraOrbButton.className = 'transition-btn';
+    extraOrbButton.type = 'button';
+    extraOrbButton.style.top = '314px';
+    document.body.appendChild(extraOrbButton);
+
+    const updateOrdLabels = () => {
+      const extraState = meteorOrb.getExtraState();
+      ordDiameterButton.textContent = extraState.compactTarget < 1 ? 'Ord Closed' : 'Ord Open';
+      extraOrbButton.textContent = extraState.enabled ? 'Ord On' : 'Ord Off';
+    };
+
+    updateOrdLabels();
+
+    ordDiameterButton.addEventListener('click', () => {
+      const extraState = meteorOrb.getExtraState();
+      meteorOrb.setExtraCompactTarget(extraState.compactTarget < 1 ? 1 : 0.45);
+      updateOrdLabels();
+    });
+
+    extraOrbButton.addEventListener('click', () => {
+      meteorOrb.toggleExtra();
+      updateOrdLabels();
+    });
   }
 
   // Comet Hole Level helper - now supports variable hole counts

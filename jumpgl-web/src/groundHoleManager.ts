@@ -31,7 +31,7 @@ export interface DebugHitbox {
 export class GroundHoleManager {
   private holes: GroundHoleInstance[] = [];
   private readonly HOLE_DEPTH = 150; // Hitbox extends down from ground (matches platform hole depth)
-  private readonly HOLE_TOP_OFFSET = 100; // Push hole hitbox down from ground
+  private readonly HOLE_TOP_OFFSET = 110; // Push hole hitbox down from ground
 
   constructor() {}
 

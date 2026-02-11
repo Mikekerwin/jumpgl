@@ -34,6 +34,16 @@ type TreehousePolyline = {
   points: Array<{ x: number; y: number }>;
 };
 
+type SegmentData = {
+  sprite: Sprite;
+  width: number;
+  type: SegmentType;
+  treehouseHitboxes?: TreehouseHitbox[];
+  treehousePolyline?: TreehousePolyline;
+  treehouseStep1Sprite?: Sprite;
+  treehouseStep2Sprite?: Sprite;
+};
+
 /**
  * Improved SegmentScroller with biome system integration
  * Fixes the cloud-flashing bug by using BiomeSequenceManager for state
@@ -46,7 +56,7 @@ class SegmentScroller {
   private viewportWidth: number;
   private segmentHeight: number;
   private offsetY: number;
-  private segments: Array<{ sprite: Sprite; width: number; type: SegmentType; treehouseHitboxes?: TreehouseHitbox[]; treehousePolyline?: TreehousePolyline }> = [];
+  private segments: SegmentData[] = [];
   private pendingSegments: SegmentType[] = [];
   private maxSegmentWidth = 0;
   private allowNewSegments = true; // Control whether to generate new segments
@@ -56,6 +66,8 @@ class SegmentScroller {
   private cottageOverlaySprite: Sprite | null = null;
   private meteorOverlayTexture: Texture;
   private meteorOverlaySprite: Sprite | null = null;
+  private treehouseStep1Texture: Texture;
+  private treehouseStep2Texture: Texture;
   private fenceButterflySprite: Sprite | null = null;
   private fenceButterflyActive = true; // Butterfly is on fence and stationary
   private fenceButterflyFrames: Texture[] = [];
@@ -86,7 +98,9 @@ class SegmentScroller {
     offsetY: number,
     fenceTexture: Texture,
     cottageOverlayTexture: Texture,
-    meteorOverlayTexture: Texture
+    meteorOverlayTexture: Texture,
+    treehouseStep1Texture: Texture,
+    treehouseStep2Texture: Texture
   ) {
     this.container = new Container();
     parent.addChild(this.container);
@@ -105,11 +119,17 @@ class SegmentScroller {
     this.fenceTexture = fenceTexture;
     this.cottageOverlayTexture = cottageOverlayTexture;
     this.meteorOverlayTexture = meteorOverlayTexture;
+    this.treehouseStep1Texture = treehouseStep1Texture;
+    this.treehouseStep2Texture = treehouseStep2Texture;
     this.buildInitialSegments();
   }
 
   private buildInitialSegments(): void {
-    this.segments.forEach(({ sprite }) => sprite.destroy());
+    this.segments.forEach(({ sprite, treehouseStep1Sprite, treehouseStep2Sprite }) => {
+      treehouseStep1Sprite?.destroy();
+      treehouseStep2Sprite?.destroy();
+      sprite.destroy();
+    });
     this.segments = [];
     this.treehousePending = false;
     this.treehouseSpawned = false;
@@ -256,6 +276,8 @@ class SegmentScroller {
     // Add treehouse hitboxes as invisible platform surfaces (stored in local coordinates)
     let treehouseHitboxes: TreehouseHitbox[] | undefined;
     let treehousePolyline: TreehousePolyline | undefined;
+    let treehouseStep1Sprite: Sprite | undefined;
+    let treehouseStep2Sprite: Sprite | undefined;
     if (type === 'treed_prairie_treehouse') {
       const hitboxWidth = 200;
       const hitboxHeight = 20;
@@ -351,10 +373,43 @@ class SegmentScroller {
         ...pathHitboxes,
       ];
 
+      const toWorldX = (localX: number) => sprite.x + localX * scale;
+      const toWorldY = (localY: number) => sprite.y + localY * scale;
+
+      const step1CenterX = lowerLeftX + lowerLeftWidth / 2 - (15 * pixelToLocal);
+      const step1CenterY = lowerLeftY + hitboxHeight / 2 + (20 * pixelToLocal);
+      const stepScaleBase = scale * 2;
+      const stepScaleBoost = 1.05;
+      const getStepScale = (texture: Texture) => {
+        const maxDim = Math.max(1, texture.width || 1, texture.height || 1);
+        const maxDelta = 20 / (maxDim * stepScaleBase);
+        const boost = Math.min(stepScaleBoost, 1 + maxDelta);
+        return stepScaleBase * boost;
+      };
+      const step1Scale = getStepScale(this.treehouseStep1Texture);
+      treehouseStep1Sprite = new Sprite(this.treehouseStep1Texture);
+      treehouseStep1Sprite.anchor.set(0.5);
+      treehouseStep1Sprite.scale.set(step1Scale);
+      treehouseStep1Sprite.position.set(toWorldX(step1CenterX), toWorldY(step1CenterY));
+      this.foregroundContainer.addChild(treehouseStep1Sprite);
+
+      const polyMinX = Math.min(...polylinePoints.map((point) => point.x));
+      const polyMaxX = Math.max(...polylinePoints.map((point) => point.x));
+      const polyMinY = Math.min(...polylinePoints.map((point) => point.y));
+      const polyMaxY = Math.max(...polylinePoints.map((point) => point.y));
+      const step2CenterX = (polyMinX + polyMaxX) / 2;
+      const step2CenterY = (polyMinY + polyMaxY) / 2 - (5 * pixelToLocal);
+      const step2Scale = getStepScale(this.treehouseStep2Texture);
+      treehouseStep2Sprite = new Sprite(this.treehouseStep2Texture);
+      treehouseStep2Sprite.anchor.set(0.5);
+      treehouseStep2Sprite.scale.set(step2Scale);
+      treehouseStep2Sprite.position.set(toWorldX(step2CenterX), toWorldY(step2CenterY));
+      this.foregroundContainer.addChild(treehouseStep2Sprite);
+
       console.log(`[TREEHOUSE] Created hitboxes at sprite X: ${x}, scaled width: ${width}, texture: ${textureWidth}×${textureHeight}`);
     }
 
-    const segment = { sprite, width, type, treehouseHitboxes, treehousePolyline };
+    const segment = { sprite, width, type, treehouseHitboxes, treehousePolyline, treehouseStep1Sprite, treehouseStep2Sprite };
     this.segments.push(segment);
     return segment;
   }
@@ -418,8 +473,14 @@ class SegmentScroller {
     const scrollSpeed = this.getCurrentScrollSpeed() * speedMultiplier;
     const scrollAmount = scrollSpeed * deltaSeconds;
 
-    this.segments.forEach(({ sprite }) => {
-      sprite.x -= scrollAmount;
+    this.segments.forEach((segment) => {
+      segment.sprite.x -= scrollAmount;
+      if (segment.treehouseStep1Sprite) {
+        segment.treehouseStep1Sprite.x -= scrollAmount;
+      }
+      if (segment.treehouseStep2Sprite) {
+        segment.treehouseStep2Sprite.x -= scrollAmount;
+      }
     });
 
     // Scroll cottage overlay sprite with ground
@@ -562,6 +623,8 @@ class SegmentScroller {
         const segment = this.segments[0];
         if (shouldCull(segment.sprite.x, segment.width)) {
           this.segments.shift();
+          segment.treehouseStep1Sprite?.destroy();
+          segment.treehouseStep2Sprite?.destroy();
           segment.sprite.destroy();
         } else {
           break; // Segments are ordered, so stop when we hit one to keep
@@ -638,7 +701,11 @@ class SegmentScroller {
    * Ensures consistent state without cloud-flashing bug
    */
   private rebuildWithBiome(biome: BiomeType, startX: number = 0): void {
-    this.segments.forEach(({ sprite }) => sprite.destroy());
+    this.segments.forEach(({ sprite, treehouseStep1Sprite, treehouseStep2Sprite }) => {
+      treehouseStep1Sprite?.destroy();
+      treehouseStep2Sprite?.destroy();
+      sprite.destroy();
+    });
     this.segments = [];
     this.maxSegmentWidth = 0;
     this.pendingSegments = []; // Clear any pending
@@ -658,6 +725,36 @@ class SegmentScroller {
     const firstX = this.segments.length ? this.segments[0].sprite.x : 0;
     // Rebuild with current biome (preserves state during resize)
     this.rebuildWithBiome(this.biomeManager.getCurrentBiome(), firstX);
+  }
+
+  setTreehouseStepForeground(step1InFront: boolean, step2InFront: boolean): void {
+    const targetFor = (inFront: boolean) => (inFront ? this.foregroundContainer : this.middlegroundContainer);
+    this.segments.forEach((segment) => {
+      const step1Target = targetFor(step1InFront);
+      const step2Target = targetFor(step2InFront);
+      if (segment.treehouseStep1Sprite && segment.treehouseStep1Sprite.parent !== step1Target) {
+        segment.treehouseStep1Sprite.parent?.removeChild(segment.treehouseStep1Sprite);
+        step1Target.addChild(segment.treehouseStep1Sprite);
+      }
+      if (segment.treehouseStep2Sprite && segment.treehouseStep2Sprite.parent !== step2Target) {
+        segment.treehouseStep2Sprite.parent?.removeChild(segment.treehouseStep2Sprite);
+        step2Target.addChild(segment.treehouseStep2Sprite);
+      }
+    });
+  }
+
+  getTreehouseStep2Info(): { x: number; y: number; width: number; height: number } | null {
+    const segment = this.segments.find((entry) => entry.treehouseStep2Sprite);
+    const sprite = segment?.treehouseStep2Sprite;
+    if (!sprite) {
+      return null;
+    }
+    return {
+      x: sprite.x,
+      y: sprite.y,
+      width: sprite.width,
+      height: sprite.height,
+    };
   }
 
   /**
@@ -718,6 +815,8 @@ class SegmentScroller {
       if (segment.sprite.x < this.viewportWidth) {
         kept.push(segment);
       } else {
+        segment.treehouseStep1Sprite?.destroy();
+        segment.treehouseStep2Sprite?.destroy();
         segment.sprite.destroy();
       }
     }
@@ -1023,6 +1122,8 @@ export type ParallaxTextures = {
   cloudGroundHoleTransitionBackFire: Texture;
   cloudFence: Texture;
   meteorOverlay: Texture;
+  treehouseStep1: Texture;
+  treehouseStep2: Texture;
 };
 
 let bundleRegistered = false;
@@ -1048,6 +1149,8 @@ export const loadParallaxTextures = async (): Promise<ParallaxTextures> => {
       cloudGroundHoleTransitionBackFire: 'cloud_light_ground_hole_transition_back_fire_transition.webp',
       cloudFence: 'cloud_light_fence.webp',
       meteorOverlay: 'meteor.webp',
+      treehouseStep1: 'treehouseStep1.webp',
+      treehouseStep2: 'treehouseStep2.webp',
     });
     bundleRegistered = true;
   }
@@ -1325,7 +1428,9 @@ export class ParallaxGrounds {
       this.groundTop,
       textures.cloudFence,
       textures.cloudCottageStartOverlay,
-      textures.meteorOverlay
+      textures.meteorOverlay,
+      textures.treehouseStep1,
+      textures.treehouseStep2
     );
   }
 
@@ -1346,6 +1451,10 @@ export class ParallaxGrounds {
 
   getSurfaceY(): number {
     return this.groundTop;
+  }
+
+  setTreehouseStepForeground(step1InFront: boolean, step2InFront: boolean): void {
+    this.scroller.setTreehouseStepForeground(step1InFront, step2InFront);
   }
 
   /**
@@ -1380,6 +1489,10 @@ export class ParallaxGrounds {
 
   getTreehouseHitboxes(): Array<{ key: string; left: number; right: number; top: number; bottom: number; width: number; height: number; rotation?: number }> {
     return this.scroller.getTreehouseHitboxes();
+  }
+
+  getTreehouseStep2Info(): { x: number; y: number; width: number; height: number } | null {
+    return this.scroller.getTreehouseStep2Info();
   }
 
   /**
