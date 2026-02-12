@@ -9,7 +9,7 @@ import { ForestDustField } from './forestDustField';
 import { JumpDustParticles } from './jumpDustParticles';
 import { ChargeParticles } from './chargeParticles';
 import { Shadow } from './shadow';
-import { FloatingPlatforms, type PlayerBounds } from './floatingPlatforms';
+import { FloatingPlatforms, type PlatformCollision, type PlayerBounds } from './floatingPlatforms';
 import { LaserPhysics } from './laserPhysics';
 import { HoleManager } from './holeManager';
 import { SparkParticles } from './sparkParticles';
@@ -582,6 +582,7 @@ const init = async () => {
   const PROJECTILE_SPEED = 700; // pixels per second (20 * 60fps) - much faster than enemy lasers
   const PROJECTILE_WIDTH = 25; // Same width as enemy lasers
   const PROJECTILE_HEIGHT = 2; // Same height as enemy lasers
+  let useStraightBlueLasers = false;
   let nextShotTime = 0;
   const MAX_SHOOT_SPEED = 25; // Fastest cooldown at 80%+ energy (ms)
   const MIN_SHOOT_SPEED = 350; // Slowest cooldown at 20% or less energy (ms)
@@ -605,6 +606,21 @@ const init = async () => {
   const megaLaserGraphic = new Graphics();
   megaLaserGraphic.blendMode = 'add';
   let energy = 0;
+  let energyDisplay = 0;
+  let energyRevealActive = false;
+  let energyRevealStart = 0;
+  const ENERGY_REVEAL_DURATION = 1.25;
+  let energyActivated = false;
+  let orbChargeActive = false;
+  let orbChargeStart = 0;
+  let orbChargeKey: 'KeyS' | 'KeyF' | null = null;
+  const ORB_CHARGE_MAX_SECONDS = 1.25;
+  const ORB_CHARGE_MID_SECONDS = 0.6;
+  const ORB_SHOT_BASE_BONUS_PX = 2;
+  const ORB_SHOT_MIN_DELTA_PX = -5;
+  const ORB_SHOT_MAX_DELTA_PX = 5;
+  const ORB_CHARGE_SPEED_BOOST = 5.0;
+  const ORB_CHARGE_COLLAPSE_START = 0.35;
   let playerFlashUntil = 0;
   let enemyFlashUntil = 0;
   let blueHits = 0;
@@ -663,6 +679,8 @@ const init = async () => {
   let spawnPointX = 0; // X position to respawn at (start of meteor transition) - FIXED, set once when meteor spawns
   let deathPlayerX = 0; // Player's world X position when they died
   let remainingRewindDistance = 0; // Fixed distance to scroll back to spawn (updated each frame by deltaX)
+  let respawnClampToScreen = false;
+  let respawnClampDistance = 0;
   let resumeRampTimer = 0;
 
   // Automatic hole level trigger tracking
@@ -684,6 +702,59 @@ const init = async () => {
   let holeSequencePenultimateIndex: number | null = null;
   let lastLandedSequenceIndex: number | null = null;
   const processedSegments = new Set<string>(); // Track which segments have spawned holes
+  type MeteorSwirlOrb = {
+    id: number;
+    offsetX: number;
+    offsetY: number;
+    jitterX: number;
+    jitterY: number;
+    radius: number;
+    arc: number;
+    speed: number;
+    phase: number;
+    sizeScale: number;
+    currentX: number;
+    currentY: number;
+    collected: boolean;
+  };
+  type MeteorSwirlFollower = {
+    id: number;
+    radius: number;
+    arc: number;
+    speed: number;
+    phase: number;
+    sizeScale: number;
+    currentX: number;
+    currentY: number;
+  };
+  type MeteorSwirlShot = {
+    x: number;
+    y: number;
+    radius: number;
+    speed: number;
+    active: boolean;
+    hits: number;
+    speedScale?: number;
+    maxSpeedScale?: number;
+  };
+  const METEOR_SWIRL_ORB_COUNT = 4;
+  const METEOR_SWIRL_ORB_ARC = 1.6;
+  const METEOR_SWIRL_ORB_RADIUS_MIN = 110;
+  const METEOR_SWIRL_ORB_RADIUS_MAX = 180;
+  const METEOR_SWIRL_ORB_SPEED_MIN = 7.5;
+  const METEOR_SWIRL_ORB_SPEED_MAX = 11.5;
+  const METEOR_SWIRL_SHOT_SPEED_START = 0.95;
+  const METEOR_SWIRL_SHOT_SPEED_MAX = 1.35;
+  const METEOR_SWIRL_SHOT_ACCEL = 2.6;
+  const METEOR_SWIRL_SHOT_OFFSCREEN_PAD = 260;
+  const METEOR_SWIRL_ORB_COLLECT_PAD = 4;
+  const METEOR_SWIRL_FOLLOW_X_OFFSET = 2.6;
+  const METEOR_SWIRL_FOLLOW_Y_OFFSET = 0.6;
+  const METEOR_SWIRL_FOLLOW_SPACING = 0.5;
+  const meteorSwirlOrbs: MeteorSwirlOrb[] = [];
+  const meteorSwirlFollowers: MeteorSwirlFollower[] = [];
+  const meteorSwirlShots: MeteorSwirlShot[] = [];
+  let meteorSwirlSpawned = false;
 
   // Fire platform sequence: smallPlatformfire1, smallPlatformfire2, largePlatformfire1, largePlatformfire2, largePlatformfire3
   const firePlatformSequence = ['smallfire1', 'smallfire2', 'largefire1', 'largefire2'] as const;
@@ -741,6 +812,10 @@ const init = async () => {
 
   // Add charge particle sprite (same layer as jump dust)
   playfieldContainer.addChild(chargeSprite);
+
+  // Meteor swirl orb visuals (layered above meteor overlay, below player)
+  const meteorSwirlGraphics = new Graphics();
+  meteorSwirlGraphics.blendMode = 'screen';
 
   // Player intro animation state - declare before ball setup
   let playerIntroActive = true;
@@ -837,6 +912,22 @@ const init = async () => {
   let treehouseOrbCollectedPrev = false;
   let treehousePanReleaseActive = false;
   let treehousePanReleaseStart = 0;
+  let treehouseEnemyHidden = false;
+  let treehouseEnemyReturnActive = false;
+  let treehouseEnemyReturnStart = 0;
+  let treehouseEnemyAutoEaseActive = false;
+  let treehouseEnemyAutoEaseStart = 0;
+  let treehouseEnemyExitActive = false;
+  let treehouseEnemyExitStart = 0;
+  let treehouseEnemyExitFromX = 0;
+  let treehouseEnemyExitTargetX = 0;
+  const TREEHOUSE_ENEMY_EXIT_LERP = 0.08;
+  const TREEHOUSE_ENEMY_RETURN_LERP = 0.02;
+  const TREEHOUSE_ENEMY_EXIT_SCREEN_MULT = 1.85;
+  const TREEHOUSE_ENEMY_RETURN_SNAP = 8;
+  const TREEHOUSE_ENEMY_RETURN_MAX_MS = 3200;
+  const TREEHOUSE_ENEMY_AUTO_LERP = 0.025;
+  const TREEHOUSE_ENEMY_EXIT_DURATION_MS = 1800;
   const TREEHOUSE_STOP_RANGE = 260;
   const TREEHOUSE_STOP_DURATION = 1.6;
   const TREEHOUSE_EDGE_PAN = 100;
@@ -925,6 +1016,9 @@ const init = async () => {
   // Add ground middleground container (meteor overlay) - renders above enemy, below player
   playfieldContainer.addChild(grounds.getMiddlegroundContainer());
 
+  // Meteor swirl orbs sit above the meteor overlay but below the player
+  playfieldContainer.addChild(meteorSwirlGraphics);
+
   // Re-order rendering layers for proper z-index:
   // Move player ball to render after middleground (above meteor overlay)
   playfieldContainer.removeChild(ball);
@@ -946,6 +1040,10 @@ const init = async () => {
   });
   playfieldContainer.addChild(enemyChargeSprite);
   playfieldContainer.addChild(projectileContainer);
+  const meteorSwirlShotGraphics = new Graphics();
+  playfieldContainer.addChild(meteorSwirlShotGraphics);
+  const meteorOrbChargePreviewGraphics = new Graphics();
+  playfieldContainer.addChild(meteorOrbChargePreviewGraphics);
   playfieldContainer.addChild(butterflyContainer);
 
   // Add ground foreground container (cottage overlay, etc.) above player
@@ -1029,7 +1127,8 @@ const init = async () => {
   // Check if debug UI should be shown (development only)
   const SHOW_DEBUG_UI = import.meta.env.VITE_SHOW_DEBUG_UI === 'true';
   const SHOW_HITBOXES = import.meta.env.VITE_SHOW_HITBOXES === 'true';
-  let DEBUG_DRAW_HITBOXES = SHOW_DEBUG_UI && SHOW_HITBOXES;
+  const HITBOX_DEFAULT_VISIBLE: boolean = false;
+  let DEBUG_DRAW_HITBOXES: boolean = SHOW_DEBUG_UI && SHOW_HITBOXES && HITBOX_DEFAULT_VISIBLE;
   const DEBUG_PLATFORM_SNAP = SHOW_DEBUG_UI;
   let platformSnapLogTime = 0;
   const logPlatformSnap = (message: string, data?: Record<string, unknown>, throttleMs?: number) => {
@@ -1047,8 +1146,9 @@ const init = async () => {
   debugPlatformHitboxContainer.visible = DEBUG_DRAW_HITBOXES;
 
   // Debug hitbox overlay
-  const hitboxOverlay = DEBUG_DRAW_HITBOXES ? new Graphics() : null;
+  const hitboxOverlay = SHOW_DEBUG_UI ? new Graphics() : null;
   if (hitboxOverlay) {
+    hitboxOverlay.visible = DEBUG_DRAW_HITBOXES;
     playfieldContainer.addChild(hitboxOverlay);
   }
   const hitboxLogCache = new Map<number, string>();
@@ -1426,6 +1526,42 @@ const init = async () => {
     });
   };
 
+  const getMeteorSwirlOrbBaseSize = () => Math.max(7, playerRadius * 0.22);
+
+  const spawnMeteorSwirlOrbs = (area: { left: number; right: number; top: number; bottom: number }) => {
+    meteorSwirlOrbs.length = 0;
+    meteorSwirlFollowers.length = 0;
+    meteorSwirlShots.length = 0;
+    for (let i = 0; i < METEOR_SWIRL_ORB_COUNT; i += 1) {
+      const t = (i + 1) / (METEOR_SWIRL_ORB_COUNT + 1);
+      const jitterX = (Math.random() - 0.5) * 110;
+      const jitterY = (Math.random() - 0.5) * 90;
+      const radius =
+        METEOR_SWIRL_ORB_RADIUS_MIN +
+        Math.random() * (METEOR_SWIRL_ORB_RADIUS_MAX - METEOR_SWIRL_ORB_RADIUS_MIN);
+      const speed =
+        METEOR_SWIRL_ORB_SPEED_MIN +
+        Math.random() * (METEOR_SWIRL_ORB_SPEED_MAX - METEOR_SWIRL_ORB_SPEED_MIN);
+      meteorSwirlOrbs.push({
+        id: i,
+        offsetX: t,
+        offsetY: 0.35 + Math.random() * 0.4,
+        jitterX,
+        jitterY,
+        radius,
+        arc: METEOR_SWIRL_ORB_ARC + Math.random() * 0.6,
+        speed,
+        phase: Math.random() * Math.PI * 2,
+        sizeScale: 0.65 + Math.random() * 0.35,
+        currentX: area.left + (area.right - area.left) * t,
+        currentY: area.top + (area.bottom - area.top) * 0.6,
+        collected: false,
+      });
+    }
+    meteorSwirlSpawned = true;
+  };
+
+
   const getTreehouseLocalPoint = (
     x: number,
     y: number,
@@ -1668,6 +1804,41 @@ const init = async () => {
       }
     }
 
+    if (energyRevealActive) {
+      const elapsed = performance.now() - energyRevealStart;
+      const t = Math.min(1, elapsed / (ENERGY_REVEAL_DURATION * 1000));
+      const ease = 1 - Math.pow(1 - t, 3);
+      energyDisplay = 100 * ease;
+      updateEnergyUI();
+      if (t >= 1) {
+        energyRevealActive = false;
+        energyDisplay = energy;
+        updateEnergyUI();
+      }
+    }
+
+    if (orbChargeActive) {
+      const heldSeconds = (performance.now() - orbChargeStart) / 1000;
+      const t = Math.min(1, heldSeconds / ORB_CHARGE_MAX_SECONDS);
+      const chargeEase = 1 - Math.pow(1 - t, 3);
+      meteorOrb.setChargeBoost(1 + chargeEase * ORB_CHARGE_SPEED_BOOST);
+      const collapseT = t <= ORB_CHARGE_COLLAPSE_START
+        ? 0
+        : (t - ORB_CHARGE_COLLAPSE_START) / (1 - ORB_CHARGE_COLLAPSE_START);
+      const collapseEase = collapseT * collapseT;
+      meteorOrb.setChargeCollapse(1 - collapseEase);
+      if (heldSeconds >= ORB_CHARGE_MAX_SECONDS) {
+        fireChargedOrbShot(ORB_CHARGE_MAX_SECONDS);
+        orbChargeActive = false;
+        orbChargeKey = null;
+        meteorOrb.setChargeBoost(1);
+        meteorOrb.setChargeCollapse(1);
+      }
+    } else {
+      meteorOrb.setChargeBoost(1);
+      meteorOrb.setChargeCollapse(1);
+    }
+
     // Respawn system - smooth animation-based approach
     let speedMultiplier = 1.0; // Default normal speed
 
@@ -1690,6 +1861,21 @@ const init = async () => {
         }
 
         remainingRewindDistance = spawnPointX - deathPlayerX;
+        respawnClampToScreen =
+          scenarioActive ||
+          megaLaserActive ||
+          scenarioStage === 'prep' ||
+          scenarioStage === 'charging' ||
+          scenarioStage === 'firing';
+        if (respawnClampToScreen) {
+          const safeZoom = Math.max(0.0001, cameraZoom);
+          respawnClampDistance = app.renderer.width / safeZoom;
+          if (Math.abs(remainingRewindDistance) > respawnClampDistance) {
+            remainingRewindDistance = Math.sign(remainingRewindDistance) * respawnClampDistance;
+          }
+        } else {
+          respawnClampDistance = 0;
+        }
         console.log(`[RESPAWN] Death: playerX=${deathPlayerX.toFixed(0)}, spawnX=${spawnPointX.toFixed(0)} (current meteor position), remaining=${remainingRewindDistance.toFixed(0)}px`);
 
         respawnState = 'dying';
@@ -1739,6 +1925,11 @@ const init = async () => {
       if (respawnTimer >= RESPAWN_WAIT_TIME) {
         // Calculate FIXED remaining distance using spawn and death positions
         remainingRewindDistance = spawnPointX - deathPlayerX;
+        if (respawnClampToScreen && respawnClampDistance > 0) {
+          if (Math.abs(remainingRewindDistance) > respawnClampDistance) {
+            remainingRewindDistance = Math.sign(remainingRewindDistance) * respawnClampDistance;
+          }
+        }
 
         console.log(`[RESPAWN] Fixed distance calculation:`);
         console.log(`  Spawn point: X=${spawnPointX.toFixed(0)}`);
@@ -2217,10 +2408,16 @@ const init = async () => {
         speedMultiplier *= tutorialParallaxSlowFactor;
       }
     }
+    if (tutorialDashJumpShown && !tutorialDashJumpCompleted && !parallaxBoostActive) {
+      speedMultiplier = 0;
+    }
 
     const treehouseOrbCollected = meteorOrb.isCollected();
     const treehouseJustCollected = treehouseOrbCollected && !treehouseOrbCollectedPrev;
     treehouseOrbCollectedPrev = treehouseOrbCollected;
+    if (treehouseJustCollected) {
+      startEnergyReveal();
+    }
     const treehouseSegment = (() => {
       const segments = grounds.getSegments();
       return segments.find((seg) => seg.type === 'treed_prairie_treehouse') || null;
@@ -2236,6 +2433,33 @@ const init = async () => {
       }
     } else {
       treehouseHoldActive = false;
+    }
+
+    const treehouseEnemyShouldHide =
+      !!treehouseSegment &&
+      !treehouseOrbCollected &&
+      (treehouseHoldActive || treehouseHoldProgress > 0 || Math.abs(treehousePanX) > 0.5);
+    if (treehouseEnemyShouldHide) {
+      if (!treehouseEnemyHidden) {
+        const exitScreenX = app.renderer.width * TREEHOUSE_ENEMY_EXIT_SCREEN_MULT;
+        treehouseEnemyHidden = true;
+        treehouseEnemyReturnActive = false;
+        treehouseEnemyReturnStart = 0;
+        treehouseEnemyAutoEaseActive = false;
+        treehouseEnemyAutoEaseStart = 0;
+        treehouseEnemyExitActive = true;
+        treehouseEnemyExitStart = performance.now();
+        treehouseEnemyExitFromX = enemyBall.position.x;
+        treehouseEnemyExitTargetX = screenToWorldX(exitScreenX);
+      }
+    } else if (treehouseEnemyHidden) {
+      treehouseEnemyHidden = false;
+      treehouseEnemyReturnActive = true;
+      treehouseEnemyReturnStart = performance.now();
+      treehouseEnemyAutoEaseActive = false;
+      treehouseEnemyAutoEaseStart = 0;
+      treehouseEnemyExitActive = false;
+      treehouseEnemyExitStart = 0;
     }
 
     if (treehouseJustCollected && treehousePanX !== 0) {
@@ -2536,26 +2760,83 @@ const init = async () => {
     enemyChargeCtx.restore();
     enemyChargeTexture.source.update();
 
-    // Update player projectiles (only when unlocked)
-    projectiles.forEach(p => {
-      if (!p.active) return;
-      p.x += PROJECTILE_SPEED * deltaSeconds;
-      if (p.x > app.renderer.width) {
-        p.active = false;
+    if (useStraightBlueLasers) {
+      // Update player projectiles (only when unlocked)
+      projectiles.forEach(p => {
+        if (!p.active) return;
+        p.x += PROJECTILE_SPEED * deltaSeconds;
+        if (p.x > app.renderer.width) {
+          p.active = false;
+        }
+        // Enemy hitbox
+        const bounds = enemyBounds();
+        if (
+          p.x < bounds.right &&
+          p.x + PROJECTILE_WIDTH > bounds.left &&
+          p.y < bounds.bottom &&
+          p.y + PROJECTILE_HEIGHT > bounds.top
+        ) {
+          p.active = false;
+          enemyFlashUntil = performance.now() + 250;
+          sparkParticles.spawn(p.x, p.y, 'blue');
+          // Count hits against red; every 20 hits = 1 out on red
+          redHits += 1;
+          if (redHits >= HITS_PER_OUT) {
+            const outsGained = Math.floor(redHits / HITS_PER_OUT);
+            redOuts = Math.min(10, redOuts + outsGained);
+            redHits = redHits % HITS_PER_OUT;
+          }
+          if (!firstOutMade && (redOuts + blueOuts) > 0) {
+            firstOutMade = true;
+          }
+          if (redOuts > 0 && !autoScenarioTriggered) {
+            autoScenarioPending = true;
+            autoScenarioTriggered = true;
+          }
+          updateScoreUI();
+        }
+      });
+
+      // Render player projectiles
+      projectileContainer.removeChildren();
+      projectiles.forEach(p => {
+        if (!p.active) return;
+        const sprite = new Sprite(playerBeamTexture);
+        sprite.anchor.set(0, 0);
+        sprite.position.set(p.x, p.y);
+        projectileContainer.addChild(sprite);
+      });
+    } else if (projectiles.length > 0) {
+      projectiles.length = 0;
+      projectileContainer.removeChildren();
+    }
+
+    // Update meteor swirl orb shots
+    meteorSwirlShots.forEach((shot) => {
+      if (!shot.active) return;
+      const speedScale = shot.speedScale ?? 1;
+      const maxSpeedScale = shot.maxSpeedScale ?? speedScale;
+      const maxSpeed = PROJECTILE_SPEED * METEOR_SWIRL_SHOT_SPEED_MAX * maxSpeedScale;
+      shot.speed = Math.min(
+        maxSpeed,
+        shot.speed + (PROJECTILE_SPEED * METEOR_SWIRL_SHOT_ACCEL * speedScale) * deltaSeconds
+      );
+      shot.x += shot.speed * deltaSeconds;
+      if (shot.x - shot.radius > app.renderer.width + METEOR_SWIRL_SHOT_OFFSCREEN_PAD) {
+        shot.active = false;
+        return;
       }
-      // Enemy hitbox
       const bounds = enemyBounds();
       if (
-        p.x < bounds.right &&
-        p.x + PROJECTILE_WIDTH > bounds.left &&
-        p.y < bounds.bottom &&
-        p.y + PROJECTILE_HEIGHT > bounds.top
+        shot.x + shot.radius > bounds.left &&
+        shot.x - shot.radius < bounds.right &&
+        shot.y + shot.radius > bounds.top &&
+        shot.y - shot.radius < bounds.bottom
       ) {
-        p.active = false;
+        shot.active = false;
         enemyFlashUntil = performance.now() + 250;
-        sparkParticles.spawn(p.x, p.y, 'blue');
-        // Count hits against red; every 20 hits = 1 out on red
-        redHits += 1;
+        sparkParticles.spawn(shot.x, shot.y, 'blue');
+        redHits += shot.hits;
         if (redHits >= HITS_PER_OUT) {
           const outsGained = Math.floor(redHits / HITS_PER_OUT);
           redOuts = Math.min(10, redOuts + outsGained);
@@ -2571,16 +2852,32 @@ const init = async () => {
         updateScoreUI();
       }
     });
+    for (let i = meteorSwirlShots.length - 1; i >= 0; i--) {
+      if (!meteorSwirlShots[i].active) {
+        meteorSwirlShots.splice(i, 1);
+      }
+    }
 
-    // Render player projectiles
-    projectileContainer.removeChildren();
-    projectiles.forEach(p => {
-      if (!p.active) return;
-      const sprite = new Sprite(playerBeamTexture);
-      sprite.anchor.set(0, 0);
-      sprite.position.set(p.x, p.y);
-      projectileContainer.addChild(sprite);
+    // Render meteor swirl orb shots
+    meteorSwirlShotGraphics.clear();
+    meteorSwirlShots.forEach((shot) => {
+      if (!shot.active) return;
+      meteorSwirlShotGraphics.circle(shot.x, shot.y, shot.radius).fill({ color: 0xbfeaff, alpha: 0.95 });
     });
+    meteorOrbChargePreviewGraphics.clear();
+    if (orbChargeActive) {
+      const orbOrigin = meteorOrb.getShotOrigin();
+      if (orbOrigin) {
+        const heldSeconds = (performance.now() - orbChargeStart) / 1000;
+        const clampedHold = Math.min(ORB_CHARGE_MAX_SECONDS, Math.max(0, heldSeconds));
+        const t = clampedHold / ORB_CHARGE_MAX_SECONDS;
+        const baseRadius = meteorOrb.getShotRadius() + ORB_SHOT_BASE_BONUS_PX;
+        const minRadius = baseRadius + ORB_SHOT_MIN_DELTA_PX;
+        const maxRadius = baseRadius + ORB_SHOT_MAX_DELTA_PX;
+        const radius = minRadius + (maxRadius - minRadius) * t;
+        meteorOrbChargePreviewGraphics.circle(orbOrigin.x, orbOrigin.y, radius).fill({ color: 0xbfeaff, alpha: 0.45 });
+      }
+    }
 
     // Render halo to separate normal-blend layer
     haloCtx.clearRect(0, 0, haloCanvas.width, haloCanvas.height);
@@ -2947,7 +3244,7 @@ const init = async () => {
             shakeEndTime = dashNow + DASH_HIT_SHAKE_MS;
 
             energy = Math.min(100, energy + 7);
-            if (energy >= 100 && !shootUnlocked) {
+            if (energyActivated && energy >= 100 && !shootUnlocked) {
               canShoot = true;
               shootUnlocked = true;
               console.log('[SHOOT UNLOCK] Reached 100% energy');
@@ -3210,6 +3507,112 @@ const init = async () => {
       meteorHitbox = null;
     }
 
+    const meteorSwirlActive = cometHoleLevelActive;
+    const meteorSwirlArea = (() => {
+      if (!meteorSwirlActive) return null;
+      const platformBounds = holeSequencePlatformIds
+        .map((id) => platforms.getPlatformBoundsById(id))
+        .filter((bounds): bounds is PlatformCollision => bounds !== null);
+      if (platformBounds.length >= 2) {
+        const left = Math.min(...platformBounds.map((bounds) => bounds.left));
+        const right = Math.max(...platformBounds.map((bounds) => bounds.right));
+        const minSurfaceY = Math.min(...platformBounds.map((bounds) => bounds.surfaceY));
+        const maxSurfaceY = Math.max(...platformBounds.map((bounds) => bounds.surfaceY));
+        const top = minSurfaceY - playerRadius * 6;
+        const bottom = maxSurfaceY - playerRadius * 1.2;
+        return {
+          left,
+          right,
+          top: Math.min(top, bottom - playerRadius),
+          bottom,
+        };
+      }
+      if (meteorBounds) {
+        return {
+          left: meteorBounds.x + 20,
+          right: meteorBounds.x + meteorBounds.width - 20,
+          top: meteorBounds.y - meteorBounds.height + 20,
+          bottom: meteorBounds.y - 40,
+        };
+      }
+      return null;
+    })();
+
+    if (meteorSwirlArea && !meteorSwirlSpawned) {
+      spawnMeteorSwirlOrbs(meteorSwirlArea);
+    } else if (!meteorSwirlArea && meteorSwirlSpawned) {
+      meteorSwirlOrbs.length = 0;
+      meteorSwirlSpawned = false;
+    }
+
+    meteorSwirlGraphics.clear();
+    const meteorBaseSize = getMeteorSwirlOrbBaseSize();
+    const meteorTime = tickerInstance.lastTime / 1000;
+    if (meteorSwirlArea && meteorSwirlOrbs.length > 0) {
+      const minX = meteorSwirlArea.left;
+      const maxX = meteorSwirlArea.right;
+      const topY = meteorSwirlArea.top;
+      const bottomY = meteorSwirlArea.bottom;
+      meteorSwirlOrbs.forEach((orb) => {
+        if (orb.collected) return;
+        const safeMinX = minX + orb.radius;
+        const safeMaxX = maxX - orb.radius;
+        const safeMinY = topY + orb.radius;
+        const safeMaxY = bottomY - orb.radius;
+        const hasSafeX = safeMaxX > safeMinX;
+        const hasSafeY = safeMaxY > safeMinY;
+        const baseX = hasSafeX
+          ? safeMinX + (safeMaxX - safeMinX) * orb.offsetX + orb.jitterX
+          : (minX + maxX) * 0.5;
+        const baseY = hasSafeY
+          ? safeMinY + (safeMaxY - safeMinY) * orb.offsetY + orb.jitterY
+          : (topY + bottomY) * 0.5;
+        const clampedBaseX = hasSafeX ? Math.min(safeMaxX, Math.max(safeMinX, baseX)) : baseX;
+        const clampedBaseY = hasSafeY ? Math.min(safeMaxY, Math.max(safeMinY, baseY)) : baseY;
+        const orbitPhase = meteorTime * orb.speed + orb.phase;
+        const swingX = Math.sin(orbitPhase);
+        const swingY = Math.cos(orbitPhase * 0.9 + orb.phase * 0.6);
+        const radius = orb.radius * (0.85 + 0.15 * Math.sin(meteorTime * (orb.speed * 1.4) + orb.phase));
+        const bob = Math.sin(meteorTime * (orb.speed * 1.7) + orb.phase * 1.2) * (orb.radius * 0.2);
+        orb.currentX = Math.min(maxX, Math.max(minX, clampedBaseX + swingX * radius));
+        orb.currentY = Math.min(bottomY, Math.max(topY, clampedBaseY + swingY * radius * 0.95 + bob));
+        const orbSize = meteorBaseSize * orb.sizeScale;
+        meteorSwirlGraphics.circle(orb.currentX, orb.currentY, orbSize).fill({ color: 0x9fe7ff, alpha: 0.95 });
+
+        const dx = state.x - orb.currentX;
+        const dy = state.y - orb.currentY;
+        const collectRadius = playerRadius + orbSize + METEOR_SWIRL_ORB_COLLECT_PAD;
+        if ((dx * dx + dy * dy) <= collectRadius * collectRadius) {
+          orb.collected = true;
+          meteorSwirlFollowers.push({
+            id: orb.id,
+            radius: Math.max(playerRadius * 1.8, orb.radius * 0.2),
+            arc: orb.arc,
+            speed: orb.speed * 1.1,
+            phase: Math.random() * Math.PI * 2,
+            sizeScale: orb.sizeScale,
+            currentX: orb.currentX,
+            currentY: orb.currentY,
+          });
+        }
+      });
+    }
+
+    if (meteorSwirlFollowers.length > 0) {
+      meteorSwirlFollowers.forEach((orb, index) => {
+        const followBaseX = state.x - playerRadius * METEOR_SWIRL_FOLLOW_X_OFFSET;
+        const followBaseY = state.y - playerRadius * METEOR_SWIRL_FOLLOW_Y_OFFSET;
+        const spacing = (index - (meteorSwirlFollowers.length - 1) / 2) * playerRadius * METEOR_SWIRL_FOLLOW_SPACING;
+        const osc = Math.sin(meteorTime * orb.speed + orb.phase);
+        const angle = orb.arc * osc;
+        const radius = orb.radius * (0.7 + 0.3 * Math.sin(meteorTime * (orb.speed * 1.3) + orb.phase));
+        orb.currentX = followBaseX + Math.cos(angle) * radius;
+        orb.currentY = followBaseY + spacing + Math.sin(angle) * radius * 0.6;
+        const orbSize = meteorBaseSize * orb.sizeScale;
+        meteorSwirlGraphics.circle(orb.currentX, orb.currentY, orbSize).fill({ color: 0x7bd6ff, alpha: 0.95 });
+      });
+    }
+
     // Spawn red enemy inside the meteor overlay when it appears
     if (cometHoleLevelActive && meteorBounds && !redEnemyActive) {
       // Position enemy inside meteor using percentages of overlay dimensions plus pixel adjustments
@@ -3278,9 +3681,6 @@ const init = async () => {
         redEnemyState = 'falling';
         redEnemyVelocityX = 300; // Jump out to the right
         redEnemyVelocityY = -400; // Jump up and out
-        if (revealEnergyBar) {
-          revealEnergyBar();
-        }
         // Impact feedback: sparks + quick screen shake
         sparkParticles.spawn(enemyBall.position.x, enemyBall.position.y, 'red');
         shakeActive = true;
@@ -3375,6 +3775,18 @@ const init = async () => {
       top: prevState.y - playerRadius,
       bottom: prevState.y + playerRadius,
     };
+    const platformLandingBounds: PlayerBounds = {
+      left: state.x - playerRadius,
+      right: state.x + playerRadius,
+      top: state.y - playerRadius,
+      bottom: state.y + playerRadius,
+    };
+    const platformPrevLandingBounds: PlayerBounds = {
+      left: prevState.x - playerRadius,
+      right: prevState.x + playerRadius,
+      top: prevState.y - playerRadius,
+      bottom: prevState.y + playerRadius,
+    };
 
     const treehousePlatforms = getTreehousePlatforms();
     const treehousePlatformMap = new Map<number, TreehousePlatform>();
@@ -3384,8 +3796,8 @@ const init = async () => {
 
     // Detect platforms being passed through while ascending (jumping up)
     const platformsPassedThrough = platforms.getPlatformsPassedThrough(
-      playerBounds,
-      prevBounds,
+      platformLandingBounds,
+      platformPrevLandingBounds,
       verticalVelocity
     );
 
@@ -3406,8 +3818,8 @@ const init = async () => {
     // Check for platform collision (ignore small movements during charge to prevent falling through)
     const isCharging = physics.isChargingJump();
     let supportingPlatform = platforms.getSupportingPlatform(
-      playerBounds,
-      prevBounds,
+      platformLandingBounds,
+      platformPrevLandingBounds,
       verticalVelocity,
       physics.getJumpedThroughPlatforms() // Pass Set of platforms jumped through
     );
@@ -4221,6 +4633,8 @@ const init = async () => {
     const enemySquishActive = enemySquishUntil > performance.now();
     const enemySquishScaleX = enemySquishActive ? 1.25 : 1;
     const enemySquishScaleY = enemySquishActive ? 0.7 : 1;
+    const lockEnemyAutoX =
+      treehouseEnemyHidden || treehouseEnemyReturnActive || treehouseEnemyAutoEaseActive;
     if (enemyMode === 'physics') {
       const enemyState = enemyPhysics.update(deltaSeconds);
       enemyBall.position.y = enemyState.y;
@@ -4231,13 +4645,17 @@ const init = async () => {
         const moveDuration = 1.6;
         const t = Math.min(1, elapsed / moveDuration);
         const ease = 1 - Math.pow(1 - t, 3);
-        enemyBall.position.x = enemyIntroMoveStartX + (targetX - enemyIntroMoveStartX) * ease;
+        if (!lockEnemyAutoX) {
+          enemyBall.position.x = enemyIntroMoveStartX + (targetX - enemyIntroMoveStartX) * ease;
+        }
         if (t >= 1) {
           enemyIntroMoveActive = false;
         }
       }
       if (redEnemyState === 'jumping_intro' && !enemyIntroMoveActive) {
-        enemyBall.position.x = getEnemyTargetX();
+        if (!lockEnemyAutoX) {
+          enemyBall.position.x = getEnemyTargetX();
+        }
       }
 
       // Check if ready to transition to hover mode
@@ -4256,15 +4674,67 @@ const init = async () => {
           holeExitCameraEaseActive = true;
           holeExitCameraEaseStart = performance.now();
         }
-        if (revealEnergyBar) {
-          revealEnergyBar();
-        }
       }
     } else if (enemyMode === 'hover') {
       const enemyState = enemyMovement.update(deltaSeconds);
       enemyBall.position.y = enemyState.y;
       enemyBall.scale.set(enemyState.scaleX * enemySquishScaleX, enemyState.scaleY * enemySquishScaleY);
-      enemyBall.position.x = getEnemyTargetX();
+      if (!lockEnemyAutoX) {
+        enemyBall.position.x = getEnemyTargetX();
+      }
+    }
+
+    let treehouseEnemyOffscreen = false;
+    if (enemyMode !== 'sleep' && (treehouseEnemyHidden || treehouseEnemyReturnActive)) {
+      const screenRightWorldX = screenToWorldX(app.renderer.width);
+      const exitX = treehouseEnemyExitTargetX || screenToWorldX(app.renderer.width * TREEHOUSE_ENEMY_EXIT_SCREEN_MULT);
+      const returnX = getEnemyTargetX();
+      if (treehouseEnemyHidden) {
+        if (treehouseEnemyExitActive) {
+          const exitElapsed = performance.now() - treehouseEnemyExitStart;
+          const t = Math.min(1, exitElapsed / TREEHOUSE_ENEMY_EXIT_DURATION_MS);
+          const ease = 1 - Math.pow(1 - t, 3);
+          enemyBall.position.x = treehouseEnemyExitFromX + (exitX - treehouseEnemyExitFromX) * ease;
+          if (t >= 1) {
+            treehouseEnemyExitActive = false;
+          }
+        } else {
+          enemyBall.position.x += (exitX - enemyBall.position.x) * TREEHOUSE_ENEMY_EXIT_LERP;
+        }
+      } else if (treehouseEnemyReturnActive) {
+        if (!treehouseEnemyReturnStart) {
+          treehouseEnemyReturnStart = performance.now();
+        }
+        enemyBall.position.x += (returnX - enemyBall.position.x) * TREEHOUSE_ENEMY_RETURN_LERP;
+        const returnElapsed = performance.now() - treehouseEnemyReturnStart;
+        const closeToTarget = Math.abs(enemyBall.position.x - returnX) <= TREEHOUSE_ENEMY_RETURN_SNAP;
+        const onScreen = enemyBall.position.x <= screenRightWorldX - playerRadius * 0.5;
+        if (closeToTarget || onScreen || returnElapsed >= TREEHOUSE_ENEMY_RETURN_MAX_MS) {
+          treehouseEnemyReturnActive = false;
+          treehouseEnemyReturnStart = 0;
+          if (!closeToTarget) {
+            treehouseEnemyAutoEaseActive = true;
+            treehouseEnemyAutoEaseStart = performance.now();
+          } else {
+            enemyBall.position.x = returnX;
+          }
+        }
+      }
+      treehouseEnemyOffscreen = enemyBall.position.x >= screenRightWorldX + playerRadius;
+    }
+
+    if (enemyMode !== 'sleep' && treehouseEnemyAutoEaseActive && !treehouseEnemyHidden) {
+      const returnX = getEnemyTargetX();
+      enemyBall.position.x += (returnX - enemyBall.position.x) * TREEHOUSE_ENEMY_AUTO_LERP;
+      const easeElapsed = performance.now() - treehouseEnemyAutoEaseStart;
+      if (
+        Math.abs(enemyBall.position.x - returnX) <= TREEHOUSE_ENEMY_RETURN_SNAP ||
+        easeElapsed >= TREEHOUSE_ENEMY_RETURN_MAX_MS
+      ) {
+        treehouseEnemyAutoEaseActive = false;
+        treehouseEnemyAutoEaseStart = 0;
+        enemyBall.position.x = returnX;
+      }
     }
 
     const laserResult = laserPhysics.update({
@@ -4281,7 +4751,13 @@ const init = async () => {
         scenarioStage !== 'charging' &&
         scenarioStage !== 'firing',
       introComplete,
-      stopSpawning: enemyMode === 'sleep' || scenarioStage === 'prep' || scenarioStage === 'charging' || scenarioStage === 'firing',
+      stopSpawning:
+        treehouseEnemyHidden ||
+        treehouseEnemyOffscreen ||
+        enemyMode === 'sleep' ||
+        scenarioStage === 'prep' ||
+        scenarioStage === 'charging' ||
+        scenarioStage === 'firing',
       deltaSeconds,
     });
     if (laserResult.scoreChange !== 0) {
@@ -4290,7 +4766,7 @@ const init = async () => {
       energy = Math.min(100, energy + laserResult.scoreChange * 2.5);
 
       // Unlock shooting only at full energy
-      if (energy >= 100 && !shootUnlocked) {
+      if (energyActivated && energy >= 100 && !shootUnlocked) {
         canShoot = true;
         shootUnlocked = true;
         console.log('[SHOOT UNLOCK] Reached 100% energy');
@@ -4304,9 +4780,6 @@ const init = async () => {
     }
     if (laserResult.laserFired) {
       enemyHasFiredLasers = true;
-      if (revealEnergyBar) {
-        revealEnergyBar();
-      }
     }
     if (laserResult.hitPosition) {
       // Enemy lasers = red sparks - reduce energy by 1.5% per hit
@@ -4500,6 +4973,7 @@ const init = async () => {
     // Disable input during intro
     if (playerIntroActive || respawnInputLocked) return;
     if (tutorialActive && tutorialStage === 'waiting' && physics.getJumpCount() >= 1) return;
+    if (event instanceof KeyboardEvent && event.repeat) return;
 
     // Detect input type on pointer events (touch, mouse, pen)
     if (event && 'pointerType' in event) {
@@ -4518,21 +4992,27 @@ const init = async () => {
       }
     }
 
+    const preJumpCount = physics.getJumpCount();
     const jumpExecuted = physics.startJump();
     if (jumpExecuted) {
+      const postJumpCount = physics.getJumpCount();
+      const didDoubleJumpNow = preJumpCount === 1 && postJumpCount >= 2;
       lastJumpTime = performance.now();
-      if (physics.getJumpCount() >= 2 && tutorialStage === 'doubleJump' && doubleJumpContainer.style.display !== 'none') {
+      if (didDoubleJumpNow && tutorialStage === 'doubleJump' && doubleJumpContainer.style.display !== 'none') {
         nudgeUpArrow();
       }
-      if (physics.getCursorScreenPercent() >= 0.7 && physics.getJumpCount() >= 2) {
+      const allowDashJump = !tutorialActive || tutorialDashJumpShown || tutorialDashJumpCompleted;
+      if (physics.getCursorScreenPercent() >= 0.7 && didDoubleJumpNow) {
         if (tutorialStage === 'dashJump' && dashJumpContainer.style.display !== 'none') {
           nudgeRightArrow();
         }
-        if (enemyHasFiredLasers && enemyMode === 'hover' && !dashChargeActive && !dashChargeReturning) {
-          startDashCharge(physics.getState().x);
-        } else {
-          parallaxBoostActive = true;
-          parallaxBoostStartTime = performance.now();
+        if (allowDashJump) {
+          if (enemyHasFiredLasers && enemyMode === 'hover' && !dashChargeActive && !dashChargeReturning) {
+            startDashCharge(physics.getState().x);
+          } else {
+            parallaxBoostActive = true;
+            parallaxBoostStartTime = performance.now();
+          }
         }
       }
 
@@ -4636,40 +5116,84 @@ const init = async () => {
     }
     releaseJump();
   });
+
+  function getShootCooldown() {
+    if (energy >= 80) {
+      return MAX_SHOOT_SPEED;
+    }
+    if (energy <= 20) {
+      return MIN_SHOOT_SPEED;
+    }
+    const energyRange = 80 - 20;
+    const cooldownRange = MIN_SHOOT_SPEED - MAX_SHOOT_SPEED;
+    const energyRatio = (energy - 20) / energyRange;
+    return MIN_SHOOT_SPEED - (energyRatio * cooldownRange);
+  }
+
+  function fireChargedOrbShot(holdSeconds: number) {
+    const orbOrigin = meteorOrb.getShotOrigin();
+    if (!orbOrigin || !canShoot || energy <= 0) return;
+    const now = performance.now();
+    const shootCooldown = getShootCooldown();
+    if (now - nextShotTime < shootCooldown) return;
+    const clampedHold = Math.min(ORB_CHARGE_MAX_SECONDS, Math.max(0, holdSeconds));
+    const t = clampedHold / ORB_CHARGE_MAX_SECONDS;
+    const baseRadius = meteorOrb.getShotRadius() + ORB_SHOT_BASE_BONUS_PX;
+    const minRadius = baseRadius + ORB_SHOT_MIN_DELTA_PX;
+    const maxRadius = baseRadius + ORB_SHOT_MAX_DELTA_PX;
+    const radius = minRadius + (maxRadius - minRadius) * t;
+    const speedScale = 1 + t * 0.35;
+    const hits = clampedHold >= ORB_CHARGE_MAX_SECONDS
+      ? 3
+      : clampedHold >= ORB_CHARGE_MID_SECONDS
+        ? 2
+        : 1;
+    meteorSwirlShots.push({
+      x: orbOrigin.x,
+      y: orbOrigin.y,
+      radius,
+      speed: PROJECTILE_SPEED * METEOR_SWIRL_SHOT_SPEED_START,
+      active: true,
+      hits,
+      speedScale,
+      maxSpeedScale: speedScale,
+    });
+    energy = Math.max(0, energy - 0.5);
+    nextShotTime = now;
+    updateEnergyUI();
+  }
+
   window.addEventListener('keydown', (event) => {
     if (event.code === 'Space' || event.code === 'ArrowUp') {
       event.preventDefault();
       triggerJump();
     } else if (event.code === 'KeyF' || event.code === 'KeyS') {
-      // Can only shoot if unlocked and has energy
-      if (!canShoot || energy <= 0) return;
-
-      const now = performance.now();
-
-      // Calculate shooting cooldown based on current energy (matches geminiTut)
-      let shootCooldown;
-      if (energy >= 80) {
-        shootCooldown = MAX_SHOOT_SPEED; // 25ms at 80%+ energy
-      } else if (energy <= 20) {
-        shootCooldown = MIN_SHOOT_SPEED; // 350ms at 20% or less energy
-      } else {
-        // Linear interpolation between 20% and 80% energy
-        const energyRange = 80 - 20; // 60
-        const cooldownRange = MIN_SHOOT_SPEED - MAX_SHOOT_SPEED; // 325ms
-        const energyRatio = (energy - 20) / energyRange;
-        shootCooldown = MIN_SHOOT_SPEED - (energyRatio * cooldownRange);
+      if (event.repeat) return;
+      if (meteorSwirlFollowers.length > 0) {
+        if (enemyMode !== 'hover') {
+          return;
+        }
+        const fired = meteorSwirlFollowers.pop();
+        if (fired) {
+          const orbSize = getMeteorSwirlOrbBaseSize() * fired.sizeScale;
+          meteorSwirlShots.push({
+            x: fired.currentX,
+            y: fired.currentY,
+            radius: orbSize,
+            speed: PROJECTILE_SPEED * METEOR_SWIRL_SHOT_SPEED_START,
+            active: true,
+            hits: 1,
+          });
+        }
+        return;
       }
-
-      // Check if enough time has passed since last shot
-      if (now - nextShotTime < shootCooldown) return;
-
-      const state = physics.getState();
-      projectiles.push({ x: state.x + playerRadius, y: state.y, active: true });
-
-      // Consume 0.5% energy per shot
-      energy = Math.max(0, energy - 0.5);
-      nextShotTime = now;
-      updateEnergyUI();
+      if (!meteorOrb.getShotOrigin()) return;
+      if (!canShoot || energy <= 0) return;
+      if (!orbChargeActive) {
+        orbChargeActive = true;
+        orbChargeStart = performance.now();
+        orbChargeKey = event.code as 'KeyS' | 'KeyF';
+      }
     } else if (event.code === 'ArrowDown') {
       event.preventDefault();
       isPressingDown = true;
@@ -4679,6 +5203,14 @@ const init = async () => {
     if (event.code === 'Space' || event.code === 'ArrowUp') {
       event.preventDefault();
       releaseJump();
+    } else if (event.code === 'KeyF' || event.code === 'KeyS') {
+      if (orbChargeActive && orbChargeKey === event.code) {
+        const heldSeconds = (performance.now() - orbChargeStart) / 1000;
+        fireChargedOrbShot(heldSeconds);
+        orbChargeActive = false;
+        orbChargeKey = null;
+        meteorOrb.setChargeBoost(1);
+      }
     } else if (event.code === 'ArrowDown') {
       event.preventDefault();
       isPressingDown = false;
@@ -4869,6 +5401,19 @@ const init = async () => {
     energyContainer.style.transform = 'scaleY(1)';
     energyLabel.style.opacity = '1';
   };
+  const startEnergyReveal = () => {
+    energy = 100;
+    energyDisplay = 0;
+    energyRevealActive = true;
+    energyRevealStart = performance.now();
+    energyActivated = true;
+    canShoot = true;
+    shootUnlocked = true;
+    if (revealEnergyBar) {
+      revealEnergyBar();
+    }
+    updateEnergyUI();
+  };
 
   // Scoreboard (fades in when enemy rolls in) with hits/outs styled like original Jump
   const scoreContainer = document.createElement('div');
@@ -4953,9 +5498,6 @@ const init = async () => {
       scoreVisible = true;
       scoreContainer.style.opacity = '1';
     }
-    if (revealEnergyBar) {
-      revealEnergyBar();
-    }
   };
   updateScoreUI();
 
@@ -4974,7 +5516,11 @@ const init = async () => {
     }
   };
   const updateEnergyUI = () => {
-    const clampedEnergy = Math.max(0, Math.min(100, energy));
+    if (!energyRevealActive) {
+      energyDisplay = energy;
+    }
+    const displayValue = energyRevealActive ? energyDisplay : energy;
+    const clampedEnergy = Math.max(0, Math.min(100, displayValue));
     energyFill.style.height = `${clampedEnergy}%`;
     const color = energyColorForLevel(clampedEnergy);
     energyFill.style.background = color;
@@ -5193,6 +5739,7 @@ const init = async () => {
   // 100% Energy button (dev only)
   const fillEnergy = () => {
     energy = 100;
+    energyActivated = true;
     // Also unlock shooting if not already unlocked
     canShoot = true;
     shootUnlocked = true;
@@ -5257,6 +5804,138 @@ const init = async () => {
       meteorOrb.toggleExtra();
       updateOrdLabels();
     });
+  }
+
+  if (SHOW_DEBUG_UI) {
+    const orbScalePanel = document.createElement('div');
+    orbScalePanel.style.position = 'fixed';
+    orbScalePanel.style.right = '14px';
+    orbScalePanel.style.top = '220px';
+    orbScalePanel.style.zIndex = '999';
+    orbScalePanel.style.display = 'flex';
+    orbScalePanel.style.flexDirection = 'column';
+    orbScalePanel.style.gap = '6px';
+    orbScalePanel.style.padding = '8px 10px';
+    orbScalePanel.style.background = 'rgba(0, 0, 0, 0.55)';
+    orbScalePanel.style.border = '1px solid rgba(255, 255, 255, 0.2)';
+    orbScalePanel.style.borderRadius = '8px';
+    orbScalePanel.style.fontFamily = 'sans-serif';
+    orbScalePanel.style.fontSize = '12px';
+    orbScalePanel.style.color = 'white';
+
+    const panelTitle = document.createElement('div');
+    panelTitle.textContent = 'Orb Layer Diameter';
+    panelTitle.style.fontWeight = '600';
+    panelTitle.style.opacity = '0.9';
+    panelTitle.style.marginBottom = '2px';
+    orbScalePanel.appendChild(panelTitle);
+
+    const scales = meteorOrb.getLayerScales();
+    const travels = meteorOrb.getLayerTravels();
+    const orbSliderMap = new Map<
+      string,
+      { slider: HTMLInputElement; valueLabel: HTMLSpanElement; onChange: (value: number) => void }
+    >();
+    const addSliderRow = (
+      label: string,
+      initialValue: number,
+      onChange: (value: number) => void
+    ) => {
+      const row = document.createElement('label');
+      row.style.display = 'flex';
+      row.style.alignItems = 'center';
+      row.style.gap = '8px';
+
+      const name = document.createElement('span');
+      name.textContent = label;
+      name.style.width = '78px';
+
+      const slider = document.createElement('input');
+      slider.type = 'range';
+      slider.min = '0';
+      slider.max = '200';
+      slider.step = '1';
+      slider.value = String(Math.round(initialValue));
+      slider.style.width = '140px';
+
+      const valueLabel = document.createElement('span');
+      valueLabel.textContent = slider.value;
+      valueLabel.style.width = '36px';
+      valueLabel.style.textAlign = 'right';
+
+      slider.addEventListener('input', () => {
+        const value = parseFloat(slider.value);
+        onChange(value);
+        valueLabel.textContent = String(Math.round(value));
+      });
+
+      row.appendChild(name);
+      row.appendChild(slider);
+      row.appendChild(valueLabel);
+      orbScalePanel.appendChild(row);
+      orbSliderMap.set(label, { slider, valueLabel, onChange });
+    };
+
+    addSliderRow('Far Size', scales.far * 100, (value) => meteorOrb.setLayerScale('far', value / 100));
+    addSliderRow('Far Travel', travels.far * 100, (value) => meteorOrb.setLayerTravel('far', value / 100));
+    addSliderRow('Outer Size', scales.outer * 100, (value) => meteorOrb.setLayerScale('outer', value / 100));
+    addSliderRow('Outer Travel', travels.outer * 100, (value) => meteorOrb.setLayerTravel('outer', value / 100));
+    addSliderRow('Inner Size', scales.inner * 100, (value) => meteorOrb.setLayerScale('inner', value / 100));
+    addSliderRow('Inner Travel', travels.inner * 100, (value) => meteorOrb.setLayerTravel('inner', value / 100));
+    addSliderRow('Mid Size', scales.mid * 100, (value) => meteorOrb.setLayerScale('mid', value / 100));
+    addSliderRow('Mid Travel', travels.mid * 100, (value) => meteorOrb.setLayerTravel('mid', value / 100));
+    addSliderRow('Core Size', scales.core * 100, (value) => meteorOrb.setLayerScale('core', value / 100));
+    addSliderRow('Core Travel', travels.core * 100, (value) => meteorOrb.setLayerTravel('core', value / 100));
+
+    const setOrbSliderValue = (label: string, value: number) => {
+      const row = orbSliderMap.get(label);
+      if (!row) return;
+      const clamped = Math.max(0, Math.min(200, value));
+      row.slider.value = String(Math.round(clamped));
+      row.valueLabel.textContent = row.slider.value;
+      row.onChange(clamped);
+    };
+
+    const orbDefaultsButton = document.createElement('button');
+    orbDefaultsButton.type = 'button';
+    orbDefaultsButton.textContent = 'Orb Defaults';
+    orbDefaultsButton.style.marginTop = '6px';
+    orbDefaultsButton.style.alignSelf = 'flex-start';
+    orbDefaultsButton.style.background = 'rgba(0, 0, 0, 0.7)';
+    orbDefaultsButton.style.color = 'white';
+    orbDefaultsButton.style.border = '1px solid rgba(255, 255, 255, 0.25)';
+    orbDefaultsButton.style.borderRadius = '6px';
+    orbDefaultsButton.style.padding = '4px 8px';
+    orbDefaultsButton.style.cursor = 'pointer';
+    orbDefaultsButton.style.fontSize = '12px';
+    orbDefaultsButton.addEventListener('click', () => {
+      setOrbSliderValue('Far Size', 59);
+      setOrbSliderValue('Far Travel', 100);
+      setOrbSliderValue('Outer Size', 43);
+      setOrbSliderValue('Outer Travel', 100);
+      setOrbSliderValue('Inner Size', 103);
+      setOrbSliderValue('Inner Travel', 0);
+      setOrbSliderValue('Mid Size', 200);
+      setOrbSliderValue('Mid Travel', 200);
+      setOrbSliderValue('Core Size', 85);
+      setOrbSliderValue('Core Travel', 0);
+    });
+    orbScalePanel.appendChild(orbDefaultsButton);
+
+    const orbControlsToggle = document.createElement('button');
+    orbControlsToggle.className = 'transition-btn';
+    orbControlsToggle.type = 'button';
+    orbControlsToggle.style.top = '398px';
+    let orbControlsVisible = false;
+    orbControlsToggle.textContent = 'Orb Controls Off';
+    orbControlsToggle.addEventListener('click', () => {
+      orbControlsVisible = !orbControlsVisible;
+      orbScalePanel.style.display = orbControlsVisible ? 'flex' : 'none';
+      orbControlsToggle.textContent = orbControlsVisible ? 'Orb Controls On' : 'Orb Controls Off';
+    });
+    document.body.appendChild(orbControlsToggle);
+    document.body.appendChild(orbScalePanel);
+    orbScalePanel.style.display = 'none';
   }
 
   // Comet Hole Level helper - now supports variable hole counts

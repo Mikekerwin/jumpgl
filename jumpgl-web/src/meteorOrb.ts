@@ -66,7 +66,15 @@ export type MeteorOrbController = {
   toggleExtra: () => boolean;
   setExtraCompactTarget: (target: number) => void;
   getExtraState: () => { enabled: boolean; compactTarget: number };
+  setLayerScale: (layer: 'far' | 'outer' | 'inner' | 'mid' | 'core', scale: number) => void;
+  getLayerScales: () => { far: number; outer: number; inner: number; mid: number; core: number };
+  setLayerTravel: (layer: 'far' | 'outer' | 'inner' | 'mid' | 'core', scale: number) => void;
+  getLayerTravels: () => { far: number; outer: number; inner: number; mid: number; core: number };
   isCollected: () => boolean;
+  getShotOrigin: () => { x: number; y: number } | null;
+  getShotRadius: () => number;
+  setChargeBoost: (boost: number) => void;
+  setChargeCollapse: (scale: number) => void;
 };
 
 export type MeteorOrbProps = {
@@ -86,12 +94,16 @@ export type MeteorOrbProps = {
 export const createMeteorOrb = (params: MeteorOrbProps): MeteorOrbController => {
   const { app, playfieldContainer, platforms, orbContainer } = params;
 
-  const METEOR_ORB_PADDING = 240;
+  const METEOR_ORB_PADDING = 420;
   const METEOR_ORB_RADIUS = 18;
+  const METEOR_ORB_SHOT_RADIUS = METEOR_ORB_RADIUS * 0.4;
   const METEOR_ORB_GRAVITY = 9000;
   const METEOR_ORB_BOUNCE_DAMPING = 0.45;
   const METEOR_ORB_MIN_BOUNCE_VELOCITY = 140;
   const METEOR_ORB_PLATFORM_BOUNCES = 3;
+  const METEOR_ORB_EXTRA_FOLLOW_X = 2.6;
+  const METEOR_ORB_EXTRA_FOLLOW_Y = 0.6;
+  const METEOR_ORB_EXTRA_FOLLOW_Y_OFFSET = 6;
   const METEOR_ORB_GLOW = 1.0;
   const METEOR_ORB_BRIGHTNESS = 1.2;
   const METEOR_ORB_SPRITE_ALPHA = 1;
@@ -297,6 +309,37 @@ export const createMeteorOrb = (params: MeteorOrbProps): MeteorOrbController => 
   applyPulse(meteorOrbOuterDots, 0.8, 1.15, 0.9, 1.6);
   applyPulse(meteorOrbInnerDots, 0.85, 1.2, 1.0, 1.8);
   applyPulse(meteorOrbMidDots, 0.8, 1.25, 1.1, 2.0);
+  const speedUpLayerPulses = (dots: OrbitDot[], count: number, speedScale: number) => {
+    const used = new Set<number>();
+    for (let i = 0; i < count && used.size < dots.length; i += 1) {
+      let idx = Math.floor(Math.random() * dots.length);
+      while (used.has(idx)) {
+        idx = Math.floor(Math.random() * dots.length);
+      }
+      used.add(idx);
+      dots[idx].pulseSpeed *= speedScale;
+      dots[idx].wobbleSpeed *= speedScale;
+    }
+  };
+  speedUpLayerPulses(meteorOrbOuterDots, Math.min(3, meteorOrbOuterDots.length), 2.6);
+
+  const layerScales = {
+    far: 1,
+    outer: 1,
+    inner: 1,
+    mid: 1,
+    core: 1,
+  };
+  const layerTravels = {
+    far: 1,
+    outer: 1,
+    inner: 1,
+    mid: 1,
+    core: 1,
+  };
+  let chargeBoost = 1;
+  let chargeCollapse = 1;
+  let chargeCollapseTarget = 1;
 
   const applyAccentDots = (dots: OrbitDot[], count: number) => {
     const used = new Set<number>();
@@ -503,10 +546,12 @@ export const createMeteorOrb = (params: MeteorOrbProps): MeteorOrbController => 
     meteorOrbState.compactTarget = meteorOrbState.collected ? METEOR_ORB_COMPACT_SCALE : 1;
     const compactLerp = 1 - Math.exp(-deltaSeconds * 2.8);
     meteorOrbState.compactScale += (meteorOrbState.compactTarget - meteorOrbState.compactScale) * compactLerp;
+    const collapseLerp = 1 - Math.exp(-deltaSeconds * 8);
+    chargeCollapse += (chargeCollapseTarget - chargeCollapse) * collapseLerp;
 
     if (extraOrbState.enabled) {
-      const targetX = playerState.x;
-      const targetY = playerState.y;
+      const targetX = playerState.x - playerRadius * METEOR_ORB_EXTRA_FOLLOW_X;
+      const targetY = playerState.y - playerRadius * METEOR_ORB_EXTRA_FOLLOW_Y + METEOR_ORB_EXTRA_FOLLOW_Y_OFFSET;
       if (!extraOrbState.initialized) {
         extraOrbState.x = targetX;
         extraOrbState.y = targetY;
@@ -530,7 +575,7 @@ export const createMeteorOrb = (params: MeteorOrbProps): MeteorOrbController => 
     if (orbVisible) {
       const advanceDots = (dots: OrbitDot[], speedScale: number) => {
         dots.forEach((dot) => {
-          dot.angle += dot.speed * deltaSeconds * speedScale;
+          dot.angle += dot.speed * deltaSeconds * speedScale * chargeBoost;
         });
       };
       const renderDots = (
@@ -629,25 +674,65 @@ export const createMeteorOrb = (params: MeteorOrbProps): MeteorOrbController => 
 
         meteorOrbCtx.save();
         meteorOrbCtx.translate(orbX + METEOR_ORB_PADDING, orbY + METEOR_ORB_PADDING);
-        const outerScale = compactScale * (isCollected ? 1.15 : 1);
+        const collapseScale = chargeCollapse;
+        const outerScale = compactScale * (isCollected ? 1.15 : 1) * collapseScale;
         const centerScale = 0.92;
         const innerCompactScale = Math.min(compactScale, METEOR_ORB_COMPACT_SCALE);
-        const innerScale = innerCompactScale * 0.9 * centerScale;
-        const midScale = innerCompactScale * 0.75 * centerScale;
-        const coreScale = innerCompactScale * 0.6 * centerScale;
-        renderDots(meteorOrbFarDots, compactScale * (isCollected ? 1.4 : 1.25), colorOverride, whiteActive, 0.6);
-        renderDots(meteorOrbOuterDots, outerScale, colorOverride, whiteActive, 0.25);
-        renderDots(meteorOrbInnerDots, innerScale, colorOverride, whiteActive, 0.1);
-        renderDots(meteorOrbMidDots, midScale, colorOverride, whiteActive, 0.22);
-        renderDots(meteorOrbCoreDots, coreScale, colorOverride, whiteActive);
+        const innerScale = innerCompactScale * 0.9 * centerScale * collapseScale;
+        const midScale = innerCompactScale * 0.75 * centerScale * collapseScale;
+        const coreScale = innerCompactScale * 0.6 * centerScale * collapseScale;
+        renderDots(
+          meteorOrbFarDots,
+          compactScale * (isCollected ? 1.4 : 1.25) * layerScales.far * collapseScale,
+          colorOverride,
+          whiteActive,
+          0.6 * layerTravels.far
+        );
+        renderDots(
+          meteorOrbOuterDots,
+          outerScale * layerScales.outer,
+          colorOverride,
+          whiteActive,
+          0.25 * layerTravels.outer
+        );
+        renderDots(
+          meteorOrbInnerDots,
+          innerScale * layerScales.inner,
+          colorOverride,
+          whiteActive,
+          0.1 * layerTravels.inner
+        );
+        renderDots(
+          meteorOrbMidDots,
+          midScale * layerScales.mid,
+          colorOverride,
+          whiteActive,
+          0.22 * layerTravels.mid
+        );
+        renderDots(meteorOrbCoreDots, coreScale * layerScales.core, colorOverride, whiteActive);
         meteorOrbCtx.restore();
 
         meteorOrbAccentCtx.save();
         meteorOrbAccentCtx.translate(orbX + METEOR_ORB_PADDING, orbY + METEOR_ORB_PADDING);
-        renderAccentDots(meteorOrbFarDots, compactScale * (isCollected ? 1.4 : 1.25), colorOverride, 0.6);
-        renderAccentDots(meteorOrbOuterDots, outerScale, colorOverride, 0.25);
-        renderAccentDots(meteorOrbInnerDots, innerScale, colorOverride, 0.2);
-        renderAccentDots(meteorOrbCoreDots, coreScale, colorOverride);
+        renderAccentDots(
+          meteorOrbFarDots,
+          compactScale * (isCollected ? 1.4 : 1.25) * layerScales.far * collapseScale,
+          colorOverride,
+          0.6 * layerTravels.far
+        );
+        renderAccentDots(
+          meteorOrbOuterDots,
+          outerScale * layerScales.outer,
+          colorOverride,
+          0.25 * layerTravels.outer
+        );
+        renderAccentDots(
+          meteorOrbInnerDots,
+          innerScale * layerScales.inner,
+          colorOverride,
+          0.2 * layerTravels.inner
+        );
+        renderAccentDots(meteorOrbCoreDots, coreScale * layerScales.core, colorOverride);
         meteorOrbAccentCtx.restore();
       };
 
@@ -746,6 +831,29 @@ export const createMeteorOrb = (params: MeteorOrbProps): MeteorOrbController => 
   });
 
   const isCollected = () => meteorOrbState.collected;
+  const getShotOrigin = () => {
+    if (!meteorOrbState.collected) {
+      return null;
+    }
+    return { x: meteorOrbState.x, y: meteorOrbState.y };
+  };
+  const getShotRadius = () => METEOR_ORB_SHOT_RADIUS;
+  const setChargeBoost = (boost: number) => {
+    chargeBoost = Math.max(1, Math.min(3, boost));
+  };
+  const setChargeCollapse = (scale: number) => {
+    chargeCollapseTarget = Math.max(0, Math.min(1, scale));
+  };
+  const setLayerScale = (layer: 'far' | 'outer' | 'inner' | 'mid' | 'core', scale: number) => {
+    const clamped = Math.max(0, Math.min(2, scale));
+    layerScales[layer] = clamped;
+  };
+  const getLayerScales = () => ({ ...layerScales });
+  const setLayerTravel = (layer: 'far' | 'outer' | 'inner' | 'mid' | 'core', scale: number) => {
+    const clamped = Math.max(0, Math.min(2, scale));
+    layerTravels[layer] = clamped;
+  };
+  const getLayerTravels = () => ({ ...layerTravels });
 
   return {
     update,
@@ -757,7 +865,15 @@ export const createMeteorOrb = (params: MeteorOrbProps): MeteorOrbController => 
     toggleExtra,
     setExtraCompactTarget,
     getExtraState,
+    setLayerScale,
+    getLayerScales,
+    setLayerTravel,
+    getLayerTravels,
     isCollected,
+    getShotOrigin,
+    getShotRadius,
+    setChargeBoost,
+    setChargeCollapse,
   };
 };
 
