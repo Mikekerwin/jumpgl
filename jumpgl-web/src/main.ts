@@ -118,6 +118,34 @@ const init = async () => {
   loadingOverlay.appendChild(loadingBar);
   document.body.appendChild(loadingOverlay);
 
+  const levelOverlay = document.createElement('div');
+  levelOverlay.style.position = 'fixed';
+  levelOverlay.style.inset = '0';
+  levelOverlay.style.display = 'flex';
+  levelOverlay.style.flexDirection = 'column';
+  levelOverlay.style.alignItems = 'center';
+  levelOverlay.style.justifyContent = 'center';
+  levelOverlay.style.color = '#fff';
+  levelOverlay.style.pointerEvents = 'none';
+  levelOverlay.style.opacity = '0';
+  levelOverlay.style.transition = 'opacity 0.6s ease';
+  levelOverlay.style.zIndex = '2000';
+  levelOverlay.style.fontFamily = '"Times New Roman", Times, serif';
+
+  const levelOverlayTitle = document.createElement('div');
+  levelOverlayTitle.textContent = 'Jump!';
+  levelOverlayTitle.style.fontSize = '6rem';
+  levelOverlayTitle.style.textShadow = '0 0 20px rgba(255,255,255,0.85)';
+
+  const levelOverlaySubtitle = document.createElement('div');
+  levelOverlaySubtitle.style.fontSize = '2.4rem';
+  levelOverlaySubtitle.style.marginTop = '10px';
+  levelOverlaySubtitle.style.opacity = '0.92';
+
+  levelOverlay.appendChild(levelOverlayTitle);
+  levelOverlay.appendChild(levelOverlaySubtitle);
+  document.body.appendChild(levelOverlay);
+
   // Tutorial UI elements
   const tutorialContainer = document.createElement('div');
   tutorialContainer.style.position = 'fixed';
@@ -586,8 +614,9 @@ const init = async () => {
   let nextShotTime = 0;
   const MAX_SHOOT_SPEED = 25; // Fastest cooldown at 80%+ energy (ms)
   const MIN_SHOOT_SPEED = 350; // Slowest cooldown at 20% or less energy (ms)
-  let canShoot = false; // Unlocks after first laser jump
+  let canShoot = false; // Unlocks after collecting the treehouse orb
   let shootUnlocked = false;
+  let orbShootingUnlocked = false; // Shooting is only active after collecting the treehouse orb
   let scenarioActive = false;
   let scenarioSmallId: number | null = null;
   let scenarioStage: 'idle' | 'awaiting' | 'prep' | 'charging' | 'firing' = 'idle';
@@ -627,14 +656,82 @@ const init = async () => {
   let blueOuts = 0;
   let redHits = 0;
   let redOuts = 0;
+  let playerGrowthLevel = 0;
+  let enemyGrowthLevel = 0;
   let treehouseQueued = false;
   let firstOutMade = false;
   let scoreVisible = false;
   let revealEnergyBar: (() => void) | null = null;
   const HITS_PER_OUT = 20;
+  const MAX_GROWTH_LEVELS = 10;
+  const GROWTH_SCALE_PER_LEVEL = 0.2;
   let autoScenarioPending = false;
-  let autoScenarioTriggered = false;
   let butterfliesSpawned = false;
+
+  const getPlayerGrowthScale = () => 1 + playerGrowthLevel * GROWTH_SCALE_PER_LEVEL;
+  const getEnemyGrowthScale = () => 1 + enemyGrowthLevel * GROWTH_SCALE_PER_LEVEL;
+  const getPlayerHitRadius = () => playerRadius * getPlayerGrowthScale();
+  const getEnemyHitRadius = () => playerRadius * getEnemyGrowthScale();
+  const getGrowthYOffset = (growthScale: number) => playerRadius * Math.max(0, growthScale - 1);
+  const getPlayerRenderY = (physicsCenterY: number) => physicsCenterY - getGrowthYOffset(getPlayerGrowthScale());
+  const getEnemyRenderY = (physicsCenterY: number) => physicsCenterY - getGrowthYOffset(getEnemyGrowthScale());
+
+  type SpecialOutNumber = 0 | 4 | 7 | 10;
+  type SpecialChargeStage =
+    | 'idle'
+    | 'windup'
+    | 'charging'
+    | 'hitWall'
+    | 'returning'
+    | 'postReturn'
+    | 'smallJump'
+    | 'midJump'
+    | 'largeJump'
+    | 'done';
+  type FinalTransitionStage = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+  let specialOutNumber: SpecialOutNumber = 0;
+  let specialChargeStage: SpecialChargeStage = 'idle';
+  let specialOutActive = false;
+  let specialWindupStart = 0;
+  let specialChargeStart = 0;
+  let specialChargeStartX = 0;
+  let specialChargeTargetX = 0;
+  let specialOriginalEnemyX = 0;
+  let specialHitWallStart = 0;
+  let specialReturnStart = 0;
+  let specialReturnFromX = 0;
+  let specialReturnToX = 0;
+  let specialPostReturnStart = 0;
+  let specialSmallJumpStart = 0;
+  let specialSmallJumpTriggered = false;
+  let specialMidJumpTriggered = false;
+  let specialLargeJumpTriggered = false;
+  let specialLastCollisionAt = 0;
+  let finalSequenceActive = false;
+  let finalReturning = false;
+  let finalNextChargeTime = 0;
+  let finalChargeActive = false;
+  let finalChargeStart = 0;
+  let finalChargeStartX = 0;
+  let finalChargeTargetX = 0;
+  let finalLastCollisionTime = 0;
+  let finalTransitionActive = false;
+  let finalTransitionStage: FinalTransitionStage = 0;
+  let finalTransitionDelayUntil = 0;
+  let finalTransitionStage3Start = 0;
+  let finalTransitionStage4Start = 0;
+  let finalTransitionStage4Executed = false;
+  let finalTransitionStage6Start = 0;
+  let specialCameraPanX = 0;
+  let battleLevel = 1;
+  let stopScrollForFinal = false;
+  let finalScrollSlowdownStart = 0;
+  const FINAL_SCROLL_SLOWDOWN_MS = 2200;
+  const SPECIAL_WALL_BOUNCE_BACK_PX = 210;
+  const SPECIAL_WALL_BOUNCE_LERP_MS = 900;
+  const SPECIAL_WALL_BOUNCE_JUMP_SCALE = 0.52;
+  const SPECIAL_RETURN_ROLL_MS = 2500;
 
   // Comet Hole Level state
   let cometHoleLevelActive = false;
@@ -743,6 +840,9 @@ const init = async () => {
   const METEOR_SWIRL_ORB_RADIUS_MAX = 180;
   const METEOR_SWIRL_ORB_SPEED_MIN = 7.5;
   const METEOR_SWIRL_ORB_SPEED_MAX = 11.5;
+  const METEOR_SWIRL_ORB_SIZE_MIN = 0.5;
+  const METEOR_SWIRL_ORB_SIZE_MAX = 0.82;
+  const METEOR_SWIRL_ORB_SIZE_JITTER = 0.06;
   const METEOR_SWIRL_SHOT_SPEED_START = 0.95;
   const METEOR_SWIRL_SHOT_SPEED_MAX = 1.35;
   const METEOR_SWIRL_SHOT_ACCEL = 2.6;
@@ -801,7 +901,7 @@ const init = async () => {
 
   const groundSurface = () => grounds.getSurfaceY();
   const computePlayerGround = () => groundSurface() + playerDiameter * GROUND_PLAYER_DEPTH;
-  const playerInitialX = app.renderer.width * 0.32;
+  let playerInitialX = app.renderer.width * 0.32;
 
   // Create shadow (added before player so it appears behind)
   const playerShadow = new Shadow({ playerWidth: playerDiameter });
@@ -863,6 +963,9 @@ const init = async () => {
   const postIntroEaseDuration = 1.5; // 1.5 seconds to ease into full speed
   let postIntroInitialMouseX = 0; // Store initial mouse X when control is enabled
   let postIntroPlayerStartX = 0; // Store player X when control is enabled
+  let introLandingLeftLockActive = false; // Prevent immediate pull-back toward hidden mouse
+  let introLandingLeftLockX = 0; // World-space lock at landing point
+  let introLandingLeftLockOffsetFromCottageX = 0; // Keeps the lock moving with the cottage segment
   let respawnEaseActive = false;
   let respawnEaseStartTime = 0;
   let respawnEaseStartX = 0;
@@ -890,7 +993,6 @@ const init = async () => {
   let dashReturnEaseActive = false;
   let dashReturnEaseStartTime = 0;
   const DASH_RETURN_EASE_DURATION = 3;
-  let enemyHasFiredLasers = false;
   let enemySquishUntil = 0;
 
   // Tutorial system state
@@ -1006,12 +1108,19 @@ const init = async () => {
   enemyBall.position.set(enemyX, initialGround - playerRadius);
   enemyBall.visible = false; // Hidden initially, will be shown in hole level
   playfieldContainer.addChild(enemyBall);
-  const enemyBounds = () => ({
-    left: enemyBall.position.x - playerRadius,
-    right: enemyBall.position.x + playerRadius,
-    top: enemyBall.position.y - playerRadius,
-    bottom: enemyBall.position.y + playerRadius,
-  });
+  const enemyShadow = new Shadow({ playerWidth: playerDiameter });
+  enemyShadow.getView().visible = false;
+  enemyShadow.getView().alpha = 0.85;
+  playfieldContainer.addChildAt(enemyShadow.getView(), playfieldContainer.getChildIndex(enemyBall));
+  const enemyBounds = () => {
+    const r = getEnemyHitRadius();
+    return {
+      left: enemyBall.position.x - r,
+      right: enemyBall.position.x + r,
+      top: enemyBall.position.y - r,
+      bottom: enemyBall.position.y + r,
+    };
+  };
 
   // Add ground middleground container (meteor overlay) - renders above enemy, below player
   playfieldContainer.addChild(grounds.getMiddlegroundContainer());
@@ -1054,7 +1163,7 @@ const init = async () => {
 
   // Enemy systems
   const enemyPhysics = new EnemyPhysics({
-    groundSurface: initialGround,
+    groundSurface: initialGround - playerRadius,
   });
 
   const enemyMovement = new EnemyMovement({
@@ -1271,8 +1380,17 @@ const init = async () => {
 
   const screenToWorldX = (screenX: number) => {
     const safeZoom = Math.max(0.0001, cameraZoom);
-    const adjustedX = screenX - scene.position.x - cameraPanX - treehousePanX;
+    const adjustedX = screenX - scene.position.x - cameraPanX - treehousePanX - specialCameraPanX;
     return adjustedX / safeZoom;
+  };
+
+  const getCottageStartSegment = () => {
+    const segments = grounds.getSegments();
+    for (const segment of segments) {
+      if (segment.type !== 'cottage_start') continue;
+      return segment;
+    }
+    return null;
   };
 
   const getEnemyTargetX = () => screenToWorldX(app.renderer.width * 0.9);
@@ -1292,6 +1410,155 @@ const init = async () => {
     const targetX = enemyBall.position.x - (playerRadius + DASH_TARGET_BUFFER);
     dashChargeTargetX = Math.max(startX, targetX);
     parallaxBoostActive = false;
+  };
+
+  const showLevelOverlay = (subtitle: string) => {
+    levelOverlaySubtitle.textContent = subtitle;
+    levelOverlay.style.opacity = '1';
+  };
+
+  const hideLevelOverlay = () => {
+    levelOverlay.style.opacity = '0';
+  };
+
+  const resetSpecialOutState = () => {
+    specialOutActive = false;
+    specialOutNumber = 0;
+    specialChargeStage = 'idle';
+    specialWindupStart = 0;
+    specialChargeStart = 0;
+    specialChargeStartX = 0;
+    specialChargeTargetX = 0;
+    specialOriginalEnemyX = 0;
+    specialHitWallStart = 0;
+    specialReturnStart = 0;
+    specialReturnFromX = 0;
+    specialReturnToX = 0;
+    specialPostReturnStart = 0;
+    specialSmallJumpStart = 0;
+    specialSmallJumpTriggered = false;
+    specialMidJumpTriggered = false;
+    specialLargeJumpTriggered = false;
+    specialLastCollisionAt = 0;
+    finalSequenceActive = false;
+    finalReturning = false;
+    finalNextChargeTime = 0;
+    finalChargeActive = false;
+    finalChargeStart = 0;
+    finalChargeStartX = 0;
+    finalChargeTargetX = 0;
+    finalLastCollisionTime = 0;
+    stopScrollForFinal = false;
+  };
+
+  const beginSpecialOutSequence = (outNumber: 4 | 7 | 10) => {
+    if (finalTransitionActive) return;
+    specialOutActive = true;
+    specialOutNumber = outNumber;
+    specialChargeStage = 'windup';
+    specialWindupStart = 0;
+    specialOriginalEnemyX = enemyBall.position.x;
+    specialHitWallStart = 0;
+    specialSmallJumpTriggered = false;
+    specialMidJumpTriggered = false;
+    specialLargeJumpTriggered = false;
+    specialLastCollisionAt = 0;
+    finalSequenceActive = false;
+    finalReturning = false;
+    finalChargeActive = false;
+    finalChargeStart = 0;
+    finalChargeStartX = 0;
+    finalChargeTargetX = 0;
+    finalLastCollisionTime = 0;
+    redEnemyState = 'shooting';
+    enemyIntroMoveActive = false;
+    enemyMode = 'physics';
+    const specialGroundY = computePlayerGround() - playerRadius;
+    enemyPhysics.setGroundSurface(specialGroundY);
+    enemyPhysics.enablePhysicsMode(enemyBall.position.y, 220);
+    introComplete = true;
+    scenarioActive = false;
+    scenarioStage = 'idle';
+    megaLaserActive = false;
+    treehouseEnemyHidden = false;
+    treehouseEnemyReturnActive = false;
+    treehouseEnemyReturnStart = 0;
+    treehouseEnemyAutoEaseActive = false;
+    treehouseEnemyAutoEaseStart = 0;
+    treehouseEnemyExitActive = false;
+    treehouseEnemyExitStart = 0;
+
+    if (outNumber === 10) {
+      stopScrollForFinal = true;
+      finalScrollSlowdownStart = performance.now();
+    }
+  };
+
+  const maybeTriggerSpecialOut = (previousOuts: number, nextOuts: number) => {
+    if (!specialOutActive && previousOuts < 4 && nextOuts >= 4) {
+      beginSpecialOutSequence(4);
+      return;
+    }
+    if (!specialOutActive && previousOuts < 7 && nextOuts >= 7) {
+      beginSpecialOutSequence(7);
+      return;
+    }
+    if (!specialOutActive && previousOuts < 10 && nextOuts >= 10) {
+      beginSpecialOutSequence(10);
+    }
+  };
+
+  const applyGrowthFromRedOuts = (outsGained: number) => {
+    if (outsGained <= 0) return;
+    enemyGrowthLevel = Math.min(MAX_GROWTH_LEVELS, enemyGrowthLevel + outsGained);
+    playerGrowthLevel = Math.max(0, playerGrowthLevel - outsGained);
+  };
+
+  const applyGrowthFromBlueOuts = (outsGained: number) => {
+    if (outsGained <= 0) return;
+    playerGrowthLevel = Math.min(MAX_GROWTH_LEVELS, playerGrowthLevel + outsGained);
+    enemyGrowthLevel = Math.max(0, enemyGrowthLevel - outsGained);
+  };
+
+  const applyRedHits = (hits: number) => {
+    if (hits <= 0) return;
+    redHits += hits;
+    if (redHits >= HITS_PER_OUT) {
+      const previousOuts = redOuts;
+      const outsGained = Math.floor(redHits / HITS_PER_OUT);
+      redOuts = Math.min(10, redOuts + outsGained);
+      redHits = redHits % HITS_PER_OUT;
+      const appliedOuts = Math.max(0, redOuts - previousOuts);
+      applyGrowthFromRedOuts(appliedOuts);
+      maybeTriggerSpecialOut(previousOuts, redOuts);
+    }
+    if (!firstOutMade && (redOuts + blueOuts) > 0) {
+      firstOutMade = true;
+    }
+    updateScoreUI();
+  };
+
+  const applyBlueHits = (hits: number) => {
+    if (hits <= 0) return;
+    blueHits += hits;
+    if (blueHits >= HITS_PER_OUT) {
+      const outsGained = Math.floor(blueHits / HITS_PER_OUT);
+      blueHits = blueHits % HITS_PER_OUT;
+      applyBlueOutPenalty(outsGained);
+    }
+    if (!firstOutMade && (blueOuts + redOuts) > 0) {
+      firstOutMade = true;
+    }
+    updateScoreUI();
+  };
+
+  const applyBlueOutPenalty = (outs: number) => {
+    if (outs <= 0) return;
+    const previousOuts = blueOuts;
+    blueOuts = Math.min(10, blueOuts + outs);
+    const appliedOuts = Math.max(0, blueOuts - previousOuts);
+    applyGrowthFromBlueOuts(appliedOuts);
+    updateScoreUI();
   };
 
   const isPointerOverMinimap = (event: PointerEvent): boolean => {
@@ -1542,6 +1809,17 @@ const init = async () => {
       const speed =
         METEOR_SWIRL_ORB_SPEED_MIN +
         Math.random() * (METEOR_SWIRL_ORB_SPEED_MAX - METEOR_SWIRL_ORB_SPEED_MIN);
+      const spreadT = METEOR_SWIRL_ORB_COUNT > 1 ? i / (METEOR_SWIRL_ORB_COUNT - 1) : 0.5;
+      const baseSizeScale =
+        METEOR_SWIRL_ORB_SIZE_MIN +
+        (METEOR_SWIRL_ORB_SIZE_MAX - METEOR_SWIRL_ORB_SIZE_MIN) * spreadT;
+      const sizeScale = Math.max(
+        METEOR_SWIRL_ORB_SIZE_MIN,
+        Math.min(
+          METEOR_SWIRL_ORB_SIZE_MAX,
+          baseSizeScale + (Math.random() - 0.5) * METEOR_SWIRL_ORB_SIZE_JITTER * 2
+        )
+      );
       meteorSwirlOrbs.push({
         id: i,
         offsetX: t,
@@ -1552,7 +1830,7 @@ const init = async () => {
         arc: METEOR_SWIRL_ORB_ARC + Math.random() * 0.6,
         speed,
         phase: Math.random() * Math.PI * 2,
-        sizeScale: 0.65 + Math.random() * 0.35,
+        sizeScale,
         currentX: area.left + (area.right - area.left) * t,
         currentY: area.top + (area.bottom - area.top) * 0.6,
         collected: false,
@@ -1777,6 +2055,9 @@ const init = async () => {
       playerIntroPhase = 'initial';
       playerIntroStartTime = performance.now();
       playerIntroActive = true;
+      introLandingLeftLockActive = false;
+      introLandingLeftLockX = 0;
+      introLandingLeftLockOffsetFromCottageX = 0;
       pendingIntroReset = false;
     }
 
@@ -2306,6 +2587,12 @@ const init = async () => {
         if (elapsed > 0.5) {
           // Now safe to enable player control
           playerIntroActive = false;
+          introLandingLeftLockActive = true;
+          introLandingLeftLockX = ball.position.x;
+          const cottageSegment = getCottageStartSegment();
+          introLandingLeftLockOffsetFromCottageX = cottageSegment
+            ? ball.position.x - cottageSegment.x
+            : 0;
 
           // Activate post-intro easing
           postIntroEaseActive = true;
@@ -2412,10 +2699,35 @@ const init = async () => {
       speedMultiplier = 0;
     }
 
+    if (stopScrollForFinal) {
+      const elapsed = performance.now() - finalScrollSlowdownStart;
+      const t = Math.min(1, elapsed / FINAL_SCROLL_SLOWDOWN_MS);
+      const ease = 1 - Math.pow(1 - t, 3);
+      speedMultiplier *= (1 - ease);
+      if (t >= 1) {
+        speedMultiplier = 0;
+      }
+    }
+
+    if (finalTransitionActive) {
+      speedMultiplier = 0;
+    }
+
+    if (introLandingLeftLockActive) {
+      const cottageSegment = getCottageStartSegment();
+      if (cottageSegment) {
+        introLandingLeftLockX = cottageSegment.x + introLandingLeftLockOffsetFromCottageX;
+      } else {
+        introLandingLeftLockActive = false;
+        introLandingLeftLockOffsetFromCottageX = 0;
+      }
+    }
+
     const treehouseOrbCollected = meteorOrb.isCollected();
     const treehouseJustCollected = treehouseOrbCollected && !treehouseOrbCollectedPrev;
     treehouseOrbCollectedPrev = treehouseOrbCollected;
     if (treehouseJustCollected) {
+      orbShootingUnlocked = true;
       startEnergyReveal();
     }
     const treehouseSegment = (() => {
@@ -2425,7 +2737,7 @@ const init = async () => {
 
     if (treehouseSegment && !treehouseOrbCollected) {
       const safeZoom = Math.max(0.0001, cameraZoom);
-      const screenCenterWorldX = (app.renderer.width * 0.5 - (cameraPanX + treehousePanX)) / safeZoom;
+      const screenCenterWorldX = (app.renderer.width * 0.5 - (cameraPanX + treehousePanX + specialCameraPanX)) / safeZoom;
       const segmentCenterX = treehouseSegment.x + treehouseSegment.width * 0.5;
       const distanceToCenter = Math.abs(segmentCenterX - screenCenterWorldX);
       if (!treehouseHoldActive && distanceToCenter <= TREEHOUSE_STOP_RANGE) {
@@ -2435,7 +2747,9 @@ const init = async () => {
       treehouseHoldActive = false;
     }
 
+    const specialEnemyControlActive = specialOutActive || finalSequenceActive || finalTransitionActive;
     const treehouseEnemyShouldHide =
+      !specialEnemyControlActive &&
       !!treehouseSegment &&
       !treehouseOrbCollected &&
       (treehouseHoldActive || treehouseHoldProgress > 0 || Math.abs(treehousePanX) > 0.5);
@@ -2481,7 +2795,7 @@ const init = async () => {
         const segmentRight = treehouseSegment.x + treehouseSegment.width;
         const minCameraX = app.renderer.width - (segmentRight * safeZoom);
         const maxCameraX = -(segmentLeft * safeZoom);
-        const playerScreenX = playerX * safeZoom + cameraPanX + treehousePanX;
+        const playerScreenX = playerX * safeZoom + cameraPanX + treehousePanX + specialCameraPanX;
         const screenPercent = Math.min(1, Math.max(0, playerScreenX / app.renderer.width));
         const leftThreshold = 0.3;
         const rightThreshold = 0.7;
@@ -2681,7 +2995,8 @@ const init = async () => {
     windSprites.render(windCtx, windCanvas.width, windCanvas.height);
     windTexture.source.update();
 
-    // Update enemy charge particles
+    // Enemy charge FX are only for the dedicated mega-laser scenario.
+    // Special out (4/7/10) ground-charge should not show this aura.
     const chargeLevel = scenarioStage === 'charging'
       ? Math.min(1, (performance.now() - megaLaserStart) / MEGA_LASER_CHARGE)
       : scenarioStage === 'prep' ? 0.25 : 0;
@@ -2780,20 +3095,7 @@ const init = async () => {
           enemyFlashUntil = performance.now() + 250;
           sparkParticles.spawn(p.x, p.y, 'blue');
           // Count hits against red; every 20 hits = 1 out on red
-          redHits += 1;
-          if (redHits >= HITS_PER_OUT) {
-            const outsGained = Math.floor(redHits / HITS_PER_OUT);
-            redOuts = Math.min(10, redOuts + outsGained);
-            redHits = redHits % HITS_PER_OUT;
-          }
-          if (!firstOutMade && (redOuts + blueOuts) > 0) {
-            firstOutMade = true;
-          }
-          if (redOuts > 0 && !autoScenarioTriggered) {
-            autoScenarioPending = true;
-            autoScenarioTriggered = true;
-          }
-          updateScoreUI();
+          applyRedHits(1);
         }
       });
 
@@ -2836,20 +3138,7 @@ const init = async () => {
         shot.active = false;
         enemyFlashUntil = performance.now() + 250;
         sparkParticles.spawn(shot.x, shot.y, 'blue');
-        redHits += shot.hits;
-        if (redHits >= HITS_PER_OUT) {
-          const outsGained = Math.floor(redHits / HITS_PER_OUT);
-          redOuts = Math.min(10, redOuts + outsGained);
-          redHits = redHits % HITS_PER_OUT;
-        }
-        if (!firstOutMade && (redOuts + blueOuts) > 0) {
-          firstOutMade = true;
-        }
-        if (redOuts > 0 && !autoScenarioTriggered) {
-          autoScenarioPending = true;
-          autoScenarioTriggered = true;
-        }
-        updateScoreUI();
+        applyRedHits(shot.hits);
       }
     });
     for (let i = meteorSwirlShots.length - 1; i >= 0; i--) {
@@ -3176,7 +3465,11 @@ const init = async () => {
     const prevState = { x: ball.position.x, y: ball.position.y };
 
     // Skip physics update during initial, delay, and complete phases (only run physics during moveout and jump)
-    const skipPhysics = freezePlayer || (playerIntroActive && (playerIntroPhase === 'initial' || playerIntroPhase === 'delay' || playerIntroPhase === 'complete'));
+    const finalTransitionRollStageActive = finalTransitionActive && finalTransitionStage === 1;
+    const skipPhysics =
+      freezePlayer ||
+      (playerIntroActive && (playerIntroPhase === 'initial' || playerIntroPhase === 'delay' || playerIntroPhase === 'complete')) ||
+      (finalTransitionActive && !finalTransitionRollStageActive);
     const state = skipPhysics ? physics.getState() : physics.update(deltaSeconds);
     if (freezePlayer) {
       physics.forceVelocity(0);
@@ -3244,27 +3537,15 @@ const init = async () => {
             shakeEndTime = dashNow + DASH_HIT_SHAKE_MS;
 
             energy = Math.min(100, energy + 7);
-            if (energyActivated && energy >= 100 && !shootUnlocked) {
+            if (orbShootingUnlocked && energyActivated && energy >= 100 && !shootUnlocked) {
               canShoot = true;
               shootUnlocked = true;
               console.log('[SHOOT UNLOCK] Reached 100% energy');
             }
             updateEnergyUI();
 
-            redHits += 5;
-            if (redHits >= HITS_PER_OUT) {
-              const outsGained = Math.floor(redHits / HITS_PER_OUT);
-              redOuts = Math.min(10, redOuts + outsGained);
-              redHits = redHits % HITS_PER_OUT;
-            }
-            if (!firstOutMade && (redOuts + blueOuts) > 0) {
-              firstOutMade = true;
-            }
-            if (redOuts > 0 && !autoScenarioTriggered) {
-              autoScenarioPending = true;
-              autoScenarioTriggered = true;
-            }
-            updateScoreUI();
+            // Dash attack always contributes 5 hits during battle.
+            applyRedHits(5);
           }
         }
 
@@ -3287,6 +3568,20 @@ const init = async () => {
           }
         }
       }
+    }
+
+    if (
+      introLandingLeftLockActive &&
+      !playerIntroActive &&
+      respawnState === 'normal' &&
+      !finalTransitionActive &&
+      !dashChargeActive &&
+      !dashChargeReturning &&
+      state.x < introLandingLeftLockX
+    ) {
+      state.x = introLandingLeftLockX;
+      physics.setPosition(introLandingLeftLockX, state.y);
+      physics.setMousePosition(introLandingLeftLockX);
     }
 
     const treehouseStep2Info = grounds.getTreehouseStep2Info();
@@ -3709,11 +4004,9 @@ const init = async () => {
 
     // Red enemy rolling in animation (rolls right after landing from meteor)
     if (redEnemyActive && redEnemyState === 'rolling_in') {
-      // First time entering rolling state - constrain player to left half and show score UI
+      // First time entering rolling state - mark enemy as visible
       if (!enemyEverVisible) {
         enemyEverVisible = true;
-
-        showScoreUI();
         console.log('[PLAYER RANGE] Enemy appearing, keeping full range');
       }
 
@@ -4198,12 +4491,17 @@ const init = async () => {
 
     // Determine if we're back on the baseline ground
     const baselineRestY = computePlayerGround() - playerRadius;
-    isOnBaselineGround =
-      activePlatformId === null &&
-      state.y >= baselineRestY - 0.5 &&
-      Math.abs(verticalVelocity) < 25;
+    const BASELINE_SNAP_TOLERANCE = 4;
+    const nearBaselineSurface = state.y >= baselineRestY - BASELINE_SNAP_TOLERANCE;
+    isOnBaselineGround = nearBaselineSurface;
 
     if (isOnBaselineGround) {
+      // If any stale platform lock survived while we're effectively on baseline ground,
+      // clear it so camera behavior matches normal ground-jump behavior.
+      if (activePlatformId !== null) {
+        physics.clearSurfaceOverride();
+        activePlatformId = null;
+      }
       lastLeftPlatformId = null;
       platformAscendBonus = 0; // Reset climb when returning to ground
     }
@@ -4318,6 +4616,8 @@ const init = async () => {
       const lockedCameraY = platformHeight * 0.5; // Camera position locked to this platform height
 
       // Check if player has fallen below the camera floor
+      // Use physics body top for camera behavior so jump feel stays identical
+      // even when visual growth scaling is active.
       const playerTop = state.y - playerRadius;
       if (playerTop > cameraFloorY + CAMERA_FOLLOW_THRESHOLD) {
         // Player is falling below the locked floor - follow them down
@@ -4518,7 +4818,7 @@ const init = async () => {
     // Background moves less (30% of camera movement) for depth effect
     // Foreground elements move at 100% camera speed
     const totalCameraY = cameraY + cameraPanY;
-    const totalCameraX = cameraPanX + treehousePanX;
+    const totalCameraX = cameraPanX + treehousePanX + specialCameraPanX;
     updatePlayerHorizontalRangeForCamera(totalCameraX, cameraZoom);
     // Ground container needs special handling to prevent exposing bottom edge
     // When zoomed out and camera moves down (or when falling into holes), clamp ground
@@ -4570,8 +4870,9 @@ const init = async () => {
       } else if (!playerIntroActive) {
         // Normal gameplay - use physics position
         ball.position.x = state.x;
-        ball.position.y = state.y;
-        ball.scale.set(state.scaleX, state.scaleY);
+        ball.position.y = getPlayerRenderY(state.y);
+        const playerGrowthScale = getPlayerGrowthScale();
+        ball.scale.set(state.scaleX * playerGrowthScale, state.scaleY * playerGrowthScale);
       }
       // During other intro phases, position is fully controlled by intro animation
     }
@@ -4582,6 +4883,8 @@ const init = async () => {
       // Check all platforms to find the closest one directly below the player
       const allPlatforms = platforms.getAllPlatforms();
       let closestPlatformY: number | null = null;
+      const playerHitRadius = getPlayerHitRadius();
+      const playerRenderTop = getPlayerRenderY(state.y) - playerHitRadius;
 
       for (const plat of allPlatforms) {
         if (!plat.active) continue;
@@ -4589,8 +4892,8 @@ const init = async () => {
         // Check if player is horizontally aligned with platform
         const platLeft = plat.x;
         const platRight = plat.x + plat.width;
-        const playerLeft = state.x - playerRadius;
-        const playerRight = state.x + playerRadius;
+        const playerLeft = state.x - playerHitRadius;
+        const playerRight = state.x + playerHitRadius;
 
         // If player overlaps platform horizontally
         if (playerRight > platLeft && playerLeft < platRight) {
@@ -4599,7 +4902,7 @@ const init = async () => {
           const platformShadowY = plat.surfaceY + playerDiameter + PLATFORM_LANDING_OFFSET;
 
           // Track the closest platform below the player's current position
-          if (platformShadowY > state.y - playerRadius) {
+          if (platformShadowY > playerRenderTop) {
             if (closestPlatformY === null || platformShadowY < closestPlatformY) {
               closestPlatformY = platformShadowY;
             }
@@ -4610,12 +4913,12 @@ const init = async () => {
       if (meteorHitbox) {
         const platLeft = meteorHitbox.x;
         const platRight = meteorHitbox.x + meteorHitbox.width;
-        const playerLeft = state.x - playerRadius;
-        const playerRight = state.x + playerRadius;
+        const playerLeft = state.x - playerHitRadius;
+        const playerRight = state.x + playerHitRadius;
 
         if (playerRight > platLeft && playerLeft < platRight) {
           const platformShadowY = meteorHitbox.surfaceY + playerDiameter + PLATFORM_LANDING_OFFSET;
-          if (platformShadowY > state.y - playerRadius) {
+          if (platformShadowY > playerRenderTop) {
             if (closestPlatformY === null || platformShadowY < closestPlatformY) {
               closestPlatformY = platformShadowY;
             }
@@ -4627,7 +4930,7 @@ const init = async () => {
       return closestPlatformY ?? computePlayerGround();
     })();
 
-    playerShadow.update(ball.position.x, ball.position.y, shadowSurface);
+    playerShadow.update(ball.position.x, ball.position.y, shadowSurface, getPlayerGrowthScale(), 0.2);
 
     // Update enemy based on current mode
     const enemySquishActive = enemySquishUntil > performance.now();
@@ -4635,11 +4938,17 @@ const init = async () => {
     const enemySquishScaleY = enemySquishActive ? 0.7 : 1;
     const lockEnemyAutoX =
       treehouseEnemyHidden || treehouseEnemyReturnActive || treehouseEnemyAutoEaseActive;
+    let activeEnemyPhysicsState: { y: number; velocity: number } | null = null;
     if (enemyMode === 'physics') {
       const enemyState = enemyPhysics.update(deltaSeconds);
-      enemyBall.position.y = enemyState.y;
-      enemyBall.scale.set(enemyState.scaleX * enemySquishScaleX, enemyState.scaleY * enemySquishScaleY);
-      if (redEnemyState === 'jumping_intro' && enemyIntroMoveActive) {
+      activeEnemyPhysicsState = enemyState;
+      enemyBall.position.y = getEnemyRenderY(enemyState.y);
+      const enemyGrowthScale = getEnemyGrowthScale();
+      enemyBall.scale.set(
+        enemyState.scaleX * enemySquishScaleX * enemyGrowthScale,
+        enemyState.scaleY * enemySquishScaleY * enemyGrowthScale
+      );
+      if (redEnemyState === 'jumping_intro' && enemyIntroMoveActive && !specialEnemyControlActive) {
         const targetX = getEnemyTargetX();
         const elapsed = (performance.now() - enemyIntroMoveStartTime) / 1000;
         const moveDuration = 1.6;
@@ -4652,14 +4961,14 @@ const init = async () => {
           enemyIntroMoveActive = false;
         }
       }
-      if (redEnemyState === 'jumping_intro' && !enemyIntroMoveActive) {
+      if (redEnemyState === 'jumping_intro' && !enemyIntroMoveActive && !specialEnemyControlActive) {
         if (!lockEnemyAutoX) {
           enemyBall.position.x = getEnemyTargetX();
         }
       }
 
       // Check if ready to transition to hover mode
-      if (enemyPhysics.isReadyForHover()) {
+      if (enemyPhysics.isReadyForHover() && !specialOutActive && !finalTransitionActive) {
         if (redEnemyState === 'jumping_intro') {
           enemyBall.position.x = getEnemyTargetX();
           enemyIntroMoveActive = false;
@@ -4677,15 +4986,19 @@ const init = async () => {
       }
     } else if (enemyMode === 'hover') {
       const enemyState = enemyMovement.update(deltaSeconds);
-      enemyBall.position.y = enemyState.y;
-      enemyBall.scale.set(enemyState.scaleX * enemySquishScaleX, enemyState.scaleY * enemySquishScaleY);
+      enemyBall.position.y = getEnemyRenderY(enemyState.y);
+      const enemyGrowthScale = getEnemyGrowthScale();
+      enemyBall.scale.set(
+        enemyState.scaleX * enemySquishScaleX * enemyGrowthScale,
+        enemyState.scaleY * enemySquishScaleY * enemyGrowthScale
+      );
       if (!lockEnemyAutoX) {
         enemyBall.position.x = getEnemyTargetX();
       }
     }
 
     let treehouseEnemyOffscreen = false;
-    if (enemyMode !== 'sleep' && (treehouseEnemyHidden || treehouseEnemyReturnActive)) {
+    if (enemyMode !== 'sleep' && !specialEnemyControlActive && (treehouseEnemyHidden || treehouseEnemyReturnActive)) {
       const screenRightWorldX = screenToWorldX(app.renderer.width);
       const exitX = treehouseEnemyExitTargetX || screenToWorldX(app.renderer.width * TREEHOUSE_ENEMY_EXIT_SCREEN_MULT);
       const returnX = getEnemyTargetX();
@@ -4723,7 +5036,7 @@ const init = async () => {
       treehouseEnemyOffscreen = enemyBall.position.x >= screenRightWorldX + playerRadius;
     }
 
-    if (enemyMode !== 'sleep' && treehouseEnemyAutoEaseActive && !treehouseEnemyHidden) {
+    if (enemyMode !== 'sleep' && !specialEnemyControlActive && treehouseEnemyAutoEaseActive && !treehouseEnemyHidden) {
       const returnX = getEnemyTargetX();
       enemyBall.position.x += (returnX - enemyBall.position.x) * TREEHOUSE_ENEMY_AUTO_LERP;
       const easeElapsed = performance.now() - treehouseEnemyAutoEaseStart;
@@ -4737,16 +5050,405 @@ const init = async () => {
       }
     }
 
+    const enemyShadowVisible =
+      enemyBall.visible &&
+      enemyMode !== 'sleep' &&
+      !treehouseEnemyHidden &&
+      !treehouseEnemyOffscreen;
+    enemyShadow.getView().visible = enemyShadowVisible;
+    if (enemyShadowVisible) {
+      const enemyShadowSurface = (() => {
+        const allPlatforms = platforms.getAllPlatforms();
+        let closestPlatformY: number | null = null;
+        const enemyHitRadius = getEnemyHitRadius();
+        const enemyRenderTop = enemyBall.position.y - enemyHitRadius;
+        const enemyLeft = enemyBall.position.x - enemyHitRadius;
+        const enemyRight = enemyBall.position.x + enemyHitRadius;
+
+        for (const plat of allPlatforms) {
+          if (!plat.active) continue;
+          const platLeft = plat.x;
+          const platRight = plat.x + plat.width;
+          if (enemyRight > platLeft && enemyLeft < platRight) {
+            const platformShadowY = plat.surfaceY + playerDiameter + PLATFORM_LANDING_OFFSET;
+            if (platformShadowY > enemyRenderTop) {
+              if (closestPlatformY === null || platformShadowY < closestPlatformY) {
+                closestPlatformY = platformShadowY;
+              }
+            }
+          }
+        }
+
+        if (meteorHitbox) {
+          const platLeft = meteorHitbox.x;
+          const platRight = meteorHitbox.x + meteorHitbox.width;
+          if (enemyRight > platLeft && enemyLeft < platRight) {
+            const platformShadowY = meteorHitbox.surfaceY + playerDiameter + PLATFORM_LANDING_OFFSET;
+            if (platformShadowY > enemyRenderTop) {
+              if (closestPlatformY === null || platformShadowY < closestPlatformY) {
+                closestPlatformY = platformShadowY;
+              }
+            }
+          }
+        }
+
+        return closestPlatformY ?? computePlayerGround();
+      })();
+
+      enemyShadow.update(
+        enemyBall.position.x,
+        enemyBall.position.y,
+        enemyShadowSurface,
+        getEnemyGrowthScale(),
+        0.08
+      );
+    }
+
+    const intersectsEnemyPlayer = () => {
+      const playerHitRadius = getPlayerHitRadius();
+      const enemyHitRadius = getEnemyHitRadius();
+      const playerCenterY = getPlayerRenderY(state.y);
+      const playerLeft = state.x - playerHitRadius;
+      const playerRight = state.x + playerHitRadius;
+      const playerTop = playerCenterY - playerHitRadius;
+      const playerBottom = playerCenterY + playerHitRadius;
+      const enemyLeft = enemyBall.position.x - enemyHitRadius;
+      const enemyRight = enemyBall.position.x + enemyHitRadius;
+      const enemyTop = enemyBall.position.y - enemyHitRadius;
+      const enemyBottom = enemyBall.position.y + enemyHitRadius;
+      const margin = 4;
+      return (
+        playerLeft - margin < enemyRight + margin &&
+        playerRight + margin > enemyLeft - margin &&
+        playerTop - margin < enemyBottom + margin &&
+        playerBottom + margin > enemyTop - margin
+      );
+    };
+
+    if (
+      specialOutActive &&
+      (specialOutNumber === 4 || specialOutNumber === 7) &&
+      enemyMode === 'physics' &&
+      activeEnemyPhysicsState
+    ) {
+      const now = performance.now();
+      const isOnGround = enemyPhysics.isGrounded(2.5);
+      const wallX = screenToWorldX(40);
+
+      switch (specialChargeStage) {
+        case 'idle':
+          if (isOnGround) {
+            specialChargeStage = 'windup';
+            specialWindupStart = 0;
+          }
+          break;
+        case 'windup':
+          if (!isOnGround) {
+            specialWindupStart = 0;
+            break;
+          }
+          if (specialWindupStart === 0) {
+            specialWindupStart = now;
+            specialOriginalEnemyX = enemyBall.position.x;
+            enemyPhysics.setVelocity(0);
+            break;
+          }
+          if (now - specialWindupStart >= 500) {
+            specialChargeStage = 'charging';
+            specialChargeStart = now;
+            specialChargeStartX = enemyBall.position.x;
+            specialChargeTargetX = wallX;
+          }
+          break;
+        case 'charging': {
+          const durationMs = 1500;
+          const t = Math.min(1, (now - specialChargeStart) / durationMs);
+          // Charge should keep accelerating into the wall (no end slow-down).
+          // Blend a little linear speed so startup feels punchy.
+          const eased = 0.18 * t + 0.82 * t * t;
+          enemyBall.position.x = specialChargeStartX + (specialChargeTargetX - specialChargeStartX) * eased;
+
+          if (intersectsEnemyPlayer() && now - specialLastCollisionAt > 250) {
+            specialLastCollisionAt = now;
+            applyBlueOutPenalty(1);
+            playerFlashUntil = now + 250;
+            shakeActive = true;
+            shakeEndTime = now + 220;
+            specialChargeStage = 'returning';
+            specialReturnStart = now;
+            specialReturnFromX = enemyBall.position.x;
+            specialReturnToX = getEnemyTargetX();
+            break;
+          }
+
+          if (t >= 1) {
+            specialChargeStage = 'hitWall';
+            specialHitWallStart = now;
+            specialReturnFromX = enemyBall.position.x;
+            const bounceBackWorldDistance = Math.max(
+              80,
+              screenToWorldX(SPECIAL_WALL_BOUNCE_BACK_PX) - screenToWorldX(0)
+            );
+            specialReturnToX = specialReturnFromX + bounceBackWorldDistance;
+            enemyPhysics.triggerManualJump(0, SPECIAL_WALL_BOUNCE_JUMP_SCALE);
+          }
+          break;
+        }
+        case 'hitWall': {
+          const t = Math.min(1, (now - specialHitWallStart) / SPECIAL_WALL_BOUNCE_LERP_MS);
+          const eased = t;
+          if (t < 1) {
+            enemyBall.position.x = specialReturnFromX + (specialReturnToX - specialReturnFromX) * eased;
+          } else {
+            enemyBall.position.x = specialReturnToX;
+          }
+          // Let enemy physics complete the ground bounce/damping before rolling right.
+          if (t >= 1 && isOnGround) {
+            specialChargeStage = 'returning';
+            specialReturnStart = now;
+            specialReturnFromX = enemyBall.position.x;
+            specialReturnToX = getEnemyTargetX();
+          }
+          break;
+        }
+        case 'returning': {
+          const t = Math.min(1, (now - specialReturnStart) / SPECIAL_RETURN_ROLL_MS);
+          const eased = 1 - Math.pow(1 - t, 3); // ease-out stop, no overshoot
+          enemyBall.position.x = specialReturnFromX + (specialReturnToX - specialReturnFromX) * eased;
+          if (t >= 1) {
+            enemyBall.position.x = specialReturnToX;
+            specialChargeStage = 'postReturn';
+            specialPostReturnStart = now;
+          }
+          break;
+        }
+        case 'postReturn':
+          if (now - specialPostReturnStart >= 280) {
+            specialChargeStage = 'smallJump';
+            specialSmallJumpStart = now;
+            specialSmallJumpTriggered = false;
+          }
+          break;
+        case 'smallJump':
+          if (!specialSmallJumpTriggered) {
+            enemyPhysics.triggerManualJump(0);
+            specialSmallJumpTriggered = true;
+            specialSmallJumpStart = now;
+          } else if (isOnGround && now - specialSmallJumpStart >= 400) {
+            if (specialOutNumber === 7) {
+              specialChargeStage = 'midJump';
+              specialMidJumpTriggered = false;
+            } else {
+              specialChargeStage = 'largeJump';
+              specialLargeJumpTriggered = false;
+            }
+          }
+          break;
+        case 'midJump':
+          if (!specialMidJumpTriggered) {
+            enemyPhysics.triggerManualJump(400);
+            specialMidJumpTriggered = true;
+            specialSmallJumpStart = now;
+          } else if (isOnGround && now - specialSmallJumpStart >= 400) {
+            specialChargeStage = 'largeJump';
+            specialLargeJumpTriggered = false;
+          }
+          break;
+        case 'largeJump':
+          if (!specialLargeJumpTriggered) {
+            enemyPhysics.triggerManualJump(1275);
+            specialLargeJumpTriggered = true;
+          } else if (activeEnemyPhysicsState.velocity > 0) {
+            const velocity = enemyPhysics.enableHoverMode();
+            enemyMovement.startTransition(velocity, enemyPhysics.getY());
+            enemyMode = 'hover';
+            introComplete = true;
+            resetSpecialOutState();
+          }
+          break;
+      }
+    }
+
+    if (specialOutActive && specialOutNumber === 10 && enemyMode === 'physics' && activeEnemyPhysicsState) {
+      const now = performance.now();
+      const isOnGround = enemyPhysics.isGrounded(2.5);
+
+      if (!finalSequenceActive) {
+        if (isOnGround) {
+          enemyPhysics.setVelocity(0);
+          finalSequenceActive = true;
+          finalReturning = false;
+          finalChargeActive = false;
+          finalChargeStart = 0;
+          finalChargeStartX = enemyBall.position.x;
+          finalChargeTargetX = enemyBall.position.x;
+          finalNextChargeTime = now + 900;
+          specialOriginalEnemyX = enemyBall.position.x;
+        }
+      } else if (!finalTransitionActive) {
+        if (finalReturning) {
+          const targetX = specialOriginalEnemyX || getEnemyTargetX();
+          const nextX = enemyBall.position.x + (targetX - enemyBall.position.x) * 0.12;
+          enemyBall.position.x = nextX;
+          if (Math.abs(nextX - targetX) <= 0.5) {
+            enemyBall.position.x = targetX;
+            finalReturning = false;
+            finalChargeActive = false;
+            finalChargeStart = 0;
+            finalNextChargeTime = now + 900;
+          }
+        } else if (now >= finalNextChargeTime) {
+          if (!finalChargeActive) {
+            finalChargeActive = true;
+            finalChargeStart = now;
+            finalChargeStartX = enemyBall.position.x;
+            finalChargeTargetX = screenToWorldX(-playerRadius * 3);
+          }
+
+          const chargeDurationMs = 1450;
+          const t = Math.min(1, (now - finalChargeStart) / chargeDurationMs);
+          const eased = t * t; // ease-in charge
+          const nextX = finalChargeStartX + (finalChargeTargetX - finalChargeStartX) * eased;
+          enemyBall.position.x = nextX;
+
+          if (intersectsEnemyPlayer() && now - finalLastCollisionTime > 250) {
+            finalLastCollisionTime = now;
+            applyBlueOutPenalty(1);
+            playerFlashUntil = now + 250;
+            shakeActive = true;
+            shakeEndTime = now + 220;
+            finalReturning = true;
+            finalChargeActive = false;
+            finalChargeStart = 0;
+          } else if (enemyBall.position.x + getEnemyHitRadius() < screenToWorldX(0)) {
+            finalTransitionActive = true;
+            finalTransitionStage = 1;
+            respawnInputLocked = true;
+            finalReturning = false;
+            finalChargeActive = false;
+            finalChargeStart = 0;
+            finalTransitionDelayUntil = 0;
+            laserPhysics.reset();
+            showLevelOverlay(`Level ${battleLevel + 1}`);
+          } else if (t >= 1) {
+            // Safety: allow a fresh charge setup if we reached target but did not exit.
+            finalChargeActive = false;
+            finalChargeStart = 0;
+          }
+        }
+      }
+    }
+
+    if (finalTransitionActive) {
+      const now = performance.now();
+      const groundY = computePlayerGround() - playerRadius;
+
+      if (finalTransitionStage === 1) {
+        const rollSpeed = 640 * deltaSeconds;
+        const nextX = state.x + rollSpeed;
+        state.x = nextX;
+        physics.setPosition(nextX, state.y);
+        // Keep rolling farther so trailing meteor-orb followers are fully off-screen.
+        const rollOffThresholdScreenX = app.renderer.width + getPlayerHitRadius() * 2 + app.renderer.width * 0.55;
+        if (nextX > screenToWorldX(rollOffThresholdScreenX)) {
+          finalTransitionStage = 2;
+          finalTransitionDelayUntil = now + 4000;
+        }
+      } else if (finalTransitionStage === 2) {
+        if (now >= finalTransitionDelayUntil) {
+          battleLevel += 1;
+          blueHits = 0;
+          redHits = 0;
+          blueOuts = 0;
+          redOuts = 0;
+          playerGrowthLevel = 0;
+          enemyGrowthLevel = 0;
+          updateScoreUI();
+
+          resetSpecialOutState();
+          stopScrollForFinal = false;
+
+          const playerRevealX = app.renderer.width + app.renderer.width * 0.32;
+          playerInitialX = playerRevealX;
+          physics.respawn(playerRevealX, computePlayerGround());
+          physics.setPosition(playerRevealX, groundY);
+          physics.setMousePosition(playerRevealX);
+          state.x = playerRevealX;
+          state.y = groundY;
+
+          laserPhysics.reset();
+          laserScore = 0;
+          updateScoreDisplay();
+
+          const enemyStartX = app.renderer.width * 2 + playerDiameter * 2;
+          enemyBall.position.x = enemyStartX;
+          enemyBall.position.y = groundY;
+          enemyBall.visible = true;
+          enemyPhysics.setGroundSurface(groundY);
+          enemyPhysics.enablePhysicsMode(groundY, 0);
+          enemyPhysics.setVelocity(0);
+          enemyMode = 'physics';
+          redEnemyState = 'rolling_in';
+          introComplete = false;
+          enemyIntroMoveActive = false;
+
+          specialCameraPanX = 0;
+          finalTransitionStage3Start = now;
+          finalTransitionStage = 3;
+        }
+      } else if (finalTransitionStage === 3) {
+        const panDurationMs = 3500;
+        const progress = Math.min(1, (now - finalTransitionStage3Start) / panDurationMs);
+        const ease = progress < 0.5
+          ? 4 * progress * progress * progress
+          : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+        specialCameraPanX = app.renderer.width * ease;
+        if (progress >= 1) {
+          specialCameraPanX = app.renderer.width;
+          finalTransitionStage4Start = now;
+          finalTransitionStage4Executed = false;
+          finalTransitionStage = 4;
+        }
+      } else if (finalTransitionStage === 4) {
+        if (!finalTransitionStage4Executed) {
+          finalTransitionStage4Executed = true;
+        }
+        if (now - finalTransitionStage4Start >= 50) {
+          finalTransitionStage = 5;
+        }
+      } else if (finalTransitionStage === 5) {
+        const targetX = getEnemyTargetX();
+        enemyBall.position.x += (targetX - enemyBall.position.x) * 0.12;
+        if (Math.abs(enemyBall.position.x - targetX) <= 0.5) {
+          enemyBall.position.x = targetX;
+          enemyPhysics.startJumpSequence();
+          redEnemyState = 'jumping_intro';
+          finalTransitionStage6Start = now;
+          finalTransitionStage = 6;
+        }
+      } else if (finalTransitionStage === 6) {
+        if (now - finalTransitionStage6Start >= 500) {
+          respawnInputLocked = false;
+          hideLevelOverlay();
+          finalTransitionActive = false;
+          finalTransitionStage = 0;
+          stopScrollForFinal = false;
+        }
+      }
+    }
+
     const laserResult = laserPhysics.update({
       score: laserScore,
       playerX: state.x,
-      playerY: state.y,
-      playerRadius,
+      playerY: getPlayerRenderY(state.y),
+      playerRadius: getPlayerHitRadius(),
       playerHasJumped: physics.hasPlayerJumped(),
       enemyX: enemyBall.position.x,
       enemyY: enemyBall.position.y,
       isHovering:
         enemyMode === 'hover' &&
+        !specialOutActive &&
+        !finalTransitionActive &&
         scenarioStage !== 'prep' &&
         scenarioStage !== 'charging' &&
         scenarioStage !== 'firing',
@@ -4755,6 +5457,8 @@ const init = async () => {
         treehouseEnemyHidden ||
         treehouseEnemyOffscreen ||
         enemyMode === 'sleep' ||
+        specialOutActive ||
+        finalTransitionActive ||
         scenarioStage === 'prep' ||
         scenarioStage === 'charging' ||
         scenarioStage === 'firing',
@@ -4766,7 +5470,7 @@ const init = async () => {
       energy = Math.min(100, energy + laserResult.scoreChange * 2.5);
 
       // Unlock shooting only at full energy
-      if (energyActivated && energy >= 100 && !shootUnlocked) {
+      if (orbShootingUnlocked && energyActivated && energy >= 100 && !shootUnlocked) {
         canShoot = true;
         shootUnlocked = true;
         console.log('[SHOOT UNLOCK] Reached 100% energy');
@@ -4779,29 +5483,21 @@ const init = async () => {
       enemyMovement.setTarget(laserResult.targetY);
     }
     if (laserResult.laserFired) {
-      enemyHasFiredLasers = true;
+      // Reveal battle UI when combat truly begins (hover + first enemy shot),
+      // aligned with the camera easing back in.
+      if (!scoreVisible && enemyHoverZoomTriggered) {
+        showScoreUI();
+      }
     }
     if (laserResult.hitPosition) {
       // Enemy lasers = red sparks - reduce energy by 1.5% per hit
       energy = Math.max(0, energy - 1.5);
       sparkParticles.spawn(laserResult.hitPosition.x, laserResult.hitPosition.y, 'red');
       playerFlashUntil = performance.now() + 250;
-      // Count hits dealt by red; every 20 hits = 1 out on blue
-      blueHits += 1;
-      if (blueHits >= HITS_PER_OUT) {
-        const outsGained = Math.floor(blueHits / HITS_PER_OUT);
-        blueOuts = Math.min(10, blueOuts + outsGained);
-        blueHits = blueHits % HITS_PER_OUT;
-      }
-      if (!firstOutMade && (blueOuts + redOuts) > 0) {
-        firstOutMade = true;
-      }
-      if (redOuts > 0 && !autoScenarioTriggered) {
-        autoScenarioPending = true;
-        autoScenarioTriggered = true;
-      }
+      // Count hits dealt by red; every 20 hits = 1 out on blue.
+      // Out growth rules are applied through applyBlueHits/applyBlueOutPenalty.
+      applyBlueHits(1);
       updateEnergyUI();
-      updateScoreUI();
     }
 
     // Flash player when hit
@@ -4882,8 +5578,10 @@ const init = async () => {
       const growthProgress = Math.min(1, elapsed / MEGA_LASER_GROWTH);
       let beamWidth = enemyBall.position.x * growthProgress;
 
-      const playerTop = state.y - playerRadius;
-      const playerBottom = state.y + playerRadius;
+      const playerRenderY = getPlayerRenderY(state.y);
+      const playerHitRadius = getPlayerHitRadius();
+      const playerTop = playerRenderY - playerHitRadius;
+      const playerBottom = playerRenderY + playerHitRadius;
       const beamTop = megaY;
       const beamBottom = megaY + megaLaserHeight;
       if (
@@ -4891,7 +5589,7 @@ const init = async () => {
         playerBottom > beamTop &&
         playerTop < beamBottom
       ) {
-        beamWidth = Math.max(0, enemyBall.position.x - (state.x - playerRadius));
+        beamWidth = Math.max(0, enemyBall.position.x - (state.x - playerHitRadius));
         megaLaserHitPlayer = true;
         shakeActive = true;
         shakeEndTime = megaLaserStart + MEGA_LASER_DURATION;
@@ -5007,7 +5705,8 @@ const init = async () => {
           nudgeRightArrow();
         }
         if (allowDashJump) {
-          if (enemyHasFiredLasers && enemyMode === 'hover' && !dashChargeActive && !dashChargeReturning) {
+          const battleActive = redEnemyActive && enemyMode !== 'sleep' && !treehouseEnemyHidden && !finalTransitionActive;
+          if (battleActive && !dashChargeActive && !dashChargeReturning) {
             startDashCharge(physics.getState().x);
           } else {
             parallaxBoostActive = true;
@@ -5021,8 +5720,7 @@ const init = async () => {
       // Even if activePlatformId is set, we might be in the process of rolling off
       if (!isOnBaselineGround) {
         const state = physics.getState();
-        const playerRadius = physics.getRadius();
-        const playerTop = state.y - playerRadius;
+        const playerTop = getPlayerRenderY(state.y) - getPlayerHitRadius();
 
         const platformsAbove = platforms.getPlatformsAbovePlayer(playerTop);
         platformsAbove.forEach(platformId => {
@@ -5132,7 +5830,7 @@ const init = async () => {
 
   function fireChargedOrbShot(holdSeconds: number) {
     const orbOrigin = meteorOrb.getShotOrigin();
-    if (!orbOrigin || !canShoot || energy <= 0) return;
+    if (!orbOrigin || !orbShootingUnlocked || !canShoot || energy <= 0) return;
     const now = performance.now();
     const shootCooldown = getShootCooldown();
     if (now - nextShotTime < shootCooldown) return;
@@ -5170,6 +5868,7 @@ const init = async () => {
     } else if (event.code === 'KeyF' || event.code === 'KeyS') {
       if (event.repeat) return;
       if (meteorSwirlFollowers.length > 0) {
+        if (!orbShootingUnlocked) return;
         if (enemyMode !== 'hover') {
           return;
         }
@@ -5188,7 +5887,7 @@ const init = async () => {
         return;
       }
       if (!meteorOrb.getShotOrigin()) return;
-      if (!canShoot || energy <= 0) return;
+      if (!orbShootingUnlocked || !canShoot || energy <= 0) return;
       if (!orbChargeActive) {
         orbChargeActive = true;
         orbChargeStart = performance.now();
@@ -5270,6 +5969,14 @@ const init = async () => {
     const newShadow = new Shadow({ playerWidth: playerDiameter });
     playfieldContainer.addChildAt(newShadow.getView(), playfieldContainer.getChildIndex(ball) - 1);
     Object.assign(playerShadow, newShadow);
+    const enemyShadowWasVisible = enemyShadow.getView().visible;
+    const enemyShadowAlpha = enemyShadow.getView().alpha;
+    enemyShadow.destroy();
+    const newEnemyShadow = new Shadow({ playerWidth: playerDiameter });
+    newEnemyShadow.getView().visible = enemyShadowWasVisible;
+    newEnemyShadow.getView().alpha = enemyShadowAlpha;
+    playfieldContainer.addChildAt(newEnemyShadow.getView(), playfieldContainer.getChildIndex(enemyBall));
+    Object.assign(enemyShadow, newEnemyShadow);
 
     const updatedGround = computePlayerGround();
     physics.setGroundSurface(updatedGround);
@@ -5279,7 +5986,7 @@ const init = async () => {
 
     // Redraw enemy with new radius
     setEnemyColor(currentEnemyColor);
-    enemyPhysics.setGroundSurface(updatedGround);
+    enemyPhysics.setGroundSurface(updatedGround - playerRadius);
     enemyBall.position.x = app.renderer.width * 0.9;
 
     laserPhysics.updateDimensions(app.renderer.width, app.renderer.height, updatedGround - playerRadius, enemyBall.position.x);
@@ -5288,7 +5995,7 @@ const init = async () => {
     cometManager.updateDimensions(app.renderer.width, app.renderer.height);
 
     playerRangeBounds = getPlayerRangeBounds(app.renderer.width);
-    updatePlayerHorizontalRangeForCamera(cameraPanX + treehousePanX, cameraZoom);
+    updatePlayerHorizontalRangeForCamera(cameraPanX + treehousePanX + specialCameraPanX, cameraZoom);
 
     if (meetingTitleContainer && meetingTitleText) {
       meetingTitleBaseY = 64;
@@ -5407,25 +6114,27 @@ const init = async () => {
     energyRevealActive = true;
     energyRevealStart = performance.now();
     energyActivated = true;
-    canShoot = true;
-    shootUnlocked = true;
+    canShoot = orbShootingUnlocked;
+    shootUnlocked = orbShootingUnlocked;
     if (revealEnergyBar) {
       revealEnergyBar();
     }
     updateEnergyUI();
   };
 
-  // Scoreboard (fades in when enemy rolls in) with hits/outs styled like original Jump
+  // Scoreboard (reveals when hover combat starts) with hits/outs styled like original Jump
   const scoreContainer = document.createElement('div');
   scoreContainer.style.position = 'fixed';
-  scoreContainer.style.top = '16px';
-  scoreContainer.style.left = '12px';
-  scoreContainer.style.right = '12px';
+  scoreContainer.style.top = '50px';
+  scoreContainer.style.left = '50px';
+  scoreContainer.style.right = '50px';
   scoreContainer.style.display = 'flex';
   scoreContainer.style.justifyContent = 'space-between';
   scoreContainer.style.pointerEvents = 'none';
   scoreContainer.style.opacity = '0';
-  scoreContainer.style.transition = 'opacity 0.5s ease';
+  scoreContainer.style.transform = 'translate(-28px, -22px)';
+  scoreContainer.style.transition = 'opacity 0.6s ease, transform 0.6s cubic-bezier(0.22, 1, 0.36, 1)';
+  scoreContainer.style.willChange = 'opacity, transform';
   document.body.appendChild(scoreContainer);
 
   const makeSide = (side: 'left' | 'right', color: string, isEnemy: boolean) => {
@@ -5497,6 +6206,7 @@ const init = async () => {
     if (!scoreVisible) {
       scoreVisible = true;
       scoreContainer.style.opacity = '1';
+      scoreContainer.style.transform = 'translate(0, 0)';
     }
   };
   updateScoreUI();
@@ -5672,6 +6382,9 @@ const init = async () => {
     grounds.setAllowNewSegments(true);
 
     playerIntroActive = false;
+    introLandingLeftLockActive = false;
+    introLandingLeftLockX = 0;
+    introLandingLeftLockOffsetFromCottageX = 0;
     freezePlayer = false;
     respawnEaseActive = false;
     postIntroEaseActive = false;
@@ -5691,7 +6404,6 @@ const init = async () => {
     redEnemyState = 'on_platform';
     enemyMode = 'sleep';
     introComplete = false;
-    enemyHasFiredLasers = false;
     enemyBall.visible = false;
     enemyIntroMoveActive = false;
     enemyIntroMoveStartX = 0;
@@ -5740,6 +6452,7 @@ const init = async () => {
   const fillEnergy = () => {
     energy = 100;
     energyActivated = true;
+    orbShootingUnlocked = true;
     // Also unlock shooting if not already unlocked
     canShoot = true;
     shootUnlocked = true;

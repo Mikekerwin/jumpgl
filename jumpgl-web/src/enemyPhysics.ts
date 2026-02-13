@@ -6,6 +6,7 @@
 
 export interface EnemyPhysicsState {
   y: number;
+  velocity: number;
   scaleX: number;
   scaleY: number;
 }
@@ -102,6 +103,18 @@ export class EnemyPhysics {
     return this.velocity;
   }
 
+  getY(): number {
+    return this.y;
+  }
+
+  setVelocity(value: number): void {
+    this.velocity = value;
+  }
+
+  isGrounded(tolerance: number = 1): boolean {
+    return Math.abs(this.y - this.restCenterY) <= tolerance && Math.abs(this.velocity) < this.minBounceVelocity;
+  }
+
   /**
    * Update physics for one frame
    */
@@ -109,6 +122,7 @@ export class EnemyPhysics {
     if (!this.isPhysicsEnabled) {
       return {
         y: this.y,
+        velocity: this.velocity,
         scaleX: this.scaleX,
         scaleY: this.scaleY,
       };
@@ -170,6 +184,7 @@ export class EnemyPhysics {
 
     return {
       y: this.y,
+      velocity: this.velocity,
       scaleX: this.scaleX,
       scaleY: this.scaleY,
     };
@@ -183,11 +198,22 @@ export class EnemyPhysics {
 
     const jumpHoldTimes = [0, 400, 1275]; // ms to hold for small, medium, large jumps
     const holdDuration = jumpHoldTimes[this.jumpSequenceStep - 1];
+    this.startJumpWithHold(holdDuration);
+  }
 
-    // Start jump with simulated hold
-    this.velocity = -this.jumpForce;
+  private startJumpWithHold(holdDurationMs: number, jumpVelocityScale: number = 1): void {
+    const clampedHold = Math.max(0, Math.min(this.maxHoldTime, holdDurationMs));
+    const clampedScale = Math.max(0.2, Math.min(1.5, jumpVelocityScale));
+    this.velocity = -this.jumpForce * clampedScale;
     this.isHolding = true;
-    this.holdStartTime = performance.now() - (this.maxHoldTime - holdDuration);
+    this.holdStartTime = performance.now() - (this.maxHoldTime - clampedHold);
+  }
+
+  /**
+   * Trigger a scripted jump that uses the same hold boost profile as intro jumps.
+   */
+  triggerManualJump(holdDurationMs: number, jumpVelocityScale: number = 1): void {
+    this.startJumpWithHold(holdDurationMs, jumpVelocityScale);
   }
 
   /**
@@ -197,23 +223,18 @@ export class EnemyPhysics {
     let targetX = 1;
     let targetY = 1;
 
-    const isGrounded = Math.abs(this.y - this.restCenterY) < 0.5 && Math.abs(this.velocity) < 1;
+    const grounded = Math.abs(this.y - this.restCenterY) < 0.5 && Math.abs(this.velocity) < this.minBounceVelocity;
 
-    if (Math.abs(this.velocity) > 10) {
-      if (this.velocity < 0) {
-        // Moving up - stretch vertically
-        targetY = 1 - Math.abs(this.velocity) / 5000;
-        targetX = 1 + Math.abs(this.velocity) / 5000;
-      } else {
-        // Moving down - stretch horizontally
-        targetY = 1 + Math.abs(this.velocity) / 5000;
-        targetX = 1 - Math.abs(this.velocity) / 5000;
-      }
-    }
-
-    if (isGrounded) {
-      targetY = 0.7;
-      targetX = 1.3;
+    // Mirror blue-player squash/stretch response so enemy doesn't stay flattened on ground.
+    if (this.velocity < -220) {
+      targetX = 0.78;
+      targetY = 1.22;
+    } else if (this.velocity > 220) {
+      targetX = 1.18;
+      targetY = 0.86;
+    } else if (grounded) {
+      targetX = 1;
+      targetY = 1;
     }
 
     const lerp = 0.18;

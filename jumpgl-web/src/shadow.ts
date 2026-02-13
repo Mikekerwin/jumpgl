@@ -33,11 +33,20 @@ export class Shadow {
    * @param playerX Player's X position (center)
    * @param playerY Player's Y position (center)
    * @param groundY Ground surface Y position
+   * @param playerScale Visual growth scale (1.0 = base size)
+   * @param growthOffsetFactor Fraction of growth used for downward shadow offset
    */
-  update(playerX: number, playerY: number, groundY: number): void {
+  update(
+    playerX: number,
+    playerY: number,
+    groundY: number,
+    playerScale: number = 1,
+    growthOffsetFactor: number = 0.2
+  ): void {
+    const effectiveWidth = this.playerWidth * Math.max(1, playerScale);
     // Calculate distance from floor (0 = on floor, positive = in air)
     // playerY is the center of the ball, so we need to add radius to get bottom edge
-    const playerRadius = this.playerWidth / 2;
+    const playerRadius = effectiveWidth / 2;
     const playerBottom = playerY + playerRadius;
     const distanceFromFloor = groundY - playerBottom;
     const maxDistance = groundY * 0.5; // Maximum distance we calculate shadow for
@@ -51,7 +60,7 @@ export class Shadow {
     const widthScale = 1 - (normalizedDistance * 0.5); // 1.0 when close, 0.5 when far
 
     // Shadow dimensions (dynamically scales with player width)
-    const shadowWidth = this.playerWidth * widthScale;
+    const shadowWidth = effectiveWidth * widthScale;
     const shadowHeight = 8; // Fixed short height for shadow
 
     // Update shadow graphics
@@ -62,8 +71,10 @@ export class Shadow {
     // Update blur filter (using strength instead of deprecated blur property)
     this.blurFilter.strength = blur;
 
-    // Position shadow at ground level, centered under player
-    this.shadow.position.set(playerX, groundY);
+    // Keep default placement unchanged; only nudge lower when scaled up.
+    // Use a small factor so the shadow stays visually attached (no gap under the ball).
+    const growthOffsetY = Math.max(0, (effectiveWidth - this.playerWidth) * growthOffsetFactor);
+    this.shadow.position.set(playerX, groundY + growthOffsetY);
   }
 
   getView(): Graphics {
