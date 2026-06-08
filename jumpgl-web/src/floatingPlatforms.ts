@@ -7,6 +7,13 @@ export interface PlatformCollision {
   right: number;
 }
 
+export interface PlatformMotion extends PlatformCollision {
+  previousSurfaceY: number;
+  previousLeft: number;
+  deltaX: number;
+  deltaY: number;
+}
+
 export interface PlayerBounds {
   left: number;
   right: number;
@@ -20,6 +27,8 @@ interface PlatformInstance {
   id: number;
   x: number; // world coordinate
   surfaceY: number; // Y position where player should be placed when standing
+  previousX: number; // X position from the previous update
+  previousSurfaceY: number; // Collision surface from the previous update
   renderY: number; // Y position for rendering the image
   width: number; // hitbox width
   height: number; // hitbox height
@@ -155,6 +164,8 @@ export class FloatingPlatforms {
     plat.baseX = worldX + hitboxOffsetX;
     plat.x = plat.baseX;
     plat.surfaceY = surfaceY;
+    plat.previousX = plat.x;
+    plat.previousSurfaceY = plat.surfaceY;
     plat.renderY = renderY;
     plat.width = hitboxWidth;
     plat.height = imageHeight;
@@ -232,6 +243,8 @@ export class FloatingPlatforms {
     // Scroll base X for all active platforms
     const activePlatforms = this.platforms.filter(p => p.active);
     activePlatforms.forEach((platform) => {
+      platform.previousX = platform.x;
+      platform.previousSurfaceY = platform.surfaceY;
       platform.baseX -= groundSpeed * deltaSeconds;
     });
 
@@ -449,14 +462,9 @@ export class FloatingPlatforms {
     const tolerance = Math.max(2, playerHeight * 0.05);
     const previousBottom = previousBounds.bottom;
     const currentBottom = currentBounds.bottom;
-    const verticalDelta = currentBottom - previousBottom;
     const previousCenterX = (previousBounds.left + previousBounds.right) * 0.5;
     const currentCenterX = (currentBounds.left + currentBounds.right) * 0.5;
     const horizontalTravel = Math.abs(currentCenterX - previousCenterX);
-    const fastTravelThreshold = Math.max(85, (currentBounds.right - currentBounds.left) * 0.9);
-    const isFastLateral = horizontalTravel >= fastTravelThreshold;
-    // Extra edge forgiveness only when moving very fast laterally in a single frame.
-    // Keeps normal precision while catching high-speed "last second save" landings.
     const impactHorizontalForgiveness = Math.min(26, Math.max(2, horizontalTravel * 0.12));
 
     let bestCollision: PlatformCollision | null = null;
@@ -468,30 +476,27 @@ export class FloatingPlatforms {
 
       const platformLeft = platform.x;
       const platformRight = platform.x + platform.width;
+      const previousPlatformLeft = platform.previousX;
+      const previousPlatformRight = platform.previousX + platform.width;
 
       // platform.surfaceY is where player's TOP should be when standing on platform
       // So player's BOTTOM should be at surfaceY + playerHeight
       const platformBottomCollision = platform.surfaceY + playerHeight;
+      const previousPlatformBottomCollision = platform.previousSurfaceY + playerHeight;
+      const previousRelativeBottom = previousBottom - previousPlatformBottomCollision;
+      const currentRelativeBottom = currentBottom - platformBottomCollision;
+      const relativeVerticalDelta = currentRelativeBottom - previousRelativeBottom;
 
       // Check horizontal overlap at current frame (used for resting checks).
       const currentHorizontalOverlap = !(
         currentBounds.right < platformLeft ||
         currentBounds.left > platformRight
       );
-      const previousHorizontalOverlap = !(
-        previousBounds.right < platformLeft ||
-        previousBounds.left > platformRight
-      );
-      const sweptHorizontalOverlap = !(
-        Math.max(currentBounds.right, previousBounds.right) < platformLeft ||
-        Math.min(currentBounds.left, previousBounds.left) > platformRight
-      );
-
-      // Check if player is descending (moving down or velocity is downward)
-      const descending = playerVelocity <= 0 || currentBounds.bottom > previousBounds.bottom;
+      // Check if the player is descending relative to this moving platform.
+      const descending = playerVelocity >= 0 || relativeVerticalDelta > 0;
 
       // Check if approaching from above (previous position was above platform)
-      const approachingFromAbove = previousBounds.top + tolerance <= platform.surfaceY;
+      const approachingFromAbove = previousBounds.top + tolerance <= platform.previousSurfaceY;
 
       // Check if this specific platform was jumped through from below
       // If so, allow landing on it regardless of previous position
@@ -500,69 +505,43 @@ export class FloatingPlatforms {
       // Treat platforms that were jumped through as if approaching from above
       const effectiveApproachingFromAbove = approachingFromAbove || wasJumpedThrough;
 
-      // Continuous/swept landing: estimate impact time this frame and test horizontal overlap there.
-      // This prevents tunneling when the player moves very far left/right in one frame.
+      // Continuous/swept landing against the platform's own frame motion.
+      // Player and platform positions are sampled at the same impact time.
       let crossedThisFrame = false;
-      if (descending && effectiveApproachingFromAbove && verticalDelta > 0) {
-        const impactY = platformBottomCollision - tolerance;
-        if (previousBottom <= impactY && currentBottom >= impactY) {
-          const impactT = Math.max(0, Math.min(1, (impactY - previousBottom) / verticalDelta));
+      if (
+        descending &&
+        effectiveApproachingFromAbove &&
+        relativeVerticalDelta > 0 &&
+        previousRelativeBottom <= tolerance &&
+        currentRelativeBottom >= -tolerance
+      ) {
+        const impactT = Math.max(
+          0,
+          Math.min(1, (-previousRelativeBottom) / relativeVerticalDelta)
+        );
+        if (Number.isFinite(impactT)) {
           const impactLeft = previousBounds.left + (currentBounds.left - previousBounds.left) * impactT;
           const impactRight = previousBounds.right + (currentBounds.right - previousBounds.right) * impactT;
+          const impactPlatformLeft = previousPlatformLeft + (platformLeft - previousPlatformLeft) * impactT;
+          const impactPlatformRight = previousPlatformRight + (platformRight - previousPlatformRight) * impactT;
           const impactHorizontalOverlap = !(
-            impactRight < platformLeft - impactHorizontalForgiveness ||
-            impactLeft > platformRight + impactHorizontalForgiveness
+            impactRight < impactPlatformLeft - impactHorizontalForgiveness ||
+            impactLeft > impactPlatformRight + impactHorizontalForgiveness
           );
           crossedThisFrame = impactHorizontalOverlap;
         }
       }
 
-      // Fast-confidence catch: only for very large lateral travel.
-      // If horizontal overlap starts near impact time but a strict impact sample misses it,
-      // estimate vertical position at horizontal-entry time and allow a controlled landing.
-      const dxRight = currentBounds.right - previousBounds.right;
-      const dxLeft = currentBounds.left - previousBounds.left;
-      let overlapEntryT = Number.NaN;
-      if (previousHorizontalOverlap) {
-        overlapEntryT = 0;
-      } else if (sweptHorizontalOverlap) {
-        if (dxRight > 0.0001) {
-          overlapEntryT = (platformLeft - previousBounds.right) / dxRight;
-        } else if (dxLeft < -0.0001) {
-          overlapEntryT = (platformRight - previousBounds.left) / dxLeft;
-        } else {
-          overlapEntryT = 1;
-        }
-      }
-      const hasValidEntryTime = Number.isFinite(overlapEntryT) && overlapEntryT >= -0.05 && overlapEntryT <= 1.05;
-      const clampedEntryT = hasValidEntryTime ? Math.max(0, Math.min(1, overlapEntryT)) : Number.NaN;
-      const bottomAtEntry = Number.isFinite(clampedEntryT)
-        ? previousBottom + verticalDelta * clampedEntryT
-        : Number.NaN;
-      const fastConfidencePad = Math.min(220, Math.max(40, horizontalTravel * 0.55));
-      const fastConfidenceCatch =
-        !crossedThisFrame &&
-        isFastLateral &&
-        descending &&
-        effectiveApproachingFromAbove &&
-        sweptHorizontalOverlap &&
-        hasValidEntryTime &&
-        Number.isFinite(bottomAtEntry) &&
-        bottomAtEntry >= platformBottomCollision - tolerance * 1.5 &&
-        bottomAtEntry <= platformBottomCollision + fastConfidencePad &&
-        currentBottom >= platformBottomCollision - tolerance &&
-        currentBottom <= platformBottomCollision + fastConfidencePad;
-
       // Check if player is resting on the platform (already on it, minimal velocity)
       const resting =
         currentHorizontalOverlap &&
+        descending &&
         Math.abs(currentBounds.bottom - platformBottomCollision) <= tolerance &&
-        playerVelocity > -180 &&
         currentBounds.bottom <= platformBottomCollision + tolerance;
 
       // Collect candidate if any landing condition is met and choose best (highest platform wins).
-      if (crossedThisFrame || resting || fastConfidenceCatch) {
-        const priority = crossedThisFrame ? 0 : (resting ? 1 : 2);
+      if (crossedThisFrame || resting) {
+        const priority = crossedThisFrame ? 0 : 1;
         if (
           bestCollision === null ||
           priority < bestPriority ||
@@ -803,6 +782,25 @@ export class FloatingPlatforms {
   }
 
   /**
+   * Get the current bounds and actual frame movement for a platform.
+   */
+  getPlatformMotion(id: number): PlatformMotion | null {
+    const platform = this.platforms.find(p => p.id === id && p.active);
+    if (!platform) return null;
+
+    return {
+      id: platform.id,
+      surfaceY: platform.surfaceY,
+      previousSurfaceY: platform.previousSurfaceY,
+      left: platform.x,
+      previousLeft: platform.previousX,
+      right: platform.x + platform.width,
+      deltaX: platform.x - platform.previousX,
+      deltaY: platform.surfaceY - platform.previousSurfaceY,
+    };
+  }
+
+  /**
    * Get all platforms (for shadow projection and other systems)
    */
   getAllPlatforms(): PlatformInstance[] {
@@ -813,8 +811,10 @@ export class FloatingPlatforms {
     const platform: PlatformInstance = {
       id: this.nextId++,
       x: 0,
+      previousX: 0,
       baseX: 0,
       surfaceY: 0,
+      previousSurfaceY: 0,
       renderY: 0,
       width: 0,
       height: 0,

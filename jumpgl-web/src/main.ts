@@ -584,9 +584,7 @@ const init = async () => {
   const PLATFORM_SUPPORT_LOSS_GRACE_MS = 125; // Require sustained unsupported state before dropping lock
   const HOLE_CONTACT_GRACE_MS = 120; // Require sustained hole overlap before forcing fall
   const PLATFORM_SUPPORT_GRACE_VERTICAL_PAD = 95; // Extra vertical forgiveness while support-loss grace is active
-  const PLATFORM_LOCK_GRACE_MS = 220; // Prevent immediate lock loss after a valid landing
   const PLATFORM_MAINTENANCE_MAX_ASCENT = 320; // Don't re-lock when actively launching upward
-  const PLATFORM_SWEEP_EDGE_EXTRA_MAX = 28; // Cap extra edge forgiveness for high-speed lateral movement
   const PLATFORM_LANDING_OFFSET = 30; // Extra pixels to sink into platform at rest
   const TREEHOUSE_LANDING_OFFSET = PLATFORM_LANDING_OFFSET - 22;
   const PLAYER_PLATFORM_HITBOX_HOLD_SCALE = 0.72; // Tight hitbox while already locked to a platform
@@ -607,7 +605,6 @@ const init = async () => {
     key?: string;
   };
   let platformAscendBonus = 0; // Additional vertical offset for successive spawns after landings
-  let lastPlatformLandingTime = 0;
   let platformSupportLostAt = 0;
   let holeContactStartedAt = 0;
   const PLATFORM_ASCEND_STEP = 40; // Pixels higher per qualifying landing
@@ -789,6 +786,7 @@ const init = async () => {
   let respawnClampToScreen = false;
   let respawnClampDistance = 0;
   let resumeRampTimer = 0;
+  let respawnCameraHoldY = 0;
 
   // Automatic hole level trigger tracking
   let fencePassedTriggered = false; // Track if we've already triggered hole level after fence
@@ -2042,36 +2040,19 @@ const init = async () => {
     );
   };
 
-  const hasSweptPlatformHorizontalSupport = (
+  const hasCurrentPlatformHorizontalSupport = (
     currentBounds: PlayerBounds,
-    previousBounds: PlayerBounds,
     platformLeft: number,
     platformRight: number
   ) => {
-    const directOverlap =
-      currentBounds.right >= platformLeft - PLATFORM_EDGE_TOLERANCE &&
-      currentBounds.left <= platformRight + PLATFORM_EDGE_TOLERANCE;
-    if (directOverlap) return true;
-
-    const currentCenterX = (currentBounds.left + currentBounds.right) * 0.5;
-    const previousCenterX = (previousBounds.left + previousBounds.right) * 0.5;
-    const lateralTravel = Math.abs(currentCenterX - previousCenterX);
-    const sweepEdgePad = Math.min(
-      PLATFORM_SWEEP_EDGE_EXTRA_MAX,
-      Math.max(6, lateralTravel * 0.18)
-    );
-    const sweptLeft = Math.min(currentBounds.left, previousBounds.left);
-    const sweptRight = Math.max(currentBounds.right, previousBounds.right);
-
     return (
-      sweptRight >= platformLeft - PLATFORM_EDGE_TOLERANCE - sweepEdgePad &&
-      sweptLeft <= platformRight + PLATFORM_EDGE_TOLERANCE + sweepEdgePad
+      currentBounds.right >= platformLeft - PLATFORM_EDGE_TOLERANCE &&
+      currentBounds.left <= platformRight + PLATFORM_EDGE_TOLERANCE
     );
   };
 
   const hasGraceEligiblePlatformSupport = (
     currentBounds: PlayerBounds,
-    previousBounds: PlayerBounds,
     platform: { left: number; right: number; surfaceY: number },
     verticalVelocity: number
   ) => {
@@ -2080,9 +2061,8 @@ const init = async () => {
     const verticalClose =
       currentBounds.bottom <= targetBottom + PLATFORM_SUPPORT_GRACE_VERTICAL_PAD &&
       currentBounds.bottom >= targetBottom - PLATFORM_SUPPORT_GRACE_VERTICAL_PAD;
-    const horizontalClose = hasSweptPlatformHorizontalSupport(
+    const horizontalClose = hasCurrentPlatformHorizontalSupport(
       currentBounds,
-      previousBounds,
       platform.left,
       platform.right
     );
@@ -2178,7 +2158,7 @@ const init = async () => {
       const surfaceY = getTreehouseSurfaceYForPlayer(platform, playerCenterX, playerCenterY);
       const platformBottomCollision = surfaceY + playerHeight;
 
-      const descending = playerVelocity <= 0 || currentBounds.bottom > previousBounds.bottom;
+      const descending = playerVelocity >= 0 || currentBounds.bottom > previousBounds.bottom;
       const approachingFromAbove = previousBounds.top + tolerance <= surfaceY;
       const wasJumpedThrough = platformsJumpedThrough.has(platform.id);
       const effectiveApproaching = approachingFromAbove || wasJumpedThrough;
@@ -2189,7 +2169,7 @@ const init = async () => {
         currentBounds.bottom >= platformBottomCollision - tolerance;
       const resting =
         Math.abs(currentBounds.bottom - platformBottomCollision) <= tolerance &&
-        playerVelocity > -180 &&
+        descending &&
         currentBounds.bottom <= platformBottomCollision + tolerance;
 
       if (crossedThisFrame || resting) {
@@ -2321,6 +2301,7 @@ const init = async () => {
 
         respawnState = 'dying';
         respawnTimer = 0;
+        respawnCameraHoldY = cameraY;
         speedMultiplier = 1.0; // Continue at normal speed initially
 
         // CRITICAL: Disable gravity and freeze player physics immediately
@@ -2426,19 +2407,34 @@ const init = async () => {
 
       // Advance remaining distance by actual scroll this frame
       // speedMultiplier < 0 moves world backward (deltaX negative)
-      const deltaX = speedMultiplier * BASE_GROUND_SCROLL_SPEED * deltaSeconds;
-      // Count down remaining distance toward zero
-      remainingRewindDistance -= deltaX;
+      const proposedDeltaX = speedMultiplier * BASE_GROUND_SCROLL_SPEED * deltaSeconds;
+      const alreadyAtTarget = absRemaining <= Number.EPSILON;
+      const reachesTargetThisFrame =
+        !alreadyAtTarget &&
+        Math.abs(proposedDeltaX) >= absRemaining &&
+        Math.sign(proposedDeltaX) === Math.sign(remainingRewindDistance);
+      if (alreadyAtTarget) {
+        speedMultiplier = 0;
+        remainingRewindDistance = 0;
+      } else if (reachesTargetThisFrame && deltaSeconds > 0) {
+        speedMultiplier = remainingRewindDistance / (BASE_GROUND_SCROLL_SPEED * deltaSeconds);
+        remainingRewindDistance = 0;
+      } else {
+        remainingRewindDistance -= proposedDeltaX;
+      }
+      const appliedDeltaX = speedMultiplier * BASE_GROUND_SCROLL_SPEED * deltaSeconds;
 
       const absRemainingUpdated = Math.abs(remainingRewindDistance);
 
       // Debug logging every ~0.2s
-    if (Math.random() < 0.05) {
-      console.log(`[RESPAWN ANIM] remaining=${absRemainingUpdated.toFixed(0)}px, speed=${speedMultiplier.toFixed(2)}x, deltaX=${deltaX.toFixed(1)}`);
-    }
+      if (Math.random() < 0.05) {
+        console.log(`[RESPAWN ANIM] remaining=${absRemainingUpdated.toFixed(0)}px, speed=${speedMultiplier.toFixed(2)}x, deltaX=${appliedDeltaX.toFixed(1)}`);
+      }
 
       // Check if we've reached or crossed the target (within 2px tolerance)
-      if (absRemainingUpdated <= 2) {
+      // When the exact final delta is applied, finish on the following frame so
+      // the ground/platform update receives that final non-zero speed.
+      if (absRemainingUpdated <= 2 && !reachesTargetThisFrame) {
         // Animation complete - spawn player
         respawnState = 'respawning';
         speedMultiplier = 0; // Stop scrolling
@@ -3089,6 +3085,21 @@ const init = async () => {
       playerDiameter,
       PLATFORM_LANDING_OFFSET
     );
+    if (
+      activePlatformId !== null &&
+      activePlatformId >= 0 &&
+      !fallingIntoHole &&
+      respawnState === 'normal'
+    ) {
+      const activePlatformMotion = platforms.getPlatformMotion(activePlatformId);
+      if (activePlatformMotion) {
+        physics.translatePosition(activePlatformMotion.deltaX, activePlatformMotion.deltaY);
+        physics.landOnSurface(
+          activePlatformMotion.surfaceY + playerRadius + PLATFORM_LANDING_OFFSET,
+          activePlatformId
+        );
+      }
+    }
     holes.update(deltaSeconds, groundScrollSpeed, shouldCullObject);
     groundHoles.update(deltaSeconds, groundScrollSpeed, shouldCullObject);
 
@@ -4315,7 +4326,7 @@ const init = async () => {
         const playerHeight = playerBounds.bottom - playerBounds.top;
         const tolerance = Math.max(2, playerHeight * 0.05);
         const platformBottomCollision = meteorHitbox.surfaceY + playerHeight;
-        const descending = verticalVelocity <= 0 || playerBounds.bottom > prevBounds.bottom;
+        const descending = verticalVelocity >= 0 || playerBounds.bottom > prevBounds.bottom;
         const approachingFromAbove = prevBounds.top + tolerance <= meteorHitbox.surfaceY;
         const crossedThisFrame =
           descending &&
@@ -4323,8 +4334,9 @@ const init = async () => {
           prevBounds.bottom <= platformBottomCollision + tolerance &&
           playerBounds.bottom >= platformBottomCollision - tolerance;
         const resting =
+          descending &&
           Math.abs(playerBounds.bottom - platformBottomCollision) <= tolerance &&
-          Math.abs(verticalVelocity) < 0.8;
+          playerBounds.bottom <= platformBottomCollision + tolerance;
 
         if (crossedThisFrame || resting) {
           // Player landed on meteor hitbox - treat it like a platform
@@ -4413,9 +4425,6 @@ const init = async () => {
         // Player is on a platform - set surface override
         const isNewLanding = activePlatformId !== supportingPlatform.id;
         activePlatformId = supportingPlatform.id;
-        if (isNewLanding) {
-          lastPlatformLandingTime = performance.now();
-        }
         if (isNewLanding && supportingPlatform.id >= 0) {
           lastLeftPlatformId = null;
         }
@@ -4469,8 +4478,7 @@ const init = async () => {
         const now = performance.now();
         const timeSinceJump = now - lastJumpTime;
         const inJumpGracePeriod = timeSinceJump < JUMP_GRACE_PERIOD;
-        const inPlatformLandingGrace = now - lastPlatformLandingTime < PLATFORM_LOCK_GRACE_MS;
-
+        const useJumpGraceForSupport = !!treehousePlatform && inJumpGracePeriod;
         if (!isCharging) {
           let treehouseOverlap = false;
           if (treehousePlatform) {
@@ -4487,10 +4495,10 @@ const init = async () => {
           }
           const walkedOff = treehousePlatform
             ? !treehouseOverlap
-            : !hasSweptPlatformHorizontalSupport(playerBounds, prevBounds, supportingPlatform.left, supportingPlatform.right);
+            : !hasCurrentPlatformHorizontalSupport(playerBounds, supportingPlatform.left, supportingPlatform.right);
 
           // Fall through immediately on intentional down press; otherwise use support-loss hysteresis.
-          if (isPressingDown && !inJumpGracePeriod) {
+          if (isPressingDown && !useJumpGraceForSupport) {
             logPlatformSnap('Clearing override after walk-off', {
               id: supportingPlatform.id,
               walkedOff,
@@ -4502,14 +4510,13 @@ const init = async () => {
               platRight: supportingPlatform.right,
             });
             releaseActivePlatformLock();
-          } else if (walkedOff && !inJumpGracePeriod && !inPlatformLandingGrace) {
+          } else if (walkedOff && !useJumpGraceForSupport) {
             if (platformSupportLostAt === 0) {
               platformSupportLostAt = now;
             }
             const supportGraceActive = now - platformSupportLostAt < PLATFORM_SUPPORT_LOSS_GRACE_MS;
             const graceEligible = hasGraceEligiblePlatformSupport(
               platformLandingBounds,
-              platformPrevLandingBounds,
               supportingPlatform,
               verticalVelocity
             );
@@ -4532,8 +4539,9 @@ const init = async () => {
         } else {
           platformSupportLostAt = 0;
         }
-        // Increase climb bonus when we successfully land on any platform
-        platformAscendBonus = Math.min(platformAscendBonus + PLATFORM_ASCEND_STEP, PLATFORM_ASCEND_MAX);
+        if (isNewLanding) {
+          platformAscendBonus = Math.min(platformAscendBonus + PLATFORM_ASCEND_STEP, PLATFORM_ASCEND_MAX);
+        }
       } else if (activePlatformId !== null) {
         // Keep platform override while bouncing vertically so the bounce counter isn't reset
         let treehousePlatform = treehousePlatformMap.get(activePlatformId);
@@ -4583,7 +4591,7 @@ const init = async () => {
                   isTreehouseSurfaceContact(livePlatform.surfaceY, playerBounds, treehousePlatforms) ||
                   isTreehouseSurfaceContact(livePlatform.surfaceY, prevBounds, treehousePlatforms)
                 )))
-            : hasSweptPlatformHorizontalSupport(playerBounds, prevBounds, livePlatform.left, livePlatform.right);
+            : hasCurrentPlatformHorizontalSupport(playerBounds, livePlatform.left, livePlatform.right);
 
           if (treehousePlatform && !isCharging) {
             const pathSurface = getTreehousePathSurfaceAt(treehousePlatforms, playerBounds);
@@ -4622,8 +4630,7 @@ const init = async () => {
           const now = performance.now();
           const timeSinceJump = now - lastJumpTime;
           const inJumpGracePeriod = timeSinceJump < JUMP_GRACE_PERIOD;
-          const inPlatformLandingGrace = now - lastPlatformLandingTime < PLATFORM_LOCK_GRACE_MS;
-
+          const useJumpGraceForSupport = treehouseActive && inJumpGracePeriod;
           // If we're deliberately pressing Down, force a fall-through (unless in grace)
           if (stillOverPlatform && !isCharging && verticalVelocity > -PLATFORM_MAINTENANCE_MAX_ASCENT) {
             platformSupportLostAt = 0;
@@ -4645,20 +4652,19 @@ const init = async () => {
             platformSupportLostAt = 0;
           }
 
-          if (isPressingDown && !inJumpGracePeriod) {
+          if (isPressingDown && !useJumpGraceForSupport) {
             logPlatformSnap('Clearing override via down press', {
               id: activePlatformId,
               vy: verticalVelocity,
             });
             releaseActivePlatformLock();
-          } else if (!stillOverPlatform && !inJumpGracePeriod && !inPlatformLandingGrace) {
+          } else if (!stillOverPlatform && !useJumpGraceForSupport) {
             if (platformSupportLostAt === 0) {
               platformSupportLostAt = now;
             }
             const supportGraceActive = now - platformSupportLostAt < PLATFORM_SUPPORT_LOSS_GRACE_MS;
             const graceEligible = hasGraceEligiblePlatformSupport(
               platformLandingBounds,
-              platformPrevLandingBounds,
               livePlatform,
               verticalVelocity
             );
@@ -4733,7 +4739,6 @@ const init = async () => {
       if (activePlatformId !== null) {
         releaseActivePlatformLock(false);
       }
-      lastPlatformLandingTime = 0;
       lastLeftPlatformId = null;
       platformAscendBonus = 0; // Reset climb when returning to ground
     }
@@ -4870,7 +4875,16 @@ const init = async () => {
     // Check if player is jumping too high (approaching top of screen)
     // Player position is in world space, but we need to check screen space (with camera offset)
     const playerTopInScreenSpace = (state.y - playerRadius) + cameraY;
-    const suppressTopClamp = respawnState === 'respawning' && playerTopInScreenSpace < 0;
+    const holdRespawnCamera =
+      respawnState === 'dying' ||
+      respawnState === 'waiting' ||
+      respawnState === 'animating_back' ||
+      respawnState === 'respawning';
+    if (holdRespawnCamera) {
+      targetCameraY = respawnCameraHoldY;
+    }
+
+    const suppressTopClamp = holdRespawnCamera && playerTopInScreenSpace < 0;
     if (!suppressTopClamp && playerTopInScreenSpace < CAMERA_TOP_MARGIN) {
       // Player is too close to top of screen - push camera up
       const upwardPush = CAMERA_TOP_MARGIN - playerTopInScreenSpace;
@@ -5003,14 +5017,16 @@ const init = async () => {
 
       // Camera pan toward meteor area starting on the second-to-last platform
       const PAN_EASE_DURATION = 7.0;
-      if (onOrPastPenultimate) {
-        panEaseProgress = Math.min(1, panEaseProgress + deltaSeconds / PAN_EASE_DURATION);
-      } else {
-        panEaseProgress = Math.max(0, panEaseProgress - deltaSeconds / PAN_EASE_DURATION);
-      }
+      if (!inRespawn) {
+        if (onOrPastPenultimate) {
+          panEaseProgress = Math.min(1, panEaseProgress + deltaSeconds / PAN_EASE_DURATION);
+        } else {
+          panEaseProgress = Math.max(0, panEaseProgress - deltaSeconds / PAN_EASE_DURATION);
+        }
 
-      if (isOnBaselineGround && isGrounded && meteorSequenceComplete) {
-        panEaseProgress = Math.max(0, panEaseProgress - deltaSeconds / PAN_EASE_DURATION);
+        if (isOnBaselineGround && isGrounded && meteorSequenceComplete) {
+          panEaseProgress = Math.max(0, panEaseProgress - deltaSeconds / PAN_EASE_DURATION);
+        }
       }
 
       const panEase = panEaseProgress * panEaseProgress * panEaseProgress; // Strong ease-in
@@ -5084,7 +5100,6 @@ const init = async () => {
       // clampedY = viewportHeight - viewportHeight * cameraZoom
       // clampedY = viewportHeight * (1 - cameraZoom)
       clampedGroundCameraY = viewportHeight * (1 - cameraZoom);
-      console.log(`[GROUND CLAMP] Bottom would be at ${groundBottomInScreenSpace.toFixed(1)}, clamping to ${clampedGroundCameraY.toFixed(1)}`);
     }
 
     groundContainer.position.set(totalCameraX, clampedGroundCameraY);
@@ -5976,6 +5991,9 @@ const init = async () => {
       const postJumpCount = physics.getJumpCount();
       const didDoubleJumpNow = preJumpCount === 1 && postJumpCount >= 2;
       lastJumpTime = performance.now();
+      if (activePlatformId !== null) {
+        releaseActivePlatformLock();
+      }
       if (didDoubleJumpNow && tutorialStage === 'doubleJump' && doubleJumpContainer.style.display !== 'none') {
         nudgeUpArrow();
       }

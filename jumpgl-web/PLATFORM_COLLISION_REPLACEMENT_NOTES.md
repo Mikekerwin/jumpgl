@@ -90,3 +90,13 @@ This note tracks exactly what was replaced in the platform reliability refactor 
 - `jumpgl-web/src/main.ts`
 
 No gameplay flow outside platform/hole contact handling was intentionally changed.
+
+## June 8, 2026 Refinement
+
+- Floating platforms now retain their previous X and surface Y each frame.
+- Landing acquisition uses relative swept motion between the player and moving platform.
+- Removed the broad fast-confidence catch that could snap the player upward from far below.
+- A supported player is translated by the platform's actual X/Y frame movement before physics.
+- Successful jumps release floating-platform support immediately.
+- Floating-platform roll-off uses current overlap instead of retaining swept/grace support.
+- Treehouse jump grace remains unchanged.
