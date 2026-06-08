@@ -531,6 +531,17 @@ export class FloatingPlatforms {
           crossedThisFrame = impactHorizontalOverlap;
         }
       }
+      // Mouse tracking can move the player a long horizontal distance in one
+      // frame. If that frame also crosses the platform from above, accept the
+      // final direct overlap even when the interpolated impact sample misses.
+      // Unlike the old fast-confidence catch, this adds no below-platform pad.
+      const crossedIntoCurrentOverlap =
+        descending &&
+        effectiveApproachingFromAbove &&
+        previousRelativeBottom <= tolerance &&
+        currentRelativeBottom >= -tolerance &&
+        currentHorizontalOverlap;
+      crossedThisFrame = crossedThisFrame || crossedIntoCurrentOverlap;
 
       // Check if player is resting on the platform (already on it, minimal velocity)
       const resting =

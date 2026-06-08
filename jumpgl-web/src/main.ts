@@ -3093,7 +3093,19 @@ const init = async () => {
     ) {
       const activePlatformMotion = platforms.getPlatformMotion(activePlatformId);
       if (activePlatformMotion) {
-        physics.translatePosition(activePlatformMotion.deltaX, activePlatformMotion.deltaY);
+        const activeState = physics.getState();
+        const previousSurfaceCenter =
+          activePlatformMotion.previousSurfaceY + playerRadius + PLATFORM_LANDING_OFFSET;
+        const isInPlatformContact =
+          physics.getVerticalVelocity() >= 0 &&
+          Math.abs(activeState.y - previousSurfaceCenter) <= 2;
+        if (isInPlatformContact) {
+          // Platform deltaX includes the world's automatic scroll. Carry only
+          // movement within that world or mouse input will feel sticky.
+          const platformLocalDeltaX =
+            activePlatformMotion.deltaX + groundScrollSpeed * deltaSeconds;
+          physics.translatePosition(platformLocalDeltaX, activePlatformMotion.deltaY);
+        }
         physics.landOnSurface(
           activePlatformMotion.surfaceY + playerRadius + PLATFORM_LANDING_OFFSET,
           activePlatformId
@@ -4495,7 +4507,11 @@ const init = async () => {
           }
           const walkedOff = treehousePlatform
             ? !treehouseOverlap
-            : !hasCurrentPlatformHorizontalSupport(playerBounds, supportingPlatform.left, supportingPlatform.right);
+            : !hasCurrentPlatformHorizontalSupport(
+              platformLandingBounds,
+              supportingPlatform.left,
+              supportingPlatform.right
+            );
 
           // Fall through immediately on intentional down press; otherwise use support-loss hysteresis.
           if (isPressingDown && !useJumpGraceForSupport) {
@@ -4591,7 +4607,11 @@ const init = async () => {
                   isTreehouseSurfaceContact(livePlatform.surfaceY, playerBounds, treehousePlatforms) ||
                   isTreehouseSurfaceContact(livePlatform.surfaceY, prevBounds, treehousePlatforms)
                 )))
-            : hasCurrentPlatformHorizontalSupport(playerBounds, livePlatform.left, livePlatform.right);
+            : hasCurrentPlatformHorizontalSupport(
+              platformLandingBounds,
+              livePlatform.left,
+              livePlatform.right
+            );
 
           if (treehousePlatform && !isCharging) {
             const pathSurface = getTreehousePathSurfaceAt(treehousePlatforms, playerBounds);
@@ -5991,9 +6011,6 @@ const init = async () => {
       const postJumpCount = physics.getJumpCount();
       const didDoubleJumpNow = preJumpCount === 1 && postJumpCount >= 2;
       lastJumpTime = performance.now();
-      if (activePlatformId !== null) {
-        releaseActivePlatformLock();
-      }
       if (didDoubleJumpNow && tutorialStage === 'doubleJump' && doubleJumpContainer.style.display !== 'none') {
         nudgeUpArrow();
       }

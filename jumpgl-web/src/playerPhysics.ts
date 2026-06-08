@@ -411,8 +411,9 @@ export class PlayerPhysics {
   }
 
   /**
-   * Move the player and their horizontal input target by a world-space delta.
-   * Used to keep a supported player attached to a moving platform.
+   * Move the player and their horizontal input target by a platform-local delta.
+   * Keeping the target in the same local position preserves platform carry until
+   * the next mouse/touch update supplies a new target.
    */
   translatePosition(deltaX: number, deltaY: number): void {
     this.x += deltaX;
