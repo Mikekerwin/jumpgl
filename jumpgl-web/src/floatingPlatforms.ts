@@ -447,6 +447,21 @@ export class FloatingPlatforms {
   ): PlatformCollision | null {
     const playerHeight = currentBounds.bottom - currentBounds.top;
     const tolerance = Math.max(2, playerHeight * 0.05);
+    const previousBottom = previousBounds.bottom;
+    const currentBottom = currentBounds.bottom;
+    const verticalDelta = currentBottom - previousBottom;
+    const previousCenterX = (previousBounds.left + previousBounds.right) * 0.5;
+    const currentCenterX = (currentBounds.left + currentBounds.right) * 0.5;
+    const horizontalTravel = Math.abs(currentCenterX - previousCenterX);
+    const fastTravelThreshold = Math.max(85, (currentBounds.right - currentBounds.left) * 0.9);
+    const isFastLateral = horizontalTravel >= fastTravelThreshold;
+    // Extra edge forgiveness only when moving very fast laterally in a single frame.
+    // Keeps normal precision while catching high-speed "last second save" landings.
+    const impactHorizontalForgiveness = Math.min(26, Math.max(2, horizontalTravel * 0.12));
+
+    let bestCollision: PlatformCollision | null = null;
+    let bestPriority = Number.POSITIVE_INFINITY;
+    let bestSurfaceY = Number.POSITIVE_INFINITY;
 
     for (const platform of this.platforms) {
       if (!platform.active) continue;
@@ -458,12 +473,19 @@ export class FloatingPlatforms {
       // So player's BOTTOM should be at surfaceY + playerHeight
       const platformBottomCollision = platform.surfaceY + playerHeight;
 
-      // Check horizontal overlap
-      const horizontalOverlap = !(
+      // Check horizontal overlap at current frame (used for resting checks).
+      const currentHorizontalOverlap = !(
         currentBounds.right < platformLeft ||
         currentBounds.left > platformRight
       );
-      if (!horizontalOverlap) continue;
+      const previousHorizontalOverlap = !(
+        previousBounds.right < platformLeft ||
+        previousBounds.left > platformRight
+      );
+      const sweptHorizontalOverlap = !(
+        Math.max(currentBounds.right, previousBounds.right) < platformLeft ||
+        Math.min(currentBounds.left, previousBounds.left) > platformRight
+      );
 
       // Check if player is descending (moving down or velocity is downward)
       const descending = playerVelocity <= 0 || currentBounds.bottom > previousBounds.bottom;
@@ -478,28 +500,93 @@ export class FloatingPlatforms {
       // Treat platforms that were jumped through as if approaching from above
       const effectiveApproachingFromAbove = approachingFromAbove || wasJumpedThrough;
 
-      // Check if player crossed the platform surface this frame (descending from above)
-      const crossedThisFrame =
+      // Continuous/swept landing: estimate impact time this frame and test horizontal overlap there.
+      // This prevents tunneling when the player moves very far left/right in one frame.
+      let crossedThisFrame = false;
+      if (descending && effectiveApproachingFromAbove && verticalDelta > 0) {
+        const impactY = platformBottomCollision - tolerance;
+        if (previousBottom <= impactY && currentBottom >= impactY) {
+          const impactT = Math.max(0, Math.min(1, (impactY - previousBottom) / verticalDelta));
+          const impactLeft = previousBounds.left + (currentBounds.left - previousBounds.left) * impactT;
+          const impactRight = previousBounds.right + (currentBounds.right - previousBounds.right) * impactT;
+          const impactHorizontalOverlap = !(
+            impactRight < platformLeft - impactHorizontalForgiveness ||
+            impactLeft > platformRight + impactHorizontalForgiveness
+          );
+          crossedThisFrame = impactHorizontalOverlap;
+        }
+      }
+
+      // Fast-confidence catch: only for very large lateral travel.
+      // If horizontal overlap starts near impact time but a strict impact sample misses it,
+      // estimate vertical position at horizontal-entry time and allow a controlled landing.
+      const dxRight = currentBounds.right - previousBounds.right;
+      const dxLeft = currentBounds.left - previousBounds.left;
+      let overlapEntryT = Number.NaN;
+      if (previousHorizontalOverlap) {
+        overlapEntryT = 0;
+      } else if (sweptHorizontalOverlap) {
+        if (dxRight > 0.0001) {
+          overlapEntryT = (platformLeft - previousBounds.right) / dxRight;
+        } else if (dxLeft < -0.0001) {
+          overlapEntryT = (platformRight - previousBounds.left) / dxLeft;
+        } else {
+          overlapEntryT = 1;
+        }
+      }
+      const hasValidEntryTime = Number.isFinite(overlapEntryT) && overlapEntryT >= -0.05 && overlapEntryT <= 1.05;
+      const clampedEntryT = hasValidEntryTime ? Math.max(0, Math.min(1, overlapEntryT)) : Number.NaN;
+      const bottomAtEntry = Number.isFinite(clampedEntryT)
+        ? previousBottom + verticalDelta * clampedEntryT
+        : Number.NaN;
+      const fastConfidencePad = Math.min(220, Math.max(40, horizontalTravel * 0.55));
+      const fastConfidenceCatch =
+        !crossedThisFrame &&
+        isFastLateral &&
         descending &&
         effectiveApproachingFromAbove &&
-        previousBounds.bottom <= platformBottomCollision - tolerance &&
-        currentBounds.bottom >= platformBottomCollision - tolerance;
+        sweptHorizontalOverlap &&
+        hasValidEntryTime &&
+        Number.isFinite(bottomAtEntry) &&
+        bottomAtEntry >= platformBottomCollision - tolerance * 1.5 &&
+        bottomAtEntry <= platformBottomCollision + fastConfidencePad &&
+        currentBottom >= platformBottomCollision - tolerance &&
+        currentBottom <= platformBottomCollision + fastConfidencePad;
 
       // Check if player is resting on the platform (already on it, minimal velocity)
       const resting =
+        currentHorizontalOverlap &&
         Math.abs(currentBounds.bottom - platformBottomCollision) <= tolerance &&
-        Math.abs(playerVelocity) < 0.8 &&
+        playerVelocity > -180 &&
         currentBounds.bottom <= platformBottomCollision + tolerance;
 
-      // Return platform collision if any landing condition is met
-      if (crossedThisFrame || resting) {
-        return {
-          id: platform.id,
-          surfaceY: platform.surfaceY,
-          left: platformLeft,
-          right: platformRight,
-        };
+      // Collect candidate if any landing condition is met and choose best (highest platform wins).
+      if (crossedThisFrame || resting || fastConfidenceCatch) {
+        const priority = crossedThisFrame ? 0 : (resting ? 1 : 2);
+        if (
+          bestCollision === null ||
+          priority < bestPriority ||
+          (priority === bestPriority && platform.surfaceY < bestSurfaceY)
+        ) {
+          bestPriority = priority;
+          bestSurfaceY = platform.surfaceY;
+          bestCollision = {
+            id: platform.id,
+            surfaceY: platform.surfaceY,
+            left: platformLeft,
+            right: platformRight,
+          };
+        }
       }
+    }
+
+    if (bestCollision) {
+      return {
+        id: bestCollision.id,
+        surfaceY: bestCollision.surfaceY,
+        left: bestCollision.left,
+        right: bestCollision.right,
+      };
     }
 
     return null;

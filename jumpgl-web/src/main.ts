@@ -1,5 +1,5 @@
 import './style.css';
-import { Application, Container, Graphics, Sprite, Texture, Ticker, RenderTexture, Text, TextStyle } from 'pixi.js';
+import { Application, Assets, Container, Graphics, Sprite, Texture, Ticker, RenderTexture, Text, TextStyle } from 'pixi.js';
 import { PlayerPhysics } from './playerPhysics';
 import { EnemyPhysics } from './enemyPhysics';
 import { EnemyMovement } from './enemyMovement';
@@ -581,9 +581,16 @@ const init = async () => {
   const TREEHOUSE_RAMP_STEP = 75;
   const TREEHOUSE_STEP_Z_BUFFER = 2;
   const PLATFORM_EDGE_TOLERANCE = 8; // Horizontal forgiveness so we don't drop too early
+  const PLATFORM_SUPPORT_LOSS_GRACE_MS = 125; // Require sustained unsupported state before dropping lock
+  const HOLE_CONTACT_GRACE_MS = 120; // Require sustained hole overlap before forcing fall
+  const PLATFORM_SUPPORT_GRACE_VERTICAL_PAD = 95; // Extra vertical forgiveness while support-loss grace is active
+  const PLATFORM_LOCK_GRACE_MS = 220; // Prevent immediate lock loss after a valid landing
+  const PLATFORM_MAINTENANCE_MAX_ASCENT = 320; // Don't re-lock when actively launching upward
+  const PLATFORM_SWEEP_EDGE_EXTRA_MAX = 28; // Cap extra edge forgiveness for high-speed lateral movement
   const PLATFORM_LANDING_OFFSET = 30; // Extra pixels to sink into platform at rest
   const TREEHOUSE_LANDING_OFFSET = PLATFORM_LANDING_OFFSET - 22;
-  const PLAYER_PLATFORM_HITBOX_HORIZONTAL_SCALE = 0.6; // 20% inset per side (60% width)
+  const PLAYER_PLATFORM_HITBOX_HOLD_SCALE = 0.72; // Tight hitbox while already locked to a platform
+  const PLAYER_PLATFORM_HITBOX_ACQUIRE_SCALE = 1.0; // Full-width hitbox for landing acquisition
   type TreehousePlatform = {
     id: number;
     left: number;
@@ -600,6 +607,9 @@ const init = async () => {
     key?: string;
   };
   let platformAscendBonus = 0; // Additional vertical offset for successive spawns after landings
+  let lastPlatformLandingTime = 0;
+  let platformSupportLostAt = 0;
+  let holeContactStartedAt = 0;
   const PLATFORM_ASCEND_STEP = 40; // Pixels higher per qualifying landing
   const PLATFORM_ASCEND_MAX = Number.POSITIVE_INFINITY; // Cap climb bonus (effectively unlimited)
   const HOLE_PLATFORM_OFFSET = 115; // Further lowered platforms with holes (100px lower than before)
@@ -889,6 +899,7 @@ const init = async () => {
   let respawnHoldStartZoom = 1.0;
   let respawnLandProgress = 0;
   let respawnLandActive = false;
+  let respawnLandStartZoom = 1.0;
 
 
   // Stars disabled for now
@@ -920,6 +931,16 @@ const init = async () => {
   // Player intro animation state - declare before ball setup
   let playerIntroActive = true;
   const playerIntroStartSize = playerDiameter * 0.75; // 75% of normal size (25% smaller)
+  const CHARACTER_FRAME_COUNT = 17;
+  const CHARACTER_FRAME_SIZE = 200;
+  const CHARACTER_RUN_PIXELS_PER_FRAME = 9;
+  const CHARACTER_RUN_MIN_TRAVEL_PER_FRAME = 0.05;
+  const CHARACTER_IDLE_RETURN_DELAY_MS = 120;
+  const CHARACTER_HEIGHT_MULTIPLIER = 2.025;
+  const CHARACTER_ART_OFFSET_Y = 5; // Visual-only offset for transparent bottom padding in sprite frames
+  type PlayerVisualMode = 'ball' | 'character';
+  let playerVisualMode: PlayerVisualMode = 'ball';
+  let playerRenderVisible = true;
 
   const ballBaseColor = 0x4fc3f7;
   const ballHitColor = 0xff2020;
@@ -941,6 +962,58 @@ const init = async () => {
   const initialGround = computePlayerGround();
   ball.position.set(playerInitialX, initialGround - playerRadius);
   playfieldContainer.addChild(ball);
+  const characterTextureBasePath = `${import.meta.env.BASE_URL}CharacterRun/`;
+  const characterTexturePaths = Array.from(
+    { length: CHARACTER_FRAME_COUNT },
+    (_, idx) => `${characterTextureBasePath}run_${idx}.webp`
+  );
+  let characterTextures: Texture[];
+  try {
+    characterTextures = await Promise.all(
+      characterTexturePaths.map(async (path) => {
+        const loadedTexture = await Assets.load<Texture>(path);
+        return loadedTexture ?? Texture.EMPTY;
+      })
+    );
+    const invalidFrameCount = characterTextures.filter((texture) => (
+      !texture || texture === Texture.EMPTY || texture.width <= 0 || texture.height <= 0
+    )).length;
+    if (invalidFrameCount > 0) {
+      console.warn(`[CHARACTER] ${invalidFrameCount}/${CHARACTER_FRAME_COUNT} frames are invalid after load`);
+    }
+  } catch (error) {
+    console.error('[CHARACTER] Failed to load character textures:', error);
+    characterTextures = Array.from({ length: CHARACTER_FRAME_COUNT }, () => Texture.EMPTY);
+  }
+  const characterSprite = new Sprite(characterTextures[0] ?? Texture.EMPTY);
+  characterSprite.anchor.set(0.5, 1);
+  characterSprite.visible = false;
+  playfieldContainer.addChild(characterSprite);
+  let characterRunDistanceAccumulator = 0;
+  let characterCurrentFrame = 0;
+  let characterLastX = ball.position.x;
+  let characterLastMotionTime = performance.now();
+  let characterBaseScale = (playerDiameter * CHARACTER_HEIGHT_MULTIPLIER) / CHARACTER_FRAME_SIZE;
+  const updateCharacterBaseScale = () => {
+    characterBaseScale = (playerDiameter * CHARACTER_HEIGHT_MULTIPLIER) / CHARACTER_FRAME_SIZE;
+  };
+  const applyPlayerVisualMode = () => {
+    ball.visible = playerRenderVisible && playerVisualMode === 'ball';
+    characterSprite.visible = playerRenderVisible && playerVisualMode === 'character';
+  };
+  const setPlayerRenderVisible = (visible: boolean) => {
+    playerRenderVisible = visible;
+    applyPlayerVisualMode();
+  };
+  const setPlayerVisualMode = (mode: PlayerVisualMode) => {
+    playerVisualMode = mode;
+    characterRunDistanceAccumulator = 0;
+    characterCurrentFrame = 0;
+    characterLastMotionTime = performance.now();
+    characterSprite.texture = characterTextures[0] ?? Texture.EMPTY;
+    applyPlayerVisualMode();
+  };
+  applyPlayerVisualMode();
 
   const physics = new PlayerPhysics({
     radius: playerRadius,
@@ -950,6 +1023,22 @@ const init = async () => {
   });
 
   let currentGroundSurface = initialGround;
+
+  const resetPlatformContactTimers = () => {
+    platformSupportLostAt = 0;
+    holeContactStartedAt = 0;
+  };
+
+  const releaseActivePlatformLock = (rememberLastLeft: boolean = true) => {
+    const previousActivePlatformId = activePlatformId;
+    physics.clearSurfaceOverride();
+    if (rememberLastLeft && previousActivePlatformId !== null && previousActivePlatformId >= 0) {
+      physics.clearPlatformJumpedThrough(previousActivePlatformId);
+      lastLeftPlatformId = previousActivePlatformId;
+    }
+    activePlatformId = null;
+    resetPlatformContactTimers();
+  };
 
   // Rest of player intro animation state
   let playerIntroPhase: 'initial' | 'moveout' | 'jump1' | 'jump2' | 'grow' | 'delay' | 'complete' = 'initial';
@@ -1129,9 +1218,11 @@ const init = async () => {
   playfieldContainer.addChild(meteorSwirlGraphics);
 
   // Re-order rendering layers for proper z-index:
-  // Move player ball to render after middleground (above meteor overlay)
+  // Move both player visuals after middleground (above meteor overlay)
   playfieldContainer.removeChild(ball);
+  playfieldContainer.removeChild(characterSprite);
   playfieldContainer.addChild(ball);
+  playfieldContainer.addChild(characterSprite);
 
   // Lasers render above players
   playfieldContainer.addChild(laserContainer);
@@ -1210,7 +1301,7 @@ const init = async () => {
     fallingIntoHole = true;
     respawnInputLocked = true;
     physics.setMousePosition(physics.getState().x);
-    physics.clearSurfaceOverride();
+    releaseActivePlatformLock(false);
     physics.setGroundCollisionEnabled(false);
     physics.forceVelocity(Math.max(300, Math.abs(currentVelocity) + 150));
     dashChargeActive = false;
@@ -1228,6 +1319,7 @@ const init = async () => {
     respawnHoldStartZoom = 1.0;
     respawnLandProgress = 0;
     respawnLandActive = false;
+    respawnLandStartZoom = 1.0;
     lastLandedSequenceIndex = null;
     jumpDust.spawnSmokePlume(plumeX, plumeY);
     console.log('[HOLE] Player falling into hole, ground collision disabled');
@@ -1279,6 +1371,17 @@ const init = async () => {
 
   // Platform fall-through control - Down arrow key to drop through platforms
   let isPressingDown = false;
+  const KEYBOARD_HORIZONTAL_SPEED = 950; // world pixels/sec while holding left/right keys
+  let keyboardMoveLeftHeld = false;
+  let keyboardMoveRightHeld = false;
+  let keyboardMoveDirection: -1 | 0 | 1 = 0;
+  const refreshKeyboardMoveDirection = () => {
+    if (keyboardMoveLeftHeld === keyboardMoveRightHeld) {
+      keyboardMoveDirection = 0;
+    } else {
+      keyboardMoveDirection = keyboardMoveLeftHeld ? -1 : 1;
+    }
+  };
 
   // Camera tracking - locks to platform heights and follows player downward
   let cameraY = 0; // Current camera Y offset
@@ -1939,6 +2042,54 @@ const init = async () => {
     );
   };
 
+  const hasSweptPlatformHorizontalSupport = (
+    currentBounds: PlayerBounds,
+    previousBounds: PlayerBounds,
+    platformLeft: number,
+    platformRight: number
+  ) => {
+    const directOverlap =
+      currentBounds.right >= platformLeft - PLATFORM_EDGE_TOLERANCE &&
+      currentBounds.left <= platformRight + PLATFORM_EDGE_TOLERANCE;
+    if (directOverlap) return true;
+
+    const currentCenterX = (currentBounds.left + currentBounds.right) * 0.5;
+    const previousCenterX = (previousBounds.left + previousBounds.right) * 0.5;
+    const lateralTravel = Math.abs(currentCenterX - previousCenterX);
+    const sweepEdgePad = Math.min(
+      PLATFORM_SWEEP_EDGE_EXTRA_MAX,
+      Math.max(6, lateralTravel * 0.18)
+    );
+    const sweptLeft = Math.min(currentBounds.left, previousBounds.left);
+    const sweptRight = Math.max(currentBounds.right, previousBounds.right);
+
+    return (
+      sweptRight >= platformLeft - PLATFORM_EDGE_TOLERANCE - sweepEdgePad &&
+      sweptLeft <= platformRight + PLATFORM_EDGE_TOLERANCE + sweepEdgePad
+    );
+  };
+
+  const hasGraceEligiblePlatformSupport = (
+    currentBounds: PlayerBounds,
+    previousBounds: PlayerBounds,
+    platform: { left: number; right: number; surfaceY: number },
+    verticalVelocity: number
+  ) => {
+    const playerHeight = currentBounds.bottom - currentBounds.top;
+    const targetBottom = platform.surfaceY + playerHeight;
+    const verticalClose =
+      currentBounds.bottom <= targetBottom + PLATFORM_SUPPORT_GRACE_VERTICAL_PAD &&
+      currentBounds.bottom >= targetBottom - PLATFORM_SUPPORT_GRACE_VERTICAL_PAD;
+    const horizontalClose = hasSweptPlatformHorizontalSupport(
+      currentBounds,
+      previousBounds,
+      platform.left,
+      platform.right
+    );
+    const notLaunchingHardUp = verticalVelocity > -PLATFORM_MAINTENANCE_MAX_ASCENT;
+    return verticalClose && horizontalClose && notLaunchingHardUp;
+  };
+
   const isTreehouseSurfaceContact = (
     surfaceY: number,
     bounds: PlayerBounds,
@@ -2010,9 +2161,18 @@ const init = async () => {
     const tolerance = Math.max(2, playerHeight * 0.05);
     const playerCenterX = (currentBounds.left + currentBounds.right) / 2;
     const playerCenterY = (currentBounds.top + currentBounds.bottom) / 2;
+    const sweptBounds: PlayerBounds = {
+      left: Math.min(currentBounds.left, previousBounds.left),
+      right: Math.max(currentBounds.right, previousBounds.right),
+      top: Math.min(currentBounds.top, previousBounds.top),
+      bottom: Math.max(currentBounds.bottom, previousBounds.bottom),
+    };
 
     for (const platform of platformsToCheck) {
-      const horizontalOverlap = isTreehousePlatformHorizontalOverlap(platform, currentBounds);
+      const horizontalOverlap =
+        isTreehousePlatformHorizontalOverlap(platform, currentBounds) ||
+        isTreehousePlatformHorizontalOverlap(platform, previousBounds) ||
+        isTreehousePlatformHorizontalOverlap(platform, sweptBounds);
       if (!horizontalOverlap) continue;
 
       const surfaceY = getTreehouseSurfaceYForPlayer(platform, playerCenterX, playerCenterY);
@@ -2029,7 +2189,7 @@ const init = async () => {
         currentBounds.bottom >= platformBottomCollision - tolerance;
       const resting =
         Math.abs(currentBounds.bottom - platformBottomCollision) <= tolerance &&
-        Math.abs(playerVelocity) < 0.8 &&
+        playerVelocity > -180 &&
         currentBounds.bottom <= platformBottomCollision + tolerance;
 
       if (crossedThisFrame || resting) {
@@ -2171,7 +2331,7 @@ const init = async () => {
         ball.position.set(spawnPointX, RESPAWN_HEIGHT_ABOVE_SCREEN);
 
         // Hide player and shadow
-        ball.visible = false;
+        setPlayerRenderVisible(false);
         playerShadow.getView().visible = false;
 
         console.log(`[RESPAWN] Player frozen at spawn X=${spawnPointX.toFixed(0)}, Y=${RESPAWN_HEIGHT_ABOVE_SCREEN}`);
@@ -2283,10 +2443,9 @@ const init = async () => {
         respawnState = 'respawning';
         speedMultiplier = 0; // Stop scrolling
         // Reset contact state so holes/platforms work after respawn
-        activePlatformId = null;
+        releaseActivePlatformLock(false);
         meteorHitbox = null;
         fallingIntoHole = false;
-        physics.clearSurfaceOverride();
         wasGrounded = false;
         previousVelocity = 0;
 
@@ -2305,8 +2464,9 @@ const init = async () => {
         meteorOrb.onRespawn(playerInitialX, RESPAWN_HEIGHT_ABOVE_SCREEN, playerRadius);
 
         // CRITICAL: Show player and shadow again
-        ball.visible = true;
+        setPlayerRenderVisible(true);
         ball.alpha = 1.0;
+        characterSprite.alpha = 1.0;
         playerShadow.getView().visible = true;
         playerShadow.getView().alpha = 1.0;
 
@@ -2852,9 +3012,8 @@ const init = async () => {
       respawnState = 'respawning';
       respawnTimer = 0;
       fallingIntoHole = false;
-      activePlatformId = null;
+      releaseActivePlatformLock(false);
       meteorHitbox = null;
-      physics.clearSurfaceOverride();
       physics.respawn(playerInitialX, groundY);
       physics.setGroundCollisionEnabled(true);
       physics.setGroundSurface(groundY);
@@ -2865,8 +3024,9 @@ const init = async () => {
       physics.setMousePosition(playerInitialX);
       ball.position.set(playerInitialX, RESPAWN_HEIGHT_ABOVE_SCREEN);
       meteorOrb.onRespawn(playerInitialX, RESPAWN_HEIGHT_ABOVE_SCREEN, playerRadius);
-      ball.visible = true;
+      setPlayerRenderVisible(true);
       ball.alpha = 1.0;
+      characterSprite.alpha = 1.0;
       playerShadow.getView().visible = true;
       playerShadow.getView().alpha = 1.0;
       startRespawnEaseToCursor();
@@ -3470,6 +3630,10 @@ const init = async () => {
       freezePlayer ||
       (playerIntroActive && (playerIntroPhase === 'initial' || playerIntroPhase === 'delay' || playerIntroPhase === 'complete')) ||
       (finalTransitionActive && !finalTransitionRollStageActive);
+    if (!skipPhysics && !respawnInputLocked && keyboardMoveDirection !== 0) {
+      const keyboardState = physics.getState();
+      physics.setMousePosition(keyboardState.x + keyboardMoveDirection * KEYBOARD_HORIZONTAL_SPEED * deltaSeconds);
+    }
     const state = skipPhysics ? physics.getState() : physics.update(deltaSeconds);
     if (freezePlayer) {
       physics.forceVelocity(0);
@@ -3650,6 +3814,7 @@ const init = async () => {
       respawnHoldStartZoom = 1.0;
       respawnLandProgress = 0;
       respawnLandActive = false;
+      respawnLandStartZoom = 1.0;
       lastHoleStartX = null;
       meteorOrb.resetIfNotCollected();
     }
@@ -4055,28 +4220,29 @@ const init = async () => {
       bottom: state.y + playerRadius,
     };
 
-    const platformHalfWidth = playerRadius * PLAYER_PLATFORM_HITBOX_HORIZONTAL_SCALE;
+    const platformHoldHalfWidth = playerRadius * PLAYER_PLATFORM_HITBOX_HOLD_SCALE;
+    const platformAcquireHalfWidth = playerRadius * PLAYER_PLATFORM_HITBOX_ACQUIRE_SCALE;
     const playerBounds: PlayerBounds = {
-      left: state.x - platformHalfWidth,
-      right: state.x + platformHalfWidth,
+      left: state.x - platformHoldHalfWidth,
+      right: state.x + platformHoldHalfWidth,
       top: state.y - playerRadius,
       bottom: state.y + playerRadius,
     };
     const prevBounds: PlayerBounds = {
-      left: prevState.x - platformHalfWidth,
-      right: prevState.x + platformHalfWidth,
+      left: prevState.x - platformHoldHalfWidth,
+      right: prevState.x + platformHoldHalfWidth,
       top: prevState.y - playerRadius,
       bottom: prevState.y + playerRadius,
     };
     const platformLandingBounds: PlayerBounds = {
-      left: state.x - playerRadius,
-      right: state.x + playerRadius,
+      left: state.x - platformAcquireHalfWidth,
+      right: state.x + platformAcquireHalfWidth,
       top: state.y - playerRadius,
       bottom: state.y + playerRadius,
     };
     const platformPrevLandingBounds: PlayerBounds = {
-      left: prevState.x - playerRadius,
-      right: prevState.x + playerRadius,
+      left: prevState.x - platformAcquireHalfWidth,
+      right: prevState.x + platformAcquireHalfWidth,
       top: prevState.y - playerRadius,
       bottom: prevState.y + playerRadius,
     };
@@ -4100,8 +4266,8 @@ const init = async () => {
     });
     const treehousePassedThrough = getTreehousePlatformsPassedThrough(
       treehousePlatforms,
-      playerBounds,
-      prevBounds,
+      platformLandingBounds,
+      platformPrevLandingBounds,
       verticalVelocity
     );
     treehousePassedThrough.forEach((platformId) => {
@@ -4176,9 +4342,15 @@ const init = async () => {
       const pathSurface = getTreehousePathSurfaceAt(treehousePlatforms, playerBounds);
       if (pathSurface) {
         const playerHeight = playerBounds.bottom - playerBounds.top;
+        const tolerance = Math.max(2, playerHeight * 0.05);
         const targetBottom = pathSurface.surfaceY + playerHeight;
         const verticalGap = Math.abs(playerBounds.bottom - targetBottom);
-        if (verticalGap <= TREEHOUSE_RAMP_STEP) {
+        const descendingOrSettling = verticalVelocity >= -60 || playerBounds.bottom >= prevBounds.bottom;
+        const approachingFromAbove = prevBounds.top + tolerance <= pathSurface.surfaceY;
+        const crossedFromAbove =
+          prevBounds.bottom <= targetBottom + tolerance &&
+          playerBounds.bottom >= targetBottom - tolerance;
+        if (verticalGap <= TREEHOUSE_RAMP_STEP && descendingOrSettling && (approachingFromAbove || crossedFromAbove)) {
           supportingPlatform = {
             id: pathSurface.platform.id,
             surfaceY: pathSurface.surfaceY,
@@ -4205,25 +4377,35 @@ const init = async () => {
       physics.setGroundCollisionEnabled(true);
     }
 
-    // Hole collision: if we're not on a platform and overlap a hole, fall and respawn
-    if (!supportingPlatform && !fallingIntoHole) {
-      const hole = holes.getCollidingHole(playerBounds);
-      if (hole) {
-        const plumeX = state.x;
-        const plumeY = playerBounds.bottom;
-        triggerFallIntoHole(verticalVelocity, plumeX, plumeY);
-        activePlatformId = null;
-      }
+    if (!supportingPlatform && activePlatformId === null) {
+      platformSupportLostAt = 0;
+    }
 
-      // Ground hole collision (comet hole level)
-      const groundHole = groundHoles.getCollidingHole(playerBounds);
-      if (groundHole) {
-        const plumeX = state.x;
-        const plumeY = playerBounds.bottom;
-        triggerFallIntoHole(verticalVelocity, plumeX, plumeY);
-        activePlatformId = null;
-        console.log(`[GROUND HOLE] Player fell into ${groundHole.type} hole`);
+    // Hole collision hysteresis: require sustained unsupported hole overlap.
+    // This avoids one-frame support misses from immediately triggering a fall.
+    if (!fallingIntoHole && !supportingPlatform && activePlatformId === null) {
+      const hole = holes.getCollidingHole(platformLandingBounds);
+      const groundHole = groundHoles.getCollidingHole(platformLandingBounds);
+      const hasHoleContact = !!hole || !!groundHole;
+
+      if (hasHoleContact) {
+        const now = performance.now();
+        if (holeContactStartedAt === 0) {
+          holeContactStartedAt = now;
+        }
+        if (now - holeContactStartedAt >= HOLE_CONTACT_GRACE_MS) {
+          const plumeX = state.x;
+          const plumeY = platformLandingBounds.bottom;
+          triggerFallIntoHole(verticalVelocity, plumeX, plumeY);
+          if (groundHole) {
+            console.log(`[GROUND HOLE] Player fell into ${groundHole.type} hole`);
+          }
+        }
+      } else {
+        holeContactStartedAt = 0;
       }
+    } else {
+      holeContactStartedAt = 0;
     }
 
     if (!fallingIntoHole) {
@@ -4231,6 +4413,9 @@ const init = async () => {
         // Player is on a platform - set surface override
         const isNewLanding = activePlatformId !== supportingPlatform.id;
         activePlatformId = supportingPlatform.id;
+        if (isNewLanding) {
+          lastPlatformLandingTime = performance.now();
+        }
         if (isNewLanding && supportingPlatform.id >= 0) {
           lastLeftPlatformId = null;
         }
@@ -4281,28 +4466,31 @@ const init = async () => {
 
         // Check if player has moved outside platform horizontal bounds
         // Skip this check when charging to prevent squash animation from causing fall-through
-        const timeSinceJump = performance.now() - lastJumpTime;
+        const now = performance.now();
+        const timeSinceJump = now - lastJumpTime;
         const inJumpGracePeriod = timeSinceJump < JUMP_GRACE_PERIOD;
+        const inPlatformLandingGrace = now - lastPlatformLandingTime < PLATFORM_LOCK_GRACE_MS;
 
         if (!isCharging) {
           let treehouseOverlap = false;
           if (treehousePlatform) {
             if (treehousePlatform.key?.startsWith('tree_path_')) {
-              treehouseOverlap = !!getTreehousePathSurfaceAt(treehousePlatforms, playerBounds);
+              treehouseOverlap =
+                !!getTreehousePathSurfaceAt(treehousePlatforms, playerBounds) ||
+                !!getTreehousePathSurfaceAt(treehousePlatforms, prevBounds);
             } else {
               const treehouseSurfaceY = treehouseBlendSurface ?? getTreehouseSurfaceYForPlayer(treehousePlatform, state.x, state.y);
-              treehouseOverlap = isTreehouseSurfaceContact(treehouseSurfaceY, playerBounds, treehousePlatforms);
+              treehouseOverlap =
+                isTreehouseSurfaceContact(treehouseSurfaceY, playerBounds, treehousePlatforms) ||
+                isTreehouseSurfaceContact(treehouseSurfaceY, prevBounds, treehousePlatforms);
             }
           }
           const walkedOff = treehousePlatform
             ? !treehouseOverlap
-            : (
-              playerBounds.right < supportingPlatform.left - PLATFORM_EDGE_TOLERANCE ||
-              playerBounds.left > supportingPlatform.right + PLATFORM_EDGE_TOLERANCE
-            );
+            : !hasSweptPlatformHorizontalSupport(playerBounds, prevBounds, supportingPlatform.left, supportingPlatform.right);
 
-          // Fall through if walked off edge OR if pressing Down key
-          if ((walkedOff || isPressingDown) && !inJumpGracePeriod) {
+          // Fall through immediately on intentional down press; otherwise use support-loss hysteresis.
+          if (isPressingDown && !inJumpGracePeriod) {
             logPlatformSnap('Clearing override after walk-off', {
               id: supportingPlatform.id,
               walkedOff,
@@ -4313,13 +4501,36 @@ const init = async () => {
               platLeft: supportingPlatform.left,
               platRight: supportingPlatform.right,
             });
-            physics.clearSurfaceOverride();
-            if (supportingPlatform.id >= 0) {
-              physics.clearPlatformJumpedThrough(supportingPlatform.id);
-              lastLeftPlatformId = supportingPlatform.id;
+            releaseActivePlatformLock();
+          } else if (walkedOff && !inJumpGracePeriod && !inPlatformLandingGrace) {
+            if (platformSupportLostAt === 0) {
+              platformSupportLostAt = now;
             }
-            activePlatformId = null;
+            const supportGraceActive = now - platformSupportLostAt < PLATFORM_SUPPORT_LOSS_GRACE_MS;
+            const graceEligible = hasGraceEligiblePlatformSupport(
+              platformLandingBounds,
+              platformPrevLandingBounds,
+              supportingPlatform,
+              verticalVelocity
+            );
+            if (!supportGraceActive || !graceEligible) {
+              logPlatformSnap('Clearing override after walk-off', {
+                id: supportingPlatform.id,
+                walkedOff,
+                down: isPressingDown,
+                vy: verticalVelocity,
+                playerLeft: playerBounds.left,
+                playerRight: playerBounds.right,
+                platLeft: supportingPlatform.left,
+                platRight: supportingPlatform.right,
+              });
+              releaseActivePlatformLock();
+            }
+          } else {
+            platformSupportLostAt = 0;
           }
+        } else {
+          platformSupportLostAt = 0;
         }
         // Increase climb bonus when we successfully land on any platform
         platformAscendBonus = Math.min(platformAscendBonus + PLATFORM_ASCEND_STEP, PLATFORM_ASCEND_MAX);
@@ -4347,16 +4558,14 @@ const init = async () => {
 
         // If platform has been culled (scrolled away), release the player
         if (!livePlatform) {
-          physics.clearSurfaceOverride();
-          if (activePlatformId !== null && activePlatformId >= 0) {
-            physics.clearPlatformJumpedThrough(activePlatformId);
-            lastLeftPlatformId = activePlatformId;
-          }
-          activePlatformId = null;
+          releaseActivePlatformLock();
         } else {
           const treehouseActive = !!treehousePlatform;
           const pathSurface = treehousePlatform?.key?.startsWith('tree_path_')
             ? getTreehousePathSurfaceAt(treehousePlatforms, playerBounds)
+            : null;
+          const previousPathSurface = treehousePlatform?.key?.startsWith('tree_path_')
+            ? getTreehousePathSurfaceAt(treehousePlatforms, prevBounds)
             : null;
           if (pathSurface) {
             livePlatform.surfaceY = pathSurface.surfaceY;
@@ -4366,41 +4575,58 @@ const init = async () => {
               ? Math.abs(
                 (pathSurface.surfaceY + (playerBounds.bottom - playerBounds.top)) - playerBounds.bottom
               ) <= TREEHOUSE_RAMP_STEP * 2
-              : isTreehouseSurfaceContact(livePlatform.surfaceY, playerBounds, treehousePlatforms))
-            : (
-              playerBounds.right >= livePlatform.left - PLATFORM_EDGE_TOLERANCE &&
-              playerBounds.left <= livePlatform.right + PLATFORM_EDGE_TOLERANCE
-            );
+              : (previousPathSurface
+                ? Math.abs(
+                  (previousPathSurface.surfaceY + (prevBounds.bottom - prevBounds.top)) - prevBounds.bottom
+                ) <= TREEHOUSE_RAMP_STEP * 2
+                : (
+                  isTreehouseSurfaceContact(livePlatform.surfaceY, playerBounds, treehousePlatforms) ||
+                  isTreehouseSurfaceContact(livePlatform.surfaceY, prevBounds, treehousePlatforms)
+                )))
+            : hasSweptPlatformHorizontalSupport(playerBounds, prevBounds, livePlatform.left, livePlatform.right);
 
           if (treehousePlatform && !isCharging) {
             const pathSurface = getTreehousePathSurfaceAt(treehousePlatforms, playerBounds);
             if (pathSurface) {
-              const newPlatformId = pathSurface.platform.id;
-              activePlatformId = newPlatformId;
-              treehousePlatform = treehousePlatformMap.get(newPlatformId);
-              if (treehousePlatform) {
-                const landingOffset = TREEHOUSE_LANDING_OFFSET;
-                physics.landOnSurface(pathSurface.surfaceY + playerRadius + landingOffset, newPlatformId);
-                livePlatform = {
-                  left: treehousePlatform.left,
-                  right: treehousePlatform.right,
-                  surfaceY: pathSurface.surfaceY,
-                  rotation: treehousePlatform.rotation,
-                  centerX: treehousePlatform.centerX,
-                  centerY: treehousePlatform.centerY,
-                  halfWidth: treehousePlatform.halfWidth,
-                  halfHeight: treehousePlatform.halfHeight,
-                };
+              const playerHeight = playerBounds.bottom - playerBounds.top;
+              const tolerance = Math.max(2, playerHeight * 0.05);
+              const targetBottom = pathSurface.surfaceY + playerHeight;
+              const descendingOrSettling = verticalVelocity >= -60 || playerBounds.bottom >= prevBounds.bottom;
+              const approachingFromAbove = prevBounds.top + tolerance <= pathSurface.surfaceY;
+              const crossedFromAbove =
+                prevBounds.bottom <= targetBottom + tolerance &&
+                playerBounds.bottom >= targetBottom - tolerance;
+              if (descendingOrSettling && (approachingFromAbove || crossedFromAbove)) {
+                const newPlatformId = pathSurface.platform.id;
+                activePlatformId = newPlatformId;
+                treehousePlatform = treehousePlatformMap.get(newPlatformId);
+                if (treehousePlatform) {
+                  const landingOffset = TREEHOUSE_LANDING_OFFSET;
+                  physics.landOnSurface(pathSurface.surfaceY + playerRadius + landingOffset, newPlatformId);
+                  livePlatform = {
+                    left: treehousePlatform.left,
+                    right: treehousePlatform.right,
+                    surfaceY: pathSurface.surfaceY,
+                    rotation: treehousePlatform.rotation,
+                    centerX: treehousePlatform.centerX,
+                    centerY: treehousePlatform.centerY,
+                    halfWidth: treehousePlatform.halfWidth,
+                    halfHeight: treehousePlatform.halfHeight,
+                  };
+                }
               }
             }
           }
 
           // Check if we're in the grace period after a jump (ignore brief downward movement)
-          const timeSinceJump = performance.now() - lastJumpTime;
+          const now = performance.now();
+          const timeSinceJump = now - lastJumpTime;
           const inJumpGracePeriod = timeSinceJump < JUMP_GRACE_PERIOD;
+          const inPlatformLandingGrace = now - lastPlatformLandingTime < PLATFORM_LOCK_GRACE_MS;
 
           // If we're deliberately pressing Down, force a fall-through (unless in grace)
-          if (stillOverPlatform && !isCharging && Math.abs(verticalVelocity) < 5) {
+          if (stillOverPlatform && !isCharging && verticalVelocity > -PLATFORM_MAINTENANCE_MAX_ASCENT) {
+            platformSupportLostAt = 0;
             if (verticalVelocity > 0) {
               logPlatformSnap('Maintenance lock while falling', {
                 id: activePlatformId,
@@ -4415,36 +4641,42 @@ const init = async () => {
             if (platformId !== null) {
               physics.landOnSurface(updatedSurfaceY, platformId);
             }
+          } else if (stillOverPlatform || isCharging) {
+            platformSupportLostAt = 0;
           }
 
           if (isPressingDown && !inJumpGracePeriod) {
-            physics.clearSurfaceOverride();
             logPlatformSnap('Clearing override via down press', {
               id: activePlatformId,
               vy: verticalVelocity,
             });
-            if (activePlatformId !== null && activePlatformId >= 0) {
-              physics.clearPlatformJumpedThrough(activePlatformId);
-              lastLeftPlatformId = activePlatformId;
+            releaseActivePlatformLock();
+          } else if (!stillOverPlatform && !inJumpGracePeriod && !inPlatformLandingGrace) {
+            if (platformSupportLostAt === 0) {
+              platformSupportLostAt = now;
             }
-            activePlatformId = null;
-          } else if (!stillOverPlatform && !inJumpGracePeriod) {
-            // If we've drifted off the platform horizontally, drop the override so we can fall
-            // BUT: Skip this check during jump grace period to prevent fall-through on jump execution
-            physics.clearSurfaceOverride();
-            logPlatformSnap('Clearing override after drift off', {
-              id: activePlatformId,
-              vy: verticalVelocity,
-              playerLeft: playerBounds.left,
-              playerRight: playerBounds.right,
-              platLeft: livePlatform.left,
-              platRight: livePlatform.right,
-            });
-            if (activePlatformId !== null && activePlatformId >= 0) {
-              physics.clearPlatformJumpedThrough(activePlatformId);
-              lastLeftPlatformId = activePlatformId;
+            const supportGraceActive = now - platformSupportLostAt < PLATFORM_SUPPORT_LOSS_GRACE_MS;
+            const graceEligible = hasGraceEligiblePlatformSupport(
+              platformLandingBounds,
+              platformPrevLandingBounds,
+              livePlatform,
+              verticalVelocity
+            );
+            if (!supportGraceActive || !graceEligible) {
+              // If we've drifted off the platform horizontally, drop the override so we can fall.
+              // Skip this check during jump grace period and while support-loss grace is still valid.
+              logPlatformSnap('Clearing override after drift off', {
+                id: activePlatformId,
+                vy: verticalVelocity,
+                playerLeft: playerBounds.left,
+                playerRight: playerBounds.right,
+                platLeft: livePlatform.left,
+                platRight: livePlatform.right,
+              });
+              releaseActivePlatformLock();
             }
-            activePlatformId = null;
+          } else if (!isPressingDown) {
+            platformSupportLostAt = 0;
           }
         }
       }
@@ -4499,9 +4731,9 @@ const init = async () => {
       // If any stale platform lock survived while we're effectively on baseline ground,
       // clear it so camera behavior matches normal ground-jump behavior.
       if (activePlatformId !== null) {
-        physics.clearSurfaceOverride();
-        activePlatformId = null;
+        releaseActivePlatformLock(false);
       }
+      lastPlatformLandingTime = 0;
       lastLeftPlatformId = null;
       platformAscendBonus = 0; // Reset climb when returning to ground
     }
@@ -4532,8 +4764,10 @@ const init = async () => {
     // Debug: draw player and platform hitboxes
     if (DEBUG_DRAW_HITBOXES && hitboxOverlay) {
       hitboxOverlay.clear();
-      // Player bounds
+      // Player bounds: full visual body (red), acquire bounds (orange), hold bounds (magenta)
       hitboxOverlay.rect(playerBoundsFull.left, playerBoundsFull.top, playerBoundsFull.right - playerBoundsFull.left, playerBoundsFull.bottom - playerBoundsFull.top).fill({ color: 0xff0000, alpha: 0.25 });
+      hitboxOverlay.rect(platformLandingBounds.left, platformLandingBounds.top, platformLandingBounds.right - platformLandingBounds.left, platformLandingBounds.bottom - platformLandingBounds.top).fill({ color: 0xffa500, alpha: 0.2 });
+      hitboxOverlay.rect(playerBounds.left, playerBounds.top, playerBounds.right - playerBounds.left, playerBounds.bottom - playerBounds.top).fill({ color: 0xff00ff, alpha: 0.18 });
 
       // Platform hitboxes
       const platformHitboxes = platforms.getDebugHitboxes(playerDiameter);
@@ -4713,13 +4947,22 @@ const init = async () => {
       }
 
       const inRespawn = respawnState !== 'normal' || fallingIntoHole;
+      const holdRespawnZoom =
+        fallingIntoHole ||
+        respawnState === 'dying' ||
+        respawnState === 'waiting' ||
+        respawnState === 'animating_back' ||
+        respawnState === 'respawning';
       if (inRespawn) {
-        if (!isOnBaselineGround) {
+        if (holdRespawnZoom) {
           if (!respawnHoldActive) {
             respawnHoldActive = true;
             respawnHoldProgress = 0;
             respawnHoldStartZoom = cameraZoom;
           }
+          respawnLandActive = false;
+          respawnLandProgress = 0;
+          respawnLandStartZoom = 1.0;
           respawnHoldProgress = Math.min(1, respawnHoldProgress + deltaSeconds / RESPAWN_HOLD_ZOOM_DURATION);
           const holdEase = 1 - Math.pow(1 - respawnHoldProgress, 3);
           targetZoom = respawnHoldStartZoom + (RESPAWN_HOLD_ZOOM - respawnHoldStartZoom) * holdEase;
@@ -4730,12 +4973,14 @@ const init = async () => {
           if (!respawnLandActive) {
             respawnLandActive = true;
             respawnLandProgress = 0;
+            respawnLandStartZoom = cameraZoom;
           }
           respawnLandProgress = Math.min(1, respawnLandProgress + deltaSeconds / RESPAWN_LAND_ZOOM_DURATION);
           const ease = 1 - Math.pow(1 - respawnLandProgress, 3);
-          targetZoom = RESPAWN_HOLD_ZOOM + (1 - RESPAWN_HOLD_ZOOM) * ease;
+          targetZoom = respawnLandStartZoom + (1 - respawnLandStartZoom) * ease;
           if (respawnLandProgress >= 1) {
             respawnLandActive = false;
+            respawnLandStartZoom = 1.0;
           }
         }
         cameraZoom = targetZoom;
@@ -4744,6 +4989,7 @@ const init = async () => {
         respawnHoldProgress = 0;
         respawnLandActive = false;
         respawnLandProgress = 0;
+        respawnLandStartZoom = 1.0;
         const zoomFollowSpeed = 0.2;
         cameraZoom += (targetZoom - cameraZoom) * zoomFollowSpeed;
       }
@@ -4877,6 +5123,40 @@ const init = async () => {
       // During other intro phases, position is fully controlled by intro animation
     }
     // During other respawn states, ball stays frozen at manually set position (spawn X, above screen)
+
+    const characterAbsScaleX = Math.abs(ball.scale.x) * characterBaseScale;
+    const characterScaleY = ball.scale.y * characterBaseScale;
+    const characterFootY = ball.position.y + playerRadius * getPlayerGrowthScale();
+    const characterVisualOffsetY = playerVisualMode === 'character' ? CHARACTER_ART_OFFSET_Y : 0;
+    characterSprite.position.set(ball.position.x, characterFootY + characterVisualOffsetY);
+    characterSprite.scale.set(characterAbsScaleX, characterScaleY);
+    const frameNow = performance.now();
+    const horizontalTravel = Math.abs(ball.position.x - characterLastX);
+    const keyboardMoving = keyboardMoveDirection !== 0;
+    const movingThisFrame = keyboardMoving || horizontalTravel >= CHARACTER_RUN_MIN_TRAVEL_PER_FRAME;
+    if (movingThisFrame) {
+      characterLastMotionTime = frameNow;
+      characterRunDistanceAccumulator += horizontalTravel;
+      const frameCount = CHARACTER_FRAME_COUNT - 1; // run_1..run_16
+      const framesToAdvance = Math.floor(characterRunDistanceAccumulator / CHARACTER_RUN_PIXELS_PER_FRAME);
+      if (framesToAdvance > 0) {
+        characterRunDistanceAccumulator -= framesToAdvance * CHARACTER_RUN_PIXELS_PER_FRAME;
+        const currentRunFrame = characterCurrentFrame > 0 ? characterCurrentFrame : 1;
+        const nextRunFrameZeroBased = (currentRunFrame - 1 + framesToAdvance) % frameCount;
+        characterCurrentFrame = 1 + nextRunFrameZeroBased;
+        characterSprite.texture = characterTextures[characterCurrentFrame] ?? Texture.EMPTY;
+      } else if (characterCurrentFrame === 0) {
+        characterCurrentFrame = 1;
+        characterSprite.texture = characterTextures[1] ?? Texture.EMPTY;
+      }
+    } else if (frameNow - characterLastMotionTime >= CHARACTER_IDLE_RETURN_DELAY_MS) {
+      characterRunDistanceAccumulator = 0;
+      if (characterCurrentFrame !== 0) {
+        characterCurrentFrame = 0;
+        characterSprite.texture = characterTextures[0] ?? Texture.EMPTY;
+      }
+    }
+    characterLastX = ball.position.x;
 
     // Update shadow position - project onto platform surface if player is above one
     const shadowSurface = (() => {
@@ -5862,9 +6142,17 @@ const init = async () => {
   }
 
   window.addEventListener('keydown', (event) => {
-    if (event.code === 'Space' || event.code === 'ArrowUp') {
+    if (event.code === 'Space' || event.code === 'ArrowUp' || event.code === 'KeyW') {
       event.preventDefault();
-      triggerJump();
+      triggerJump(event);
+    } else if (event.code === 'ArrowLeft' || event.code === 'KeyA') {
+      event.preventDefault();
+      keyboardMoveLeftHeld = true;
+      refreshKeyboardMoveDirection();
+    } else if (event.code === 'ArrowRight' || event.code === 'KeyD') {
+      event.preventDefault();
+      keyboardMoveRightHeld = true;
+      refreshKeyboardMoveDirection();
     } else if (event.code === 'KeyF' || event.code === 'KeyS') {
       if (event.repeat) return;
       if (meteorSwirlFollowers.length > 0) {
@@ -5899,9 +6187,17 @@ const init = async () => {
     }
   });
   window.addEventListener('keyup', (event) => {
-    if (event.code === 'Space' || event.code === 'ArrowUp') {
+    if (event.code === 'Space' || event.code === 'ArrowUp' || event.code === 'KeyW') {
       event.preventDefault();
       releaseJump();
+    } else if (event.code === 'ArrowLeft' || event.code === 'KeyA') {
+      event.preventDefault();
+      keyboardMoveLeftHeld = false;
+      refreshKeyboardMoveDirection();
+    } else if (event.code === 'ArrowRight' || event.code === 'KeyD') {
+      event.preventDefault();
+      keyboardMoveRightHeld = false;
+      refreshKeyboardMoveDirection();
     } else if (event.code === 'KeyF' || event.code === 'KeyS') {
       if (orbChargeActive && orbChargeKey === event.code) {
         const heldSeconds = (performance.now() - orbChargeStart) / 1000;
@@ -5914,6 +6210,13 @@ const init = async () => {
       event.preventDefault();
       isPressingDown = false;
     }
+  });
+  window.addEventListener('blur', () => {
+    keyboardMoveLeftHeld = false;
+    keyboardMoveRightHeld = false;
+    refreshKeyboardMoveDirection();
+    isPressingDown = false;
+    releaseJump();
   });
 
   const handleResize = () => {
@@ -5983,6 +6286,7 @@ const init = async () => {
     currentGroundSurface = updatedGround;
     physics.updateScreenWidth(app.renderer.width);
     ball.position.y = updatedGround - playerRadius;
+    updateCharacterBaseScale();
 
     // Redraw enemy with new radius
     setEnemyColor(currentEnemyColor);
@@ -6004,6 +6308,22 @@ const init = async () => {
   };
 
   window.addEventListener('resize', handleResize);
+
+  const characterToggleButton = document.createElement('button');
+  characterToggleButton.className = 'transition-btn';
+  characterToggleButton.type = 'button';
+  characterToggleButton.style.left = 'auto';
+  characterToggleButton.style.right = '20px';
+  characterToggleButton.style.top = '20px';
+  const refreshCharacterButtonLabel = () => {
+    characterToggleButton.textContent = playerVisualMode === 'character' ? 'Character: On' : 'Character: Off';
+  };
+  refreshCharacterButtonLabel();
+  characterToggleButton.addEventListener('click', () => {
+    setPlayerVisualMode(playerVisualMode === 'character' ? 'ball' : 'character');
+    refreshCharacterButtonLabel();
+  });
+  document.body.appendChild(characterToggleButton);
 
   // Enter Forest button (debug UI only)
   if (SHOW_DEBUG_UI) {
@@ -6416,7 +6736,7 @@ const init = async () => {
 
     debugFastForwardToSecondSpawn = true;
     debugSpawnDropPending = true;
-    ball.visible = false;
+    setPlayerRenderVisible(false);
     playerShadow.getView().visible = false;
 
     console.log('[DEBUG] Fast-forwarding to second spawn (auto enemy jump-out)');
@@ -6680,6 +7000,7 @@ const init = async () => {
     respawnHoldStartZoom = 1.0;
     respawnLandProgress = 0;
     respawnLandActive = false;
+    respawnLandStartZoom = 1.0;
 
     // Immediately spawn ground holes for ALL segments in the sequence (including off-screen ones)
     const segments = grounds.getSegments();
