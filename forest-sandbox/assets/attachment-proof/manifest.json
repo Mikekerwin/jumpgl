@@ -1,0 +1,549 @@
+{
+  "status": "low-resolution attachment proof; not production art",
+  "neutralTree": {
+    "path": "assets/attachment-proof/neutral-tree.webp",
+    "width": 1024,
+    "height": 1536
+  },
+  "attachments": {
+    "nub-right-a": {
+      "path": "assets/attachment-proof/nub-right-a.webp",
+      "width": 220,
+      "height": 133,
+      "socket": [
+        100,
+        75
+      ],
+      "class": "nub",
+      "side": "right",
+      "fitment": "fork-a",
+      "socketBand": "canopy",
+      "detailProfile": "branch",
+      "canonicalSocket": [
+        558,
+        565
+      ],
+      "lowerSupport": 0.44,
+      "canonicalInwardRange": [
+        0.16,
+        0.44
+      ]
+    },
+    "nub-right-b": {
+      "path": "assets/attachment-proof/nub-right-b.webp",
+      "width": 198,
+      "height": 128,
+      "socket": [
+        100,
+        75
+      ],
+      "class": "nub",
+      "side": "right",
+      "fitment": "scar-b",
+      "socketBand": "canopy",
+      "detailProfile": "branch",
+      "canonicalSocket": [
+        558,
+        570
+      ],
+      "lowerSupport": 0.44,
+      "canonicalInwardRange": [
+        0.16,
+        0.44
+      ]
+    },
+    "small-left-a": {
+      "path": "assets/attachment-proof/small-left-a.webp",
+      "width": 286,
+      "height": 167,
+      "socket": [
+        168,
+        84
+      ],
+      "class": "small",
+      "side": "left",
+      "fitment": "brace-a",
+      "socketBand": "lower",
+      "detailProfile": "branch",
+      "canonicalSocket": [
+        468,
+        1165
+      ],
+      "lowerSupport": 0.66,
+      "canonicalInwardRange": [
+        0.16,
+        0.44
+      ]
+    },
+    "small-left-b": {
+      "path": "assets/attachment-proof/small-left-b.webp",
+      "width": 282,
+      "height": 157,
+      "socket": [
+        164,
+        84
+      ],
+      "class": "small",
+      "side": "left",
+      "fitment": "root-b",
+      "socketBand": "middle",
+      "detailProfile": "branch",
+      "canonicalSocket": [
+        468,
+        995
+      ],
+      "lowerSupport": 0.66,
+      "canonicalInwardRange": [
+        0.16,
+        0.44
+      ]
+    },
+    "medium-right-a": {
+      "path": "assets/attachment-proof/medium-right-a.webp",
+      "width": 344,
+      "height": 250,
+      "socket": [
+        135,
+        93
+      ],
+      "class": "medium",
+      "side": "right",
+      "fitment": "moss-a",
+      "socketBand": "lower",
+      "detailProfile": "branch",
+      "canonicalSocket": [
+        558,
+        1170
+      ],
+      "lowerSupport": 1.08,
+      "canonicalInwardRange": [
+        0.16,
+        0.44
+      ]
+    },
+    "medium-right-b": {
+      "path": "assets/attachment-proof/medium-right-b.webp",
+      "width": 279,
+      "height": 222,
+      "socket": [
+        135,
+        93
+      ],
+      "class": "medium",
+      "side": "right",
+      "fitment": "root-fork-b",
+      "socketBand": "root-lower",
+      "detailProfile": "branch",
+      "canonicalSocket": [
+        558,
+        1170
+      ],
+      "lowerSupport": 1.08,
+      "canonicalInwardRange": [
+        0.16,
+        0.44
+      ]
+    },
+    "medium-right-straight-c": {
+      "path": "assets/attachment-proof/medium-right-straight-c.webp",
+      "width": 274,
+      "height": 215,
+      "socket": [
+        130,
+        87
+      ],
+      "class": "medium",
+      "side": "right",
+      "fitment": "straight-fork-c",
+      "socketBand": "middle",
+      "detailProfile": "branch",
+      "canonicalSocket": [
+        558,
+        980
+      ],
+      "lowerSupport": 0.76,
+      "canonicalInwardRange": [
+        0.02,
+        0.2
+      ]
+    },
+    "long-right-a": {
+      "path": "assets/attachment-proof/long-right-a.webp",
+      "width": 536,
+      "height": 282,
+      "socket": [
+        127,
+        105
+      ],
+      "class": "long",
+      "side": "right",
+      "fitment": "brace-a",
+      "socketBand": "upper",
+      "detailProfile": "branch",
+      "canonicalSocket": [
+        558,
+        770
+      ],
+      "lowerSupport": 1.4,
+      "canonicalInwardRange": [
+        0.16,
+        0.44
+      ]
+    },
+    "long-left-a": {
+      "path": "assets/attachment-proof/long-left-a.webp",
+      "width": 469,
+      "height": 240,
+      "socket": [
+        349,
+        98
+      ],
+      "class": "long",
+      "side": "left",
+      "fitment": "fork-b",
+      "socketBand": "upper",
+      "detailProfile": "branch",
+      "canonicalSocket": [
+        468,
+        755
+      ],
+      "lowerSupport": 1.22,
+      "canonicalInwardRange": [
+        0.16,
+        0.44
+      ]
+    },
+    "midlong-left-b": {
+      "path": "assets/attachment-proof/midlong-left-b.webp",
+      "width": 435,
+      "height": 234,
+      "socket": [
+        311,
+        97
+      ],
+      "class": "medium",
+      "side": "left",
+      "fitment": "twin-brace-b",
+      "socketBand": "middle",
+      "detailProfile": "branch",
+      "canonicalSocket": [
+        468,
+        920
+      ],
+      "lowerSupport": 1.2,
+      "canonicalInwardRange": [
+        0.04,
+        0.24
+      ]
+    },
+    "midlong-right-b": {
+      "path": "assets/attachment-proof/midlong-right-b.webp",
+      "width": 498,
+      "height": 240,
+      "socket": [
+        130,
+        100
+      ],
+      "class": "long",
+      "side": "right",
+      "fitment": "sweep-brace-b",
+      "socketBand": "middle",
+      "detailProfile": "branch",
+      "canonicalSocket": [
+        558,
+        946
+      ],
+      "lowerSupport": 1.18,
+      "canonicalInwardRange": [
+        0.04,
+        0.24
+      ]
+    },
+    "trunk-small-a": {
+      "path": "assets/attachment-proof/trunk-small-a.webp",
+      "width": 397,
+      "height": 518,
+      "socket": [
+        257,
+        273
+      ],
+      "class": "trunk",
+      "side": "center",
+      "fitment": "small-a",
+      "socketBand": "trunk",
+      "detailProfile": "rich",
+      "sequence": "trunk-a",
+      "sequenceOrder": 0,
+      "vineLane": "small",
+      "canonicalSocket": [
+        512,
+        625
+      ]
+    },
+    "trunk-small-b": {
+      "path": "assets/attachment-proof/trunk-small-b.webp",
+      "width": 373,
+      "height": 157,
+      "socket": [
+        272,
+        78
+      ],
+      "class": "trunk",
+      "side": "center",
+      "fitment": "small-b",
+      "socketBand": "trunk",
+      "detailProfile": "rich",
+      "sequence": "trunk-b",
+      "sequenceOrder": 0,
+      "vineLane": "small",
+      "canonicalSocket": [
+        512,
+        625
+      ]
+    },
+    "trunk-small-c": {
+      "path": "assets/attachment-proof/trunk-small-c.webp",
+      "width": 484,
+      "height": 490,
+      "socket": [
+        344,
+        245
+      ],
+      "class": "trunk",
+      "side": "center",
+      "fitment": "small-c",
+      "socketBand": "trunk",
+      "detailProfile": "rich",
+      "sequence": "trunk-c",
+      "sequenceOrder": 0,
+      "vineLane": "small",
+      "canonicalSocket": [
+        512,
+        625
+      ]
+    },
+    "trunk-small-e": {
+      "path": "assets/attachment-proof/trunk-small-e.webp",
+      "width": 346,
+      "height": 492,
+      "socket": [
+        140,
+        247
+      ],
+      "class": "trunk",
+      "side": "center",
+      "fitment": "small-e",
+      "socketBand": "trunk",
+      "detailProfile": "rich",
+      "sequence": "trunk-e",
+      "sequenceOrder": 0,
+      "vineLane": "small",
+      "canonicalSocket": [
+        512,
+        625
+      ]
+    },
+    "trunk-medium-a": {
+      "path": "assets/attachment-proof/trunk-medium-a.webp",
+      "width": 375,
+      "height": 255,
+      "socket": [
+        274,
+        127
+      ],
+      "class": "trunk",
+      "side": "center",
+      "fitment": "medium-a",
+      "socketBand": "trunk",
+      "detailProfile": "rich",
+      "sequence": "trunk-a",
+      "sequenceOrder": 1,
+      "vineLane": "medium",
+      "canonicalSocket": [
+        512,
+        830
+      ]
+    },
+    "trunk-medium-b": {
+      "path": "assets/attachment-proof/trunk-medium-b.webp",
+      "width": 379,
+      "height": 255,
+      "socket": [
+        275,
+        127
+      ],
+      "class": "trunk",
+      "side": "center",
+      "fitment": "medium-b",
+      "socketBand": "trunk",
+      "detailProfile": "rich",
+      "sequence": "trunk-b",
+      "sequenceOrder": 1,
+      "vineLane": "medium",
+      "canonicalSocket": [
+        512,
+        830
+      ]
+    },
+    "trunk-large-a": {
+      "path": "assets/attachment-proof/trunk-large-a.webp",
+      "width": 382,
+      "height": 353,
+      "socket": [
+        278,
+        176
+      ],
+      "class": "trunk",
+      "side": "center",
+      "fitment": "large-a",
+      "socketBand": "trunk",
+      "detailProfile": "rich",
+      "sequence": "trunk-a",
+      "sequenceOrder": 2,
+      "vineLane": "large",
+      "canonicalSocket": [
+        512,
+        1125
+      ]
+    },
+    "trunk-large-b": {
+      "path": "assets/attachment-proof/trunk-large-b.webp",
+      "width": 385,
+      "height": 353,
+      "socket": [
+        276,
+        176
+      ],
+      "class": "trunk",
+      "side": "center",
+      "fitment": "large-b",
+      "socketBand": "trunk",
+      "detailProfile": "rich",
+      "sequence": "trunk-b",
+      "sequenceOrder": 2,
+      "vineLane": "large",
+      "canonicalSocket": [
+        512,
+        1125
+      ]
+    }
+  },
+  "lightingAudit": {
+    "path": "assets/attachment-proof/lighting-audit.json",
+    "pass": 19,
+    "total": 19
+  },
+  "directGradeAudit": {
+    "path": "assets/attachment-proof/direct-cartridge-grade.json",
+    "assets": [
+      "trunk-small-a",
+      "trunk-small-c",
+      "trunk-small-e"
+    ],
+    "alphaPreserved": true
+  },
+  "proofTrees": {
+    "tree-a": [
+      {
+        "attachment": "trunk-small-c",
+        "socket": [
+          512,
+          625
+        ]
+      },
+      {
+        "attachment": "trunk-medium-a",
+        "socket": [
+          512,
+          830
+        ]
+      },
+      {
+        "attachment": "trunk-large-a",
+        "socket": [
+          512,
+          1125
+        ]
+      },
+      {
+        "attachment": "medium-right-a",
+        "socket": [
+          560,
+          1170
+        ]
+      },
+      {
+        "attachment": "small-left-b",
+        "socket": [
+          468,
+          995
+        ]
+      },
+      {
+        "attachment": "long-right-a",
+        "socket": [
+          558,
+          770
+        ]
+      },
+      {
+        "attachment": "nub-right-b",
+        "socket": [
+          558,
+          570
+        ]
+      }
+    ],
+    "tree-b": [
+      {
+        "attachment": "trunk-small-e",
+        "socket": [
+          512,
+          625
+        ]
+      },
+      {
+        "attachment": "trunk-medium-b",
+        "socket": [
+          512,
+          830
+        ]
+      },
+      {
+        "attachment": "trunk-large-b",
+        "socket": [
+          512,
+          1125
+        ]
+      },
+      {
+        "attachment": "small-left-a",
+        "socket": [
+          468,
+          1165
+        ]
+      },
+      {
+        "attachment": "medium-right-straight-c",
+        "socket": [
+          558,
+          980
+        ]
+      },
+      {
+        "attachment": "long-left-a",
+        "socket": [
+          468,
+          755
+        ]
+      },
+      {
+        "attachment": "nub-right-a",
+        "socket": [
+          558,
+          565
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "source": "jumpgl-web/forest-art-workbench/generated/master-tree-v2.png",
+  "sourceSize": {
+    "width": 1024,
+    "height": 1536
+  },
+  "runtimeSize": {
+    "width": 1024,
+    "height": 1536
+  },
+  "designPixelsPerUnit": {
+    "x": 1.0,
+    "y": 1.0
+  },
+  "assets": {
+    "canopy": {
+      "path": "assets/master-tree/master-tree-canopy.webp",
+      "width": 1024,
+      "height": 724
+    },
+    "middle": {
+      "path": "assets/master-tree/master-tree-middle.webp",
+      "width": 1024,
+      "height": 334
+    },
+    "base": {
+      "path": "assets/master-tree/master-tree-base.webp",
+      "width": 1024,
+      "height": 526
+    },
+    "connector": {
+      "path": "assets/master-tree/master-tree-connector.webp",
+      "width": 1024,
+      "height": 80
+    }
+  },
+  "layout": {
+    "firstMiddleY": 700,
+    "middleStep": 310,
+    "baseYForOneMiddle": 1010,
+    "connectorCenterOffset": 0,
+    "minimumMiddleCount": 1
+  }
+}

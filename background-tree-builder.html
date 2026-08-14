@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>JumpGL Background Tree Builder</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #102f2b; }
+      canvas { display: block; }
+      #hud {
+        position: fixed; top: 14px; left: 14px; z-index: 10; width: min(390px, calc(100vw - 28px));
+        padding: 13px 15px; border: 1px solid rgba(255,255,255,.38); border-radius: 11px;
+        color: #effff7; background: rgba(7,27,24,.82); backdrop-filter: blur(9px);
+        font: 13px/1.42 system-ui, sans-serif; box-shadow: 0 10px 32px rgba(0,0,0,.24);
+      }
+      #hud strong { display: block; margin-bottom: 3px; font-size: 16px; cursor: grab; user-select: none; }
+      #status { color: #b9dfcd; margin-bottom: 8px; }
+      #hud label { display: grid; grid-template-columns: 112px 1fr 48px; gap: 8px; align-items: center; margin-top: 7px; }
+      #hud output { text-align: right; color: #d8ffec; font-variant-numeric: tabular-nums; }
+      #hud select, #hud input[type="number"] { width: 100%; min-width: 0; padding: 5px 6px; border-radius: 6px; color: #effff7; background: #244f42; border: 1px solid rgba(255,255,255,.28); font: inherit; }
+      .buttons { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 11px; }
+      button, a { border: 1px solid rgba(255,255,255,.35); border-radius: 7px; padding: 7px 10px; color: #effff7; background: rgba(45,104,80,.86); cursor: pointer; font: inherit; text-decoration: none; }
+      #notes { margin-top: 9px; color: #d5eee1; }
+      #loading { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; color: white; background: #102c2c; font: 600 18px system-ui, sans-serif; }
+    </style>
+    <script type="module" crossorigin src="/jumpgl/assets/backgroundTreeBuilder-EFxZFLz6.js"></script>
+    <link rel="modulepreload" crossorigin href="/jumpgl/assets/index-DR2yh6M6.js">
+    <link rel="modulepreload" crossorigin href="/jumpgl/assets/forestTreePlanner-CYZuaugk.js">
+    <link rel="modulepreload" crossorigin href="/jumpgl/assets/Filter-D7y0njXx.js">
+    <link rel="modulepreload" crossorigin href="/jumpgl/assets/defaultFilter.vert-Dw338EcB.js">
+    <link rel="modulepreload" crossorigin href="/jumpgl/assets/ColorMatrixFilter-BgydRFY8.js">
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="hud">
+      <strong id="hud-title">Background Tree Builder · drag</strong>
+      <div id="status">Loading display-only tree families…</div>
+      <label>Layer <select id="band"><option value="mid">Distant-ground / mid</option><option value="far">Far</option></select><output></output></label>
+      <label>Seed <input id="seed" type="number" min="1" max="9999999" value="4318" /><output></output></label>
+      <label>Trunk sections <input id="sections" type="range" min="6" max="24" step="1" value="24" /><output id="sections-output">24</output></label>
+      <label>Tree scale <input id="scale" type="range" min="0.20" max="0.48" step="0.01" value="0.36" /><output id="scale-output">0.36</output></label>
+      <label>Tree spacing <input id="spacing" type="range" min="260" max="760" step="5" value="545" /><output id="spacing-output">545</output></label>
+      <label>Exposure <input id="exposure" type="range" min="0.72" max="1.18" step="0.01" value="0.94" /><output id="exposure-output">0.94</output></label>
+      <label>Saturation <input id="saturation" type="range" min="0.55" max="1.15" step="0.01" value="0.88" /><output id="saturation-output">0.88</output></label>
+      <label>Sunlight lift <input id="sunlight" type="range" min="0" max="1" step="0.01" value="0.08" /><output id="sunlight-output">0.08</output></label>
+      <label>Climb height <input id="climb" type="range" min="0" max="100" step="1" value="0" /><output id="climb-output">0%</output></label>
+      <div class="buttons"><button id="regenerate">Regenerate</button><button id="random-seed">Random seed</button><a href="./tree-builder.html">Playable builder</a><a href="./forest-sandbox.html">Forest sandbox</a></div>
+      <div id="notes">Display-only: sparse limbs, three trunk-width families, roots composited in front of the distant ground.</div>
+    </div>
+    <div id="loading">Building background tree families…</div>
+  </body>
+</html>
