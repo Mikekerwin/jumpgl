@@ -1,0 +1,249 @@
+{
+  "nub-right-a": {
+    "targetSocket": [
+      558,
+      565
+    ],
+    "lowFrequencyMae": 1.75,
+    "meanLumaDelta": -0.64,
+    "contrastRatio": 0.979,
+    "brightSideLumaDelta": 0.67,
+    "darkSideLumaDelta": null,
+    "edgeAlpha": 0,
+    "pass": true
+  },
+  "nub-right-b": {
+    "targetSocket": [
+      558,
+      570
+    ],
+    "lowFrequencyMae": 1.57,
+    "meanLumaDelta": 0.22,
+    "contrastRatio": 0.953,
+    "brightSideLumaDelta": -0.22,
+    "darkSideLumaDelta": null,
+    "edgeAlpha": 0,
+    "pass": true
+  },
+  "small-left-a": {
+    "targetSocket": [
+      468,
+      1165
+    ],
+    "lowFrequencyMae": 4.53,
+    "meanLumaDelta": 0.2,
+    "contrastRatio": 0.829,
+    "brightSideLumaDelta": null,
+    "darkSideLumaDelta": 1.7,
+    "edgeAlpha": 0,
+    "pass": true
+  },
+  "small-left-b": {
+    "targetSocket": [
+      468,
+      995
+    ],
+    "lowFrequencyMae": 5.2,
+    "meanLumaDelta": -0.05,
+    "contrastRatio": 1.054,
+    "brightSideLumaDelta": null,
+    "darkSideLumaDelta": -0.1,
+    "edgeAlpha": 0,
+    "pass": true
+  },
+  "medium-right-a": {
+    "targetSocket": [
+      558,
+      1170
+    ],
+    "lowFrequencyMae": 1.18,
+    "meanLumaDelta": 0.51,
+    "contrastRatio": 0.955,
+    "brightSideLumaDelta": 0.77,
+    "darkSideLumaDelta": null,
+    "edgeAlpha": 0,
+    "pass": true
+  },
+  "medium-right-b": {
+    "targetSocket": [
+      558,
+      1170
+    ],
+    "lowFrequencyMae": 4.24,
+    "meanLumaDelta": 0.17,
+    "contrastRatio": 0.975,
+    "brightSideLumaDelta": -1.4,
+    "darkSideLumaDelta": null,
+    "edgeAlpha": 0,
+    "pass": true
+  },
+  "medium-right-straight-c": {
+    "targetSocket": [
+      558,
+      980
+    ],
+    "lowFrequencyMae": 2.83,
+    "meanLumaDelta": 0.75,
+    "contrastRatio": 0.865,
+    "brightSideLumaDelta": -1.22,
+    "darkSideLumaDelta": null,
+    "edgeAlpha": 0,
+    "pass": true
+  },
+  "long-right-a": {
+    "targetSocket": [
+      558,
+      770
+    ],
+    "lowFrequencyMae": 3.1,
+    "meanLumaDelta": 1.18,
+    "contrastRatio": 0.978,
+    "brightSideLumaDelta": 0.3,
+    "darkSideLumaDelta": null,
+    "edgeAlpha": 0,
+    "pass": true
+  },
+  "long-left-a": {
+    "targetSocket": [
+      468,
+      755
+    ],
+    "lowFrequencyMae": 3.31,
+    "meanLumaDelta": 0.17,
+    "contrastRatio": 1.014,
+    "brightSideLumaDelta": null,
+    "darkSideLumaDelta": 0.8,
+    "edgeAlpha": 0,
+    "pass": true
+  },
+  "midlong-left-b": {
+    "targetSocket": [
+      468,
+      920
+    ],
+    "lowFrequencyMae": 0.0,
+    "meanLumaDelta": 0.0,
+    "contrastRatio": 1.0,
+    "brightSideLumaDelta": null,
+    "darkSideLumaDelta": 0.0,
+    "edgeAlpha": 0,
+    "pass": true
+  },
+  "midlong-right-b": {
+    "targetSocket": [
+      558,
+      946
+    ],
+    "lowFrequencyMae": 0.0,
+    "meanLumaDelta": 0.0,
+    "contrastRatio": 1.0,
+    "brightSideLumaDelta": 0.0,
+    "darkSideLumaDelta": null,
+    "edgeAlpha": 0,
+    "pass": true
+  },
+  "trunk-small-a": {
+    "targetSocket": [
+      512,
+      625
+    ],
+    "lowFrequencyMae": 0.0,
+    "meanLumaDelta": 0.0,
+    "contrastRatio": 1.0,
+    "brightSideLumaDelta": 0.0,
+    "darkSideLumaDelta": 0.0,
+    "edgeAlpha": 0,
+    "pass": true
+  },
+  "trunk-small-b": {
+    "targetSocket": [
+      512,
+      625
+    ],
+    "lowFrequencyMae": 2.97,
+    "meanLumaDelta": -0.79,
+    "contrastRatio": 0.903,
+    "brightSideLumaDelta": -2.77,
+    "darkSideLumaDelta": -0.54,
+    "edgeAlpha": 0,
+    "pass": true
+  },
+  "trunk-small-c": {
+    "targetSocket": [
+      512,
+      625
+    ],
+    "lowFrequencyMae": 0.0,
+    "meanLumaDelta": 0.0,
+    "contrastRatio": 1.0,
+    "brightSideLumaDelta": 0.0,
+    "darkSideLumaDelta": 0.0,
+    "edgeAlpha": 0,
+    "pass": true
+  },
+  "trunk-small-e": {
+    "targetSocket": [
+      512,
+      625
+    ],
+    "lowFrequencyMae": 0.0,
+    "meanLumaDelta": 0.0,
+    "contrastRatio": 1.0,
+    "brightSideLumaDelta": 0.0,
+    "darkSideLumaDelta": 0.0,
+    "edgeAlpha": 0,
+    "pass": true
+  },
+  "trunk-medium-a": {
+    "targetSocket": [
+      512,
+      830
+    ],
+    "lowFrequencyMae": 2.17,
+    "meanLumaDelta": 0.89,
+    "contrastRatio": 0.958,
+    "brightSideLumaDelta": 2.29,
+    "darkSideLumaDelta": 0.35,
+    "edgeAlpha": 0,
+    "pass": true
+  },
+  "trunk-medium-b": {
+    "targetSocket": [
+      512,
+      830
+    ],
+    "lowFrequencyMae": 2.34,
+    "meanLumaDelta": -0.06,
+    "contrastRatio": 0.923,
+    "brightSideLumaDelta": -1.14,
+    "darkSideLumaDelta": -0.85,
+    "edgeAlpha": 0,
+    "pass": true
+  },
+  "trunk-large-a": {
+    "targetSocket": [
+      512,
+      1125
+    ],
+    "lowFrequencyMae": 2.84,
+    "meanLumaDelta": 1.41,
+    "contrastRatio": 0.916,
+    "brightSideLumaDelta": 2.38,
+    "darkSideLumaDelta": 1.79,
+    "edgeAlpha": 0,
+    "pass": true
+  },
+  "trunk-large-b": {
+    "targetSocket": [
+      512,
+      1125
+    ],
+    "lowFrequencyMae": 2.47,
+    "meanLumaDelta": 0.23,
+    "contrastRatio": 0.923,
+    "brightSideLumaDelta": 2.01,
+    "darkSideLumaDelta": 2.51,
+    "edgeAlpha": 0,
+    "pass": true
+  }
+}

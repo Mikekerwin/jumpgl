@@ -1,0 +1,443 @@
+{
+  "background": [
+    {
+      "path": "assets/trees/background.jpg",
+      "width": 8192,
+      "height": 2251
+    }
+  ],
+  "distantGround": [
+    {
+      "path": "assets/ground/generated/distant-ground-warm-deep.webp",
+      "width": 1983,
+      "height": 378
+    }
+  ],
+  "distantGroundDetails": [
+    {
+      "path": "assets/ground/distant-floor-variants/bush-a.webp",
+      "width": 1999,
+      "height": 453
+    },
+    {
+      "path": "assets/ground/distant-floor-variants/bush-b.webp",
+      "width": 1950,
+      "height": 495
+    },
+    {
+      "path": "assets/ground/distant-floor-variants/sapling-a.webp",
+      "width": 1885,
+      "height": 703
+    },
+    {
+      "path": "assets/ground/distant-floor-variants/sapling-b.webp",
+      "width": 1571,
+      "height": 798
+    }
+  ],
+  "fallingLeaves": [
+    {
+      "path": "assets/particles/leaves/leaf-a.webp",
+      "width": 708,
+      "height": 430
+    },
+    {
+      "path": "assets/particles/leaves/leaf-b.webp",
+      "width": 602,
+      "height": 638
+    },
+    {
+      "path": "assets/particles/leaves/leaf-c.webp",
+      "width": 676,
+      "height": 685
+    },
+    {
+      "path": "assets/particles/leaves/leaf-d.webp",
+      "width": 536,
+      "height": 478
+    }
+  ],
+  "middleground": [
+    {
+      "path": "assets/middleground/middleground-006.webp",
+      "width": 661,
+      "height": 1791
+    },
+    {
+      "path": "assets/middleground/middleground-007.webp",
+      "width": 803,
+      "height": 1763
+    },
+    {
+      "path": "assets/middleground/middleground-008.webp",
+      "width": 759,
+      "height": 1752
+    },
+    {
+      "path": "assets/middleground/middleground-010.webp",
+      "width": 606,
+      "height": 1547
+    }
+  ],
+  "far": [
+    {
+      "path": "assets/far/far-01.webp",
+      "width": 269,
+      "height": 1448
+    },
+    {
+      "path": "assets/far/far-02.webp",
+      "width": 371,
+      "height": 1436
+    },
+    {
+      "path": "assets/far/far-03.webp",
+      "width": 263,
+      "height": 1352
+    },
+    {
+      "path": "assets/far/far-04.webp",
+      "width": 136,
+      "height": 1313
+    },
+    {
+      "path": "assets/far/far-05.webp",
+      "width": 100,
+      "height": 983
+    },
+    {
+      "path": "assets/far/far-06.webp",
+      "width": 181,
+      "height": 923
+    },
+    {
+      "path": "assets/far/far-07.webp",
+      "width": 372,
+      "height": 349
+    },
+    {
+      "path": "assets/far/far-08.webp",
+      "width": 368,
+      "height": 250
+    },
+    {
+      "path": "assets/far/far-09.webp",
+      "width": 277,
+      "height": 221
+    },
+    {
+      "path": "assets/far/far-10.webp",
+      "width": 261,
+      "height": 193
+    }
+  ],
+  "mid": [
+    {
+      "path": "assets/mid/mid-01.webp",
+      "width": 661,
+      "height": 1791
+    },
+    {
+      "path": "assets/mid/mid-02.webp",
+      "width": 803,
+      "height": 1763
+    },
+    {
+      "path": "assets/mid/mid-03.webp",
+      "width": 759,
+      "height": 1752
+    },
+    {
+      "path": "assets/mid/mid-04.webp",
+      "width": 606,
+      "height": 1547
+    },
+    {
+      "path": "assets/mid/mid-05.webp",
+      "width": 296,
+      "height": 885
+    },
+    {
+      "path": "assets/mid/mid-06.webp",
+      "width": 307,
+      "height": 897
+    },
+    {
+      "path": "assets/mid/mid-07.webp",
+      "width": 307,
+      "height": 894
+    },
+    {
+      "path": "assets/mid/mid-08.webp",
+      "width": 307,
+      "height": 900
+    },
+    {
+      "path": "assets/mid/mid-09.webp",
+      "width": 302,
+      "height": 905
+    }
+  ],
+  "base": [
+    {
+      "path": "assets/base/base-01.webp",
+      "width": 641,
+      "height": 761
+    },
+    {
+      "path": "assets/base/base-02.webp",
+      "width": 559,
+      "height": 765
+    },
+    {
+      "path": "assets/base/base-03.webp",
+      "width": 689,
+      "height": 765
+    },
+    {
+      "path": "assets/base/base-04.webp",
+      "width": 572,
+      "height": 765
+    },
+    {
+      "path": "assets/base/base-05.webp",
+      "width": 645,
+      "height": 523
+    },
+    {
+      "path": "assets/base/base-06.webp",
+      "width": 577,
+      "height": 521
+    },
+    {
+      "path": "assets/base/base-07.webp",
+      "width": 546,
+      "height": 496
+    }
+  ],
+  "trunk": [
+    {
+      "path": "assets/trunk/trunk-01.webp",
+      "width": 563,
+      "height": 987
+    },
+    {
+      "path": "assets/trunk/trunk-02.webp",
+      "width": 578,
+      "height": 972
+    },
+    {
+      "path": "assets/trunk/trunk-03.webp",
+      "width": 493,
+      "height": 955
+    },
+    {
+      "path": "assets/trunk/trunk-04.webp",
+      "width": 579,
+      "height": 946
+    },
+    {
+      "path": "assets/trunk/trunk-05.webp",
+      "width": 637,
+      "height": 921
+    },
+    {
+      "path": "assets/trunk/trunk-06.webp",
+      "width": 551,
+      "height": 900
+    },
+    {
+      "path": "assets/trunk/trunk-07.webp",
+      "width": 468,
+      "height": 896
+    },
+    {
+      "path": "assets/trunk/trunk-08.webp",
+      "width": 469,
+      "height": 891
+    }
+  ],
+  "canopy": [
+    {
+      "path": "assets/canopy/canopy-01.webp",
+      "width": 677,
+      "height": 649
+    },
+    {
+      "path": "assets/canopy/canopy-02.webp",
+      "width": 570,
+      "height": 640
+    },
+    {
+      "path": "assets/canopy/canopy-03.webp",
+      "width": 610,
+      "height": 635
+    },
+    {
+      "path": "assets/canopy/canopy-04.webp",
+      "width": 612,
+      "height": 633
+    },
+    {
+      "path": "assets/canopy/canopy-05.webp",
+      "width": 530,
+      "height": 446
+    },
+    {
+      "path": "assets/canopy/canopy-06.webp",
+      "width": 463,
+      "height": 370
+    },
+    {
+      "path": "assets/canopy/canopy-07.webp",
+      "width": 330,
+      "height": 253
+    }
+  ],
+  "platform": [
+    {
+      "path": "assets/platform/platform-01.webp",
+      "width": 1095,
+      "height": 286
+    },
+    {
+      "path": "assets/platform/platform-02.webp",
+      "width": 676,
+      "height": 222
+    },
+    {
+      "path": "assets/platform/platform-03.webp",
+      "width": 687,
+      "height": 344
+    },
+    {
+      "path": "assets/platform/platform-04.webp",
+      "width": 1086,
+      "height": 307
+    },
+    {
+      "path": "assets/platform/platform-05.webp",
+      "width": 1004,
+      "height": 321
+    },
+    {
+      "path": "assets/platform/platform-06.webp",
+      "width": 804,
+      "height": 235
+    },
+    {
+      "path": "assets/platform/platform-07.webp",
+      "width": 508,
+      "height": 353
+    },
+    {
+      "path": "assets/platform/platform-08.webp",
+      "width": 884,
+      "height": 311
+    }
+  ],
+  "detail": [
+    {
+      "path": "assets/detail/detail-01.webp",
+      "width": 396,
+      "height": 282
+    },
+    {
+      "path": "assets/detail/detail-02.webp",
+      "width": 344,
+      "height": 245
+    },
+    {
+      "path": "assets/detail/detail-03.webp",
+      "width": 178,
+      "height": 213
+    },
+    {
+      "path": "assets/detail/detail-04.webp",
+      "width": 229,
+      "height": 221
+    },
+    {
+      "path": "assets/detail/detail-05.webp",
+      "width": 244,
+      "height": 212
+    },
+    {
+      "path": "assets/detail/detail-06.webp",
+      "width": 434,
+      "height": 228
+    },
+    {
+      "path": "assets/detail/detail-07.webp",
+      "width": 211,
+      "height": 917
+    },
+    {
+      "path": "assets/detail/detail-08.webp",
+      "width": 169,
+      "height": 858
+    },
+    {
+      "path": "assets/detail/detail-09.webp",
+      "width": 157,
+      "height": 911
+    },
+    {
+      "path": "assets/detail/detail-10.webp",
+      "width": 146,
+      "height": 883
+    }
+  ],
+  "ground": [
+    {
+      "path": "assets/ground/generated/ground-path-stone.webp",
+      "width": 1983,
+      "height": 306
+    },
+    {
+      "path": "assets/ground/generated/ground-path-moss.webp",
+      "width": 1935,
+      "height": 339
+    },
+    {
+      "path": "assets/ground/ground2.webp",
+      "width": 3351,
+      "height": 241
+    },
+    {
+      "path": "assets/ground/ground-01.webp",
+      "width": 4096,
+      "height": 164
+    },
+    {
+      "path": "assets/ground/ground-02.webp",
+      "width": 4096,
+      "height": 159
+    },
+    {
+      "path": "assets/ground/ground-03.webp",
+      "width": 4096,
+      "height": 158
+    },
+    {
+      "path": "assets/ground/ground-04.webp",
+      "width": 4096,
+      "height": 158
+    },
+    {
+      "path": "assets/ground/ground-05.webp",
+      "width": 4096,
+      "height": 156
+    },
+    {
+      "path": "assets/ground/ground-06.webp",
+      "width": 4096,
+      "height": 159
+    },
+    {
+      "path": "assets/ground/ground-07.webp",
+      "width": 4096,
+      "height": 158
+    }
+  ]
+}

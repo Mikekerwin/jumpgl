@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>JumpGL Forest Biome Sandbox</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #8ed3eb; }
+      canvas { display: block; }
+      #hud {
+        position: fixed; top: 14px; left: 14px; z-index: 10; width: min(360px, calc(100vw - 28px));
+        padding: 12px 14px; border: 1px solid rgba(255,255,255,.38); border-radius: 10px;
+        color: #eefcf5; background: rgba(7, 27, 24, .72); backdrop-filter: blur(8px);
+        font: 13px/1.4 system-ui, sans-serif; box-shadow: 0 10px 30px rgba(0,0,0,.2);
+      }
+      #hud strong { display: block; margin-bottom: 4px; font-size: 15px; }
+      #hud .hud-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      #hud .hud-heading strong { margin: 0; }
+      #hud label { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
+      #hud input, #hud select { flex: 1; min-width: 0; }
+      #hud input[type="checkbox"] { flex: 0 0 auto; }
+      #hud button { width: 100%; margin-top: 8px; padding: 8px 10px; border: 1px solid rgba(220,255,240,.45); border-radius: 7px; color: #effff7; background: #245d4c; cursor: pointer; }
+      #hud button:disabled { opacity: .72; cursor: default; }
+      #hud #hud-collapse { width: 34px; margin: 0; padding: 2px 7px 4px; font-size: 18px; line-height: 1; }
+      #hud.collapsed { width: auto; min-width: 250px; }
+      #hud.collapsed #hud-content { display: none; }
+      #hud .toggle { justify-content: flex-start; }
+      #culling-status { margin-top: 7px; color: #d7fff0; font-variant-numeric: tabular-nums; }
+      .speed-grid { display: grid; gap: 6px; margin: 10px 0; }
+      .speed-grid label { display: grid; grid-template-columns: 112px minmax(90px, 1fr) 42px; margin: 0; gap: 8px; }
+      .speed-grid output { font-variant-numeric: tabular-nums; text-align: right; color: #d7fff0; }
+      #status { color: #b8dac8; }
+      #loading {
+        position: fixed; inset: 0; z-index: 20; display: grid; place-items: center;
+        color: white; background: #102c2c; font: 600 18px system-ui, sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="hud">
+      <div class="hud-heading">
+        <strong>Forest Biome WebGL Sandbox</strong>
+        <button id="hud-collapse" type="button" aria-expanded="true" aria-label="Minimize controls">↑</button>
+      </div>
+      <div id="hud-content">
+        <div id="status">Loading curated GPU textures...</div>
+        <label>Scroll speed <input id="speed" type="range" min="0" max="220" value="90" /><output id="speed-output">90</output></label>
+        <label>Climb height <input id="vertical-climb" type="range" min="0" max="1000" step="1" value="0" /><output id="vertical-climb-output">0%</output></label>
+        <label class="toggle"><input id="use-procedural-trees" type="checkbox" checked /> Procedural coordinated trees</label>
+        <label>Forest seed <input id="forest-seed" type="number" min="1" step="1" value="20260805" /></label>
+        <label>Ground style <select id="ground-style"><option value="moss" selected>Mossy path</option><option value="stone">Stone path</option><option value="original">Original Photoshop</option></select></label>
+        <label class="toggle"><input id="use-master-tree" type="checkbox" checked /> Use repeatable master tree</label>
+        <div id="culling-status">Culling V1 · preparing plans…</div>
+        <label class="toggle"><input id="use-bunny-character" type="checkbox" checked /> Bunny character (off: blue ball)</label>
+        <label class="toggle"><input id="show-branch-hitboxes" type="checkbox" /> Show branch hitboxes (H)</label>
+        <label class="toggle"><input id="show-asset-filenames" type="checkbox" /> Show asset filenames</label>
+        <label class="toggle"><input id="follow-player-camera" type="checkbox" checked /> Follow character camera</label>
+        <label>Master scale <input id="master-scale" type="range" min="0.42" max="0.78" step="0.01" value="0.60" /><output id="master-scale-output">0.60</output></label>
+        <div class="speed-grid" aria-label="Layer speed controls">
+          <label>Far backdrop <input data-layer-speed="far-background" type="range" min="0" max="2" step="0.01" value="0.12" /><output data-layer-output="far-background">0.12</output></label>
+          <label>Canopy sky <input data-layer-speed="canopy-sky" type="range" min="0" max="2" step="0.01" value="0.33" /><output data-layer-output="canopy-sky">0.33</output></label>
+          <label>Mid trees <input data-layer-speed="mid-background" type="range" min="0" max="2" step="0.01" value="0.30" /><output data-layer-output="mid-background">0.30</output></label>
+          <label>Rare mid <input data-layer-speed="rare-complete-mid" type="range" min="0" max="2" step="0.01" value="0.38" /><output data-layer-output="rare-complete-mid">0.38</output></label>
+          <label>Distant ground <input data-layer-speed="rear-ground" type="range" min="0" max="2" step="0.01" value="0.34" /><output data-layer-output="rear-ground">0.34</output></label>
+          <label>Foreground <input data-layer-speed="foreground" type="range" min="0" max="2" step="0.01" value="1.00" /><output data-layer-output="foreground">1.00</output></label>
+          <label>Ground <input data-layer-speed="ground" type="range" min="0" max="2" step="0.01" value="1.00" /><output data-layer-output="ground">1.00</output></label>
+        </div>
+        <div>Mouse or A-D / ←-→: move · Space / W / ↑: jump + double jump · Near a hollow: W / ↑ or click the opening to hide · Wheel: inspect · P: pause · R: rebuild · F: fullscreen</div>
+      </div>
+    </div>
+    <div id="loading">Preparing WebGL forest...</div>
+    <script type="module" src="/src/forestSandbox.ts"></script>
+  </body>
+</html>

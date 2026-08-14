@@ -1,0 +1,38 @@
+{
+  "trunk-small-a": {
+    "source": "decorative-fork-v5-compact-light.png",
+    "mode": "canonical-trunk-width-locked",
+    "canonicalTrunkWidth": 150,
+    "sourceTrunkWidth": 320,
+    "scale": 0.46875,
+    "generatedTrunkDiscardedOutsideCollar": true,
+    "collarMode": "outer-edge-taper",
+    "maximumCanonicalOverlap": 48,
+    "canonicalPixelsRegraded": false,
+    "branchAlphaPreservedOutsideCollar": true
+  },
+  "trunk-small-c": {
+    "source": "decorative-long-fork-v5-hero-light.png",
+    "mode": "canonical-trunk-width-locked",
+    "canonicalTrunkWidth": 154,
+    "sourceTrunkWidth": 449,
+    "scale": 0.34298,
+    "generatedTrunkDiscardedOutsideCollar": true,
+    "collarMode": "outer-edge-taper",
+    "maximumCanonicalOverlap": 49,
+    "canonicalPixelsRegraded": false,
+    "branchAlphaPreservedOutsideCollar": true
+  },
+  "trunk-small-e": {
+    "source": "dark-right-compact-v5-light.png",
+    "mode": "canonical-trunk-width-locked",
+    "canonicalTrunkWidth": 148,
+    "sourceTrunkWidth": 356,
+    "scale": 0.41573,
+    "generatedTrunkDiscardedOutsideCollar": true,
+    "collarMode": "outer-edge-taper",
+    "maximumCanonicalOverlap": 47,
+    "canonicalPixelsRegraded": false,
+    "branchAlphaPreservedOutsideCollar": true
+  }
+}

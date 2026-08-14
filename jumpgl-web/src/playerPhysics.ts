@@ -10,6 +10,41 @@ const ORIGINAL_HOLD_BOOST = 0.2;
 const HOLD_FORCE_RATIO = ORIGINAL_HOLD_BOOST / ORIGINAL_GRAVITY;
 const MAX_HOLD_TIME_MS = 2700;
 
+export const PLAYER_JUMP_TUNING = Object.freeze({
+  gravity: 9000,
+  jumpForce: 2250,
+  secondJumpMultiplier: 0.6,
+  holdForceRatio: HOLD_FORCE_RATIO,
+  maxHoldTimeMs: MAX_HOLD_TIME_MS,
+});
+
+const riseForImpulse = (impulse: number, held: boolean): number => {
+  const { gravity, holdForceRatio, maxHoldTimeMs } = PLAYER_JUMP_TUNING;
+  if (!held) return (impulse * impulse) / (2 * gravity);
+
+  const heldGravity = gravity * (1 - holdForceRatio);
+  const holdSeconds = maxHoldTimeMs / 1000;
+  const heldApexSeconds = impulse / heldGravity;
+  if (heldApexSeconds <= holdSeconds) return (impulse * impulse) / (2 * heldGravity);
+
+  const riseWhileHeld = impulse * holdSeconds - 0.5 * heldGravity * holdSeconds * holdSeconds;
+  const remainingVelocity = Math.max(0, impulse - heldGravity * holdSeconds);
+  return riseWhileHeld + (remainingVelocity * remainingVelocity) / (2 * gravity);
+};
+
+export const getPlayerJumpReach = () => {
+  const first = PLAYER_JUMP_TUNING.jumpForce;
+  const second = first * PLAYER_JUMP_TUNING.secondJumpMultiplier;
+  const tapSingle = riseForImpulse(first, false);
+  const heldSingle = riseForImpulse(first, true);
+  return {
+    tapSingle,
+    tapDouble: tapSingle + riseForImpulse(second, false),
+    heldSingle,
+    heldDouble: heldSingle + riseForImpulse(second, true),
+  };
+};
+
 export interface PlayerPhysicsOptions {
   radius: number;
   groundSurface: number;
@@ -72,9 +107,9 @@ export class PlayerPhysics {
 
   constructor(opts: PlayerPhysicsOptions) {
     this.radius = opts.radius;
-    this.gravity = opts.gravity ?? 9000; // Increased from 6525 (~38% increase to lower jump height)
+    this.gravity = opts.gravity ?? PLAYER_JUMP_TUNING.gravity; // Increased from 6525 (~38% increase to lower jump height)
     this.currentGravity = this.gravity; // Start with normal gravity
-    this.jumpForce = opts.jumpForce ?? 2250; // Base jump force
+    this.jumpForce = opts.jumpForce ?? PLAYER_JUMP_TUNING.jumpForce; // Base jump force
     this.holdBoost = this.gravity * HOLD_FORCE_RATIO; // Match original hold/grav ratio
     this.groundSurface = opts.groundSurface;
     this.restCenterY = this.groundSurface - this.radius;
@@ -234,7 +269,7 @@ export class PlayerPhysics {
     if (this.jumpCount >= 2 || this.isCharging) return false;
 
     // Second jump is weaker (60% of first jump power)
-    const jumpPower = this.jumpCount === 0 ? this.jumpForce : this.jumpForce * 0.6;
+    const jumpPower = this.jumpCount === 0 ? this.jumpForce : this.jumpForce * PLAYER_JUMP_TUNING.secondJumpMultiplier;
     this.velocity = -jumpPower;
     this.jumpCount++;
 
@@ -411,14 +446,11 @@ export class PlayerPhysics {
   }
 
   /**
-   * Move the player and their horizontal input target by a platform-local delta.
-   * Keeping the target in the same local position preserves platform carry until
-   * the next mouse/touch update supplies a new target.
+   * Move the player vertically with a supported platform.
+   * Horizontal position always remains controlled by mouse/touch input.
    */
-  translatePosition(deltaX: number, deltaY: number): void {
-    this.x += deltaX;
+  translateVerticalPosition(deltaY: number): void {
     this.y += deltaY;
-    this.targetX += deltaX;
   }
 
   /**

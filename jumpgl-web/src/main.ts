@@ -898,6 +898,9 @@ const init = async () => {
   let respawnLandProgress = 0;
   let respawnLandActive = false;
   let respawnLandStartZoom = 1.0;
+  let respawnZoomReleaseProgress = 0;
+  let respawnZoomReleaseActive = false;
+  let respawnZoomReleaseStartZoom = 1.0;
 
 
   // Stars disabled for now
@@ -1318,6 +1321,9 @@ const init = async () => {
     respawnLandProgress = 0;
     respawnLandActive = false;
     respawnLandStartZoom = 1.0;
+    respawnZoomReleaseProgress = 0;
+    respawnZoomReleaseActive = false;
+    respawnZoomReleaseStartZoom = 1.0;
     lastLandedSequenceIndex = null;
     jumpDust.spawnSmokePlume(plumeX, plumeY);
     console.log('[HOLE] Player falling into hole, ground collision disabled');
@@ -1396,6 +1402,7 @@ const init = async () => {
   const HOLE_EXIT_CAMERA_EASE_DURATION = 2.5; // seconds
   const RESPAWN_HOLD_ZOOM_DURATION = 4; // Seconds to ease toward 0.9 after falling in
   const RESPAWN_LAND_ZOOM_DURATION = 2.5; // Seconds to ease from 0.9 -> 1.0 after landing
+  const RESPAWN_ZOOM_RELEASE_DURATION = 6; // Seconds to gently return to gameplay zoom after control resumes
   const RESPAWN_HOLD_ZOOM = 0.9; // Hold zoom during respawn until player is set down
 
   // Minimap setup - picture-in-picture zoomed-out view (dev only)
@@ -2302,6 +2309,9 @@ const init = async () => {
         respawnState = 'dying';
         respawnTimer = 0;
         respawnCameraHoldY = cameraY;
+        respawnZoomReleaseProgress = 0;
+        respawnZoomReleaseActive = false;
+        respawnZoomReleaseStartZoom = cameraZoom;
         speedMultiplier = 1.0; // Continue at normal speed initially
 
         // CRITICAL: Disable gravity and freeze player physics immediately
@@ -2507,6 +2517,9 @@ const init = async () => {
       if (u >= 1) {
         respawnState = 'normal';
         respawnInputLocked = false;
+        respawnZoomReleaseActive = true;
+        respawnZoomReleaseProgress = 0;
+        respawnZoomReleaseStartZoom = cameraZoom;
         console.log('[RESPAWN] Forward ease complete');
       }
     }
@@ -3100,11 +3113,7 @@ const init = async () => {
           physics.getVerticalVelocity() >= 0 &&
           Math.abs(activeState.y - previousSurfaceCenter) <= 2;
         if (isInPlatformContact) {
-          // Platform deltaX includes the world's automatic scroll. Carry only
-          // movement within that world or mouse input will feel sticky.
-          const platformLocalDeltaX =
-            activePlatformMotion.deltaX + groundScrollSpeed * deltaSeconds;
-          physics.translatePosition(platformLocalDeltaX, activePlatformMotion.deltaY);
+          physics.translateVerticalPosition(activePlatformMotion.deltaY);
         }
         physics.landOnSurface(
           activePlatformMotion.surfaceY + playerRadius + PLATFORM_LANDING_OFFSET,
@@ -3838,6 +3847,9 @@ const init = async () => {
       respawnLandProgress = 0;
       respawnLandActive = false;
       respawnLandStartZoom = 1.0;
+      respawnZoomReleaseProgress = 0;
+      respawnZoomReleaseActive = false;
+      respawnZoomReleaseStartZoom = 1.0;
       lastHoleStartX = null;
       meteorOrb.resetIfNotCollected();
     }
@@ -5024,8 +5036,25 @@ const init = async () => {
         respawnLandActive = false;
         respawnLandProgress = 0;
         respawnLandStartZoom = 1.0;
-        const zoomFollowSpeed = 0.2;
-        cameraZoom += (targetZoom - cameraZoom) * zoomFollowSpeed;
+        if (respawnZoomReleaseActive) {
+          respawnZoomReleaseProgress = Math.min(
+            1,
+            respawnZoomReleaseProgress + deltaSeconds / RESPAWN_ZOOM_RELEASE_DURATION
+          );
+          const releaseEase =
+            respawnZoomReleaseProgress *
+            respawnZoomReleaseProgress *
+            (3 - 2 * respawnZoomReleaseProgress);
+          cameraZoom =
+            respawnZoomReleaseStartZoom +
+            (targetZoom - respawnZoomReleaseStartZoom) * releaseEase;
+          if (respawnZoomReleaseProgress >= 1) {
+            respawnZoomReleaseActive = false;
+          }
+        } else {
+          const zoomFollowSpeed = 0.2;
+          cameraZoom += (targetZoom - cameraZoom) * zoomFollowSpeed;
+        }
       }
 
       // Only reset zoom when BOTH players are back on baseline ground after meteor sequence
@@ -6703,6 +6732,17 @@ const init = async () => {
     console.log('[SCENARIO] Small+hole then large spawned; awaiting jump range');
   };
 
+  if (SHOW_DEBUG_UI) {
+    const scenarioButton = document.createElement('button');
+    scenarioButton.id = 'mega-laser-scenario-button';
+    scenarioButton.className = 'transition-btn';
+    scenarioButton.textContent = 'Run Mega Laser Scenario';
+    scenarioButton.type = 'button';
+    scenarioButton.style.top = '440px';
+    scenarioButton.addEventListener('click', startScenario);
+    document.body.appendChild(scenarioButton);
+  }
+
   // Auto trigger scenario when pending (e.g., after first red out)
   ticker.add(() => {
     if (autoScenarioPending && !scenarioActive) {
@@ -7036,6 +7076,9 @@ const init = async () => {
     respawnLandProgress = 0;
     respawnLandActive = false;
     respawnLandStartZoom = 1.0;
+    respawnZoomReleaseProgress = 0;
+    respawnZoomReleaseActive = false;
+    respawnZoomReleaseStartZoom = 1.0;
 
     // Immediately spawn ground holes for ALL segments in the sequence (including off-screen ones)
     const segments = grounds.getSegments();

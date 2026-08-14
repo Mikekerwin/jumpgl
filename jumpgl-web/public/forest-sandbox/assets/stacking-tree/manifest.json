@@ -1,0 +1,170 @@
+{
+  "status": "canonical connector-locked stacking tree preview family",
+  "source": "jumpgl-web/public/forest-sandbox/assets/attachment-proof/neutral-tree.png",
+  "width": 1024,
+  "connector": {
+    "sourceY": 800,
+    "height": 64,
+    "path": "assets/stacking-tree/connector-canonical.webp",
+    "width": 1024
+  },
+  "layout": {
+    "canopyHeight": 864,
+    "middleHeight": 400,
+    "middleStep": 336,
+    "baseHeight": 736,
+    "treeScale": 0.64,
+    "defaultMiddleCount": 12
+  },
+  "middles": [
+    {
+      "id": "middle-calm",
+      "label": "calm canonical bark",
+      "path": "assets/stacking-tree/middle-calm.webp",
+      "width": 1024,
+      "height": 400
+    },
+    {
+      "id": "middle-moss",
+      "label": "moss and fungi cluster",
+      "path": "assets/stacking-tree/middle-moss.webp",
+      "width": 1024,
+      "height": 400
+    },
+    {
+      "id": "middle-vine",
+      "label": "long running vine",
+      "path": "assets/stacking-tree/middle-vine.webp",
+      "width": 1024,
+      "height": 400
+    },
+    {
+      "id": "middle-sparse",
+      "label": "sparse moss detail",
+      "path": "assets/stacking-tree/middle-sparse.webp",
+      "width": 1024,
+      "height": 400
+    },
+    {
+      "id": "middle-hollow-v1",
+      "label": "character-sized natural hollow",
+      "path": "assets/stacking-tree/middle-hollow-v1.webp",
+      "width": 1024,
+      "height": 400,
+      "hideHole": {
+        "center": [512, 205],
+        "size": [126, 198],
+        "overlayPath": "assets/stacking-tree/middle-hollow-v1-overlay.png"
+      }
+    }
+  ],
+  "bases": [
+    {
+      "id": "base-original",
+      "label": "approved lush roots",
+      "path": "assets/stacking-tree/base-original.webp",
+      "width": 1024,
+      "height": 736
+    },
+    {
+      "id": "base-sparse",
+      "label": "lighter sparse roots",
+      "path": "assets/stacking-tree/base-sparse.webp",
+      "width": 1024,
+      "height": 736
+    },
+    {
+      "id": "base-rock",
+      "label": "roots around mossy rock",
+      "path": "assets/stacking-tree/base-rock.webp",
+      "width": 1024,
+      "height": 736
+    }
+  ],
+  "canopies": [
+    {
+      "id": "canopy-crown-01",
+      "label": "tall rounded painterly crown",
+      "path": "assets/stacking-tree/canopy-crown-01.webp",
+      "width": 1152,
+      "height": 864
+    },
+    {
+      "id": "canopy-crown-02",
+      "label": "broad asymmetric painterly crown",
+      "path": "assets/stacking-tree/canopy-crown-02.webp",
+      "width": 1152,
+      "height": 864
+    },
+    {
+      "id": "canopy-crown-03",
+      "label": "high left painterly crown",
+      "path": "assets/stacking-tree/canopy-crown-03.webp",
+      "width": 1152,
+      "height": 864
+    },
+    {
+      "id": "canopy-crown-04",
+      "label": "compact irregular painterly crown",
+      "path": "assets/stacking-tree/canopy-crown-04.webp",
+      "width": 1152,
+      "height": 864
+    },
+    {
+      "id": "canopy-crown-05",
+      "label": "wide layered painterly crown",
+      "path": "assets/stacking-tree/canopy-crown-05.webp",
+      "width": 1152,
+      "height": 864
+    },
+    {
+      "id": "canopy-crown-06",
+      "label": "low broad painterly crown",
+      "path": "assets/stacking-tree/canopy-crown-06.webp",
+      "width": 1152,
+      "height": 864
+    }
+  ],
+  "decorations": [
+    {
+      "id": "leafy-left-a",
+      "label": "small rising leafy limb",
+      "side": "left",
+      "socket": [
+        257,
+        273
+      ],
+      "path": "assets/stacking-tree/decoration-leafy-left-a.webp",
+      "width": 397,
+      "height": 518
+    },
+    {
+      "id": "leafy-left-c",
+      "label": "wide irregular leafy limb",
+      "side": "left",
+      "socket": [
+        344,
+        245
+      ],
+      "path": "assets/stacking-tree/decoration-leafy-left-c.webp",
+      "width": 484,
+      "height": 490
+    },
+    {
+      "id": "leafy-right-e",
+      "label": "small dark-side leafy limb",
+      "side": "right",
+      "socket": [
+        140,
+        247
+      ],
+      "path": "assets/stacking-tree/decoration-leafy-right-e.webp",
+      "width": 346,
+      "height": 492
+    }
+  ],
+  "references": {
+    "customBaseSheet": "forest-art-workbench/source/custom.png",
+    "note": "Original base remains active; custom.png root and hollow silhouettes guide later color-matched variants."
+  }
+}

@@ -1,0 +1,143 @@
+{
+  "status": "cool modular background tree families",
+  "families": {
+    "mid-cool-broad": {
+      "width": 1024,
+      "connector": {
+        "height": 64,
+        "width": 1024,
+        "path": "assets/background-tree-families/mid-cool-broad-connector.webp"
+      },
+      "layout": {
+        "canopyHeight": 640,
+        "middleHeight": 400,
+        "middleStep": 336,
+        "baseHeight": 540,
+        "treeScale": 1,
+        "defaultMiddleCount": 24
+      },
+      "middles": [
+        {
+          "id": "mid-cool-broad-middle",
+          "label": "cool broad woodland bark",
+          "path": "assets/background-tree-families/mid-cool-broad-middle.webp",
+          "width": 1024,
+          "height": 400
+        }
+      ],
+      "bases": [
+        {
+          "id": "mid-cool-broad-base",
+          "label": "cool broad woodland roots",
+          "path": "assets/background-tree-families/mid-cool-broad-base.webp",
+          "width": 1024,
+          "height": 540
+        }
+      ],
+      "canopies": [
+        {
+          "id": "mid-cool-broad-canopy",
+          "label": "cool broad woodland crown",
+          "path": "assets/background-tree-families/mid-cool-broad-canopy.webp",
+          "width": 1024,
+          "height": 640
+        }
+      ],
+      "decorations": [
+        {
+          "id": "mid-cool-broad-sweep-left",
+          "label": "cool broad woodland long left sweep",
+          "side": "left",
+          "socket": [
+            15,
+            126
+          ],
+          "path": "assets/background-tree-families/mid-cool-broad-sweep-left.webp",
+          "width": 640,
+          "height": 289
+        },
+        {
+          "id": "mid-cool-broad-sweep-right",
+          "label": "cool broad woodland long right sweep",
+          "side": "right",
+          "socket": [
+            35,
+            210
+          ],
+          "path": "assets/background-tree-families/mid-cool-broad-sweep-right.webp",
+          "width": 699,
+          "height": 340
+        }
+      ]
+    },
+    "far-cool-slender": {
+      "width": 1024,
+      "connector": {
+        "height": 64,
+        "width": 1024,
+        "path": "assets/background-tree-families/far-cool-slender-connector.webp"
+      },
+      "layout": {
+        "canopyHeight": 720,
+        "middleHeight": 400,
+        "middleStep": 336,
+        "baseHeight": 520,
+        "treeScale": 1,
+        "defaultMiddleCount": 24
+      },
+      "middles": [
+        {
+          "id": "far-cool-slender-middle",
+          "label": "cool slender understory bark",
+          "path": "assets/background-tree-families/far-cool-slender-middle.webp",
+          "width": 1024,
+          "height": 400
+        }
+      ],
+      "bases": [
+        {
+          "id": "far-cool-slender-base",
+          "label": "cool slender understory roots",
+          "path": "assets/background-tree-families/far-cool-slender-base.webp",
+          "width": 1024,
+          "height": 520
+        }
+      ],
+      "canopies": [
+        {
+          "id": "far-cool-slender-canopy",
+          "label": "cool slender understory crown",
+          "path": "assets/background-tree-families/far-cool-slender-canopy.webp",
+          "width": 1024,
+          "height": 720
+        }
+      ],
+      "decorations": [
+        {
+          "id": "far-cool-slender-sweep-left",
+          "label": "cool slender understory long left sweep",
+          "side": "left",
+          "socket": [
+            12,
+            120
+          ],
+          "path": "assets/background-tree-families/far-cool-slender-sweep-left.webp",
+          "width": 604,
+          "height": 223
+        },
+        {
+          "id": "far-cool-slender-sweep-right",
+          "label": "cool slender understory long right sweep",
+          "side": "right",
+          "socket": [
+            24,
+            104
+          ],
+          "path": "assets/background-tree-families/far-cool-slender-sweep-right.webp",
+          "width": 600,
+          "height": 214
+        }
+      ]
+    }
+  }
+}

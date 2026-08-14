@@ -96,7 +96,7 @@ No gameplay flow outside platform/hole contact handling was intentionally change
 - Floating platforms now retain their previous X and surface Y each frame.
 - Landing acquisition uses relative swept motion between the player and moving platform.
 - Removed the broad fast-confidence catch that could snap the player upward from far below.
-- A player in direct contact is carried by platform-local X motion and platform Y motion; automatic world scroll is excluded.
+- A player in direct contact is carried by platform Y motion only; horizontal position always follows mouse/touch input.
 - Active support is retained through jumps and bounces so the same platform can catch the player again.
 - Floating-platform support maintenance uses the full acquisition hitbox with direct current overlap.
 - A crossing from above may land on direct end-of-frame overlap after very fast mouse movement, without any below-platform catch pad.
